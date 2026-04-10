@@ -24,6 +24,12 @@ export type AppConfig = {
       admin: string;
     };
   };
+  webhooks: {
+    stripe: {
+      signingSecret: string;
+      toleranceSeconds: number;
+    };
+  };
   supabase: {
     url: URL;
     serviceRoleKey: string;
@@ -110,6 +116,12 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
   const appSecret = requireValue(env, "VAPT_APP_ENDPOINT_SECRET");
   const webhookSetupSecret = requireValue(env, "VAPT_WEBHOOK_SETUP_SECRET");
   const adminSecret = requireValue(env, "VAPT_ADMIN_ENDPOINT_SECRET");
+  const stripeWebhookSigningSecret = requireValue(env, "STRIPE_WEBHOOK_SIGNING_SECRET");
+  const stripeWebhookToleranceSeconds = getValueOrDefault(
+    env,
+    "STRIPE_WEBHOOK_TOLERANCE_SECONDS",
+    "300",
+  );
   const supabaseUrl = requireValue(env, "SUPABASE_URL");
   const supabaseServiceRoleKey = requireValue(env, "SUPABASE_SERVICE_ROLE_KEY");
   const supabaseJwtSecret = requireValue(env, "SUPABASE_JWT_SECRET");
@@ -135,6 +147,15 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
         app: appSecret,
         webhookSetup: webhookSetupSecret,
         admin: adminSecret,
+      },
+    },
+    webhooks: {
+      stripe: {
+        signingSecret: stripeWebhookSigningSecret,
+        toleranceSeconds: parsePositiveInteger(
+          stripeWebhookToleranceSeconds,
+          "STRIPE_WEBHOOK_TOLERANCE_SECONDS",
+        ),
       },
     },
     supabase: {

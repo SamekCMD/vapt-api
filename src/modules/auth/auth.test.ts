@@ -21,6 +21,12 @@ const validConfig: AppConfig = {
       admin: "admin-secret",
     },
   },
+  webhooks: {
+    stripe: {
+      signingSecret: "whsec_test",
+      toleranceSeconds: 300,
+    },
+  },
   supabase: {
     url: new URL("https://supabase.example.com"),
     serviceRoleKey: "service-role-key",

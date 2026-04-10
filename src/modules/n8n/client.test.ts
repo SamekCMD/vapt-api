@@ -23,6 +23,12 @@ const baseConfig: AppConfig = {
       admin: "admin-secret",
     },
   },
+  webhooks: {
+    stripe: {
+      signingSecret: "whsec_test",
+      toleranceSeconds: 300,
+    },
+  },
   supabase: {
     url: new URL("https://supabase.example.com"),
     serviceRoleKey: "service-role-key",
@@ -46,6 +52,7 @@ test("n8n route catalog covers all approved operations", () => {
     "asaas.setup",
     "asaas.setupRefresh",
     "asaas.setupStatus",
+    "asaas.webhookForward",
     "ingest.orderFeedback",
     "ingest.pushSubscription",
     "stripe.health",
@@ -53,6 +60,7 @@ test("n8n route catalog covers all approved operations", () => {
     "stripe.subscriptionChange",
     "stripe.subscriptionCreate",
     "stripe.subscriptionStatus",
+    "stripe.webhookForward",
   ]);
 });
 
@@ -84,7 +92,7 @@ test("client sends x-vapt-app-key for app routes", async () => {
     ...baseConfig,
     n8n: {
       ...baseConfig.n8n,
-      baseUrl: new URL(`http://127.0.0.1:${port}`),
+      baseUrl: new URL(`http://127.0.0.1:${port}/webhook`),
       timeoutMs: 500,
     },
   });
@@ -95,7 +103,7 @@ test("client sends x-vapt-app-key for app routes", async () => {
 
   assert.equal(receivedHeader, "app-secret");
   assert.equal(receivedMethod, "POST");
-  assert.equal(receivedPath, "/stripe/subscription/create");
+  assert.equal(receivedPath, "/webhook/stripe/subscription/create");
   assert.deepEqual(JSON.parse(receivedBody), { restaurant_id: "rest_123" });
   assert.equal(result.status, 200);
   assert.deepEqual(result.data, { ok: true });
@@ -131,6 +139,54 @@ test("client sends x-vapt-webhook-key for asaas setup", async () => {
   });
 
   assert.equal(receivedHeader, "setup-secret");
+
+  await new Promise<void>((resolve, reject) =>
+    server.close((error) => (error ? reject(error) : resolve())),
+  );
+});
+
+test("client forwards provider webhook without internal auth headers", async () => {
+  let receivedSignature = "";
+  let receivedAppHeader = "";
+  let receivedPath = "";
+  let receivedBody = "";
+
+  const server = createServer((request, response) => {
+    receivedSignature = String(request.headers["stripe-signature"] ?? "");
+    receivedAppHeader = String(request.headers["x-vapt-app-key"] ?? "");
+    receivedPath = request.url ?? "";
+
+    request.setEncoding("utf8");
+    request.on("data", (chunk) => {
+      receivedBody += chunk;
+    });
+    request.on("end", () => {
+      response.setHeader("content-type", "application/json");
+      response.end(JSON.stringify({ received: true }));
+    });
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  const port = getPort(server);
+
+  const client = createN8nClient({
+    ...baseConfig,
+    n8n: {
+      ...baseConfig.n8n,
+      baseUrl: new URL(`http://127.0.0.1:${port}/webhook`),
+      timeoutMs: 500,
+    },
+  });
+
+  await client.stripe.forwardWebhook({
+    rawBody: '{"id":"evt_123"}',
+    signatureHeader: "t=123,v1=testsig",
+  });
+
+  assert.equal(receivedSignature, "t=123,v1=testsig");
+  assert.equal(receivedAppHeader, "");
+  assert.equal(receivedPath, "/webhook/stripe/webhook");
+  assert.equal(receivedBody, '{"id":"evt_123"}');
 
   await new Promise<void>((resolve, reject) =>
     server.close((error) => (error ? reject(error) : resolve())),

@@ -1,4 +1,4 @@
-export type N8nAuthStrategy = "app" | "webhookSetup" | "admin";
+export type N8nAuthStrategy = "app" | "webhookSetup" | "admin" | "none";
 export type N8nMethod = "GET" | "POST";
 
 export const n8nContracts = {
@@ -21,6 +21,11 @@ export const n8nContracts = {
     method: "POST",
     path: "/asaas/pix/create",
     auth: "app",
+  },
+  "asaas.webhookForward": {
+    method: "POST",
+    path: "/asaas/webhook",
+    auth: "none",
   },
   "stripe.subscriptionCreate": {
     method: "POST",
@@ -46,6 +51,11 @@ export const n8nContracts = {
     method: "GET",
     path: "/stripe/health",
     auth: "admin",
+  },
+  "stripe.webhookForward": {
+    method: "POST",
+    path: "/stripe/webhook",
+    auth: "none",
   },
   "ingest.pushSubscription": {
     method: "POST",

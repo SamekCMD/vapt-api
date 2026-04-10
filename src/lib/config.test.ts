@@ -15,6 +15,7 @@ test("createConfig parses valid environment values", () => {
     VAPT_APP_ENDPOINT_SECRET: "app-secret",
     VAPT_WEBHOOK_SETUP_SECRET: "setup-secret",
     VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
+    STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
     SUPABASE_URL: "https://supabase.example.com",
     SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
     SUPABASE_JWT_SECRET: "jwt-secret",
@@ -31,6 +32,8 @@ test("createConfig parses valid environment values", () => {
   assert.equal(config.n8n.baseUrl.toString(), "https://n8n.example.com/");
   assert.equal(config.n8n.timeoutMs, 5000);
   assert.equal(config.n8n.secrets.app, "app-secret");
+  assert.equal(config.webhooks.stripe.signingSecret, "whsec_test");
+  assert.equal(config.webhooks.stripe.toleranceSeconds, 300);
   assert.equal(config.supabase.url.toString(), "https://supabase.example.com/");
 });
 
@@ -42,6 +45,7 @@ test("createConfig falls back to safe infrastructure defaults", () => {
     VAPT_APP_ENDPOINT_SECRET: "app-secret",
     VAPT_WEBHOOK_SETUP_SECRET: "setup-secret",
     VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
+    STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
     SUPABASE_URL: "https://supabase.example.com",
     SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
     SUPABASE_JWT_SECRET: "jwt-secret",
@@ -64,6 +68,7 @@ test("createConfig throws when a required env is missing", () => {
         N8N_TIMEOUT_MS: "5000",
         VAPT_APP_ENDPOINT_SECRET: "app-secret",
         VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
+        STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
         SUPABASE_URL: "https://supabase.example.com",
         SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
         SUPABASE_JWT_SECRET: "jwt-secret",
@@ -86,6 +91,7 @@ test("createConfig throws when port is invalid", () => {
         VAPT_APP_ENDPOINT_SECRET: "app-secret",
         VAPT_WEBHOOK_SETUP_SECRET: "setup-secret",
         VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
+        STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
         SUPABASE_URL: "https://supabase.example.com",
         SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
         SUPABASE_JWT_SECRET: "jwt-secret",
@@ -108,6 +114,7 @@ test("createConfig throws when cors origins is empty", () => {
         VAPT_APP_ENDPOINT_SECRET: "app-secret",
         VAPT_WEBHOOK_SETUP_SECRET: "setup-secret",
         VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
+        STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
         SUPABASE_URL: "https://supabase.example.com",
         SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
         SUPABASE_JWT_SECRET: "jwt-secret",
@@ -126,6 +133,7 @@ test("createConfig throws when n8n base url is invalid", () => {
         VAPT_APP_ENDPOINT_SECRET: "app-secret",
         VAPT_WEBHOOK_SETUP_SECRET: "setup-secret",
         VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
+        STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
         SUPABASE_URL: "https://supabase.example.com",
         SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
         SUPABASE_JWT_SECRET: "jwt-secret",
@@ -144,6 +152,7 @@ test("createConfig throws when n8n timeout is invalid", () => {
         VAPT_APP_ENDPOINT_SECRET: "app-secret",
         VAPT_WEBHOOK_SETUP_SECRET: "setup-secret",
         VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
+        STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
         SUPABASE_URL: "https://supabase.example.com",
         SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
         SUPABASE_JWT_SECRET: "jwt-secret",
@@ -162,6 +171,7 @@ test("createConfig throws when supabase jwt secret is missing", () => {
         VAPT_APP_ENDPOINT_SECRET: "app-secret",
         VAPT_WEBHOOK_SETUP_SECRET: "setup-secret",
         VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
+        STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
         SUPABASE_URL: "https://supabase.example.com",
         SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
       }),

@@ -30,6 +30,8 @@ Required variables:
 - `VAPT_APP_ENDPOINT_SECRET`
 - `VAPT_WEBHOOK_SETUP_SECRET`
 - `VAPT_ADMIN_ENDPOINT_SECRET`
+- `STRIPE_WEBHOOK_SIGNING_SECRET`
+- `STRIPE_WEBHOOK_TOLERANCE_SECONDS` defaults to `300`
 - `SUPABASE_URL`
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `SUPABASE_JWT_SECRET`
@@ -45,6 +47,8 @@ npm run dev
 The service listens on `0.0.0.0` and uses `PORT`, defaulting to `3000`.
 
 `CORS_ORIGINS` must contain a comma-separated allowlist of approved browser origins.
+
+`N8N_BASE_URL` should point at the n8n webhook base, for example `https://your-n8n-host/webhook`.
 
 ## Build and run
 
@@ -71,8 +75,11 @@ docker run --rm -p 3000:3000 --env-file .env vapt-api
 - Create an app from this repository.
 - Configure build using the included `Dockerfile`.
 - Set `CORS_ORIGINS` to your allowed frontend origins.
+- Set `STRIPE_WEBHOOK_SIGNING_SECRET` before enabling the Stripe webhook route.
 - Optionally override `PORT`, `HOST`, `NODE_ENV`, and `LOG_LEVEL` if you need custom infrastructure behavior.
 - Expose container port `3000`.
 - After deploy, verify:
   - `GET /health`
   - `GET /health/ready`
+  - `POST /webhooks/stripe`
+  - `POST /webhooks/asaas`
