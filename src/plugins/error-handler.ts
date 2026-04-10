@@ -19,7 +19,14 @@ export function registerErrorHandler(app: FastifyInstance) {
       reply.status(error.statusCode).send({
         error: {
           code: error.code,
-          message: error.code === "internal_error" ? "Internal server error" : error.message,
+          message:
+            error.code === "internal_error"
+              ? "Internal server error"
+              : error.code === "unauthorized"
+                ? "Unauthorized"
+                : error.code === "forbidden"
+                  ? "Forbidden"
+                  : error.message,
         },
       });
       return;

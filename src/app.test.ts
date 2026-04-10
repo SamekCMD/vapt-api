@@ -19,6 +19,11 @@ const validConfig: AppConfig = {
       admin: "admin-secret",
     },
   },
+  supabase: {
+    url: new URL("https://supabase.example.com"),
+    serviceRoleKey: "service-role-key",
+    jwtSecret: "jwt-secret",
+  },
 };
 
 test("GET /health returns ok", async () => {

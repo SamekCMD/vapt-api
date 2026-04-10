@@ -30,6 +30,9 @@ Required variables:
 - `VAPT_APP_ENDPOINT_SECRET`
 - `VAPT_WEBHOOK_SETUP_SECRET`
 - `VAPT_ADMIN_ENDPOINT_SECRET`
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `SUPABASE_JWT_SECRET`
 
 The server fails at startup if any required sensitive value is missing or invalid.
 

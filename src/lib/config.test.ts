@@ -15,6 +15,9 @@ test("createConfig parses valid environment values", () => {
     VAPT_APP_ENDPOINT_SECRET: "app-secret",
     VAPT_WEBHOOK_SETUP_SECRET: "setup-secret",
     VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
+    SUPABASE_URL: "https://supabase.example.com",
+    SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
+    SUPABASE_JWT_SECRET: "jwt-secret",
   });
 
   assert.equal(config.nodeEnv, "development");
@@ -28,6 +31,7 @@ test("createConfig parses valid environment values", () => {
   assert.equal(config.n8n.baseUrl.toString(), "https://n8n.example.com/");
   assert.equal(config.n8n.timeoutMs, 5000);
   assert.equal(config.n8n.secrets.app, "app-secret");
+  assert.equal(config.supabase.url.toString(), "https://supabase.example.com/");
 });
 
 test("createConfig falls back to safe infrastructure defaults", () => {
@@ -38,6 +42,9 @@ test("createConfig falls back to safe infrastructure defaults", () => {
     VAPT_APP_ENDPOINT_SECRET: "app-secret",
     VAPT_WEBHOOK_SETUP_SECRET: "setup-secret",
     VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
+    SUPABASE_URL: "https://supabase.example.com",
+    SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
+    SUPABASE_JWT_SECRET: "jwt-secret",
   });
 
   assert.equal(config.nodeEnv, "production");
@@ -57,6 +64,9 @@ test("createConfig throws when a required env is missing", () => {
         N8N_TIMEOUT_MS: "5000",
         VAPT_APP_ENDPOINT_SECRET: "app-secret",
         VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
+        SUPABASE_URL: "https://supabase.example.com",
+        SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
+        SUPABASE_JWT_SECRET: "jwt-secret",
       }),
     ConfigError,
   );
@@ -76,6 +86,9 @@ test("createConfig throws when port is invalid", () => {
         VAPT_APP_ENDPOINT_SECRET: "app-secret",
         VAPT_WEBHOOK_SETUP_SECRET: "setup-secret",
         VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
+        SUPABASE_URL: "https://supabase.example.com",
+        SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
+        SUPABASE_JWT_SECRET: "jwt-secret",
       }),
     ConfigError,
   );
@@ -95,6 +108,9 @@ test("createConfig throws when cors origins is empty", () => {
         VAPT_APP_ENDPOINT_SECRET: "app-secret",
         VAPT_WEBHOOK_SETUP_SECRET: "setup-secret",
         VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
+        SUPABASE_URL: "https://supabase.example.com",
+        SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
+        SUPABASE_JWT_SECRET: "jwt-secret",
       }),
     ConfigError,
   );
@@ -110,6 +126,9 @@ test("createConfig throws when n8n base url is invalid", () => {
         VAPT_APP_ENDPOINT_SECRET: "app-secret",
         VAPT_WEBHOOK_SETUP_SECRET: "setup-secret",
         VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
+        SUPABASE_URL: "https://supabase.example.com",
+        SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
+        SUPABASE_JWT_SECRET: "jwt-secret",
       }),
     ConfigError,
   );
@@ -125,6 +144,26 @@ test("createConfig throws when n8n timeout is invalid", () => {
         VAPT_APP_ENDPOINT_SECRET: "app-secret",
         VAPT_WEBHOOK_SETUP_SECRET: "setup-secret",
         VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
+        SUPABASE_URL: "https://supabase.example.com",
+        SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
+        SUPABASE_JWT_SECRET: "jwt-secret",
+      }),
+    ConfigError,
+  );
+});
+
+test("createConfig throws when supabase jwt secret is missing", () => {
+  assert.throws(
+    () =>
+      createConfig({
+        CORS_ORIGINS: "http://localhost:5173",
+        N8N_BASE_URL: "https://n8n.example.com",
+        N8N_TIMEOUT_MS: "5000",
+        VAPT_APP_ENDPOINT_SECRET: "app-secret",
+        VAPT_WEBHOOK_SETUP_SECRET: "setup-secret",
+        VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
+        SUPABASE_URL: "https://supabase.example.com",
+        SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
       }),
     ConfigError,
   );

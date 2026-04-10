@@ -24,6 +24,11 @@ export type AppConfig = {
       admin: string;
     };
   };
+  supabase: {
+    url: URL;
+    serviceRoleKey: string;
+    jwtSecret: string;
+  };
 };
 
 export class ConfigError extends Error {
@@ -105,6 +110,9 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
   const appSecret = requireValue(env, "VAPT_APP_ENDPOINT_SECRET");
   const webhookSetupSecret = requireValue(env, "VAPT_WEBHOOK_SETUP_SECRET");
   const adminSecret = requireValue(env, "VAPT_ADMIN_ENDPOINT_SECRET");
+  const supabaseUrl = requireValue(env, "SUPABASE_URL");
+  const supabaseServiceRoleKey = requireValue(env, "SUPABASE_SERVICE_ROLE_KEY");
+  const supabaseJwtSecret = requireValue(env, "SUPABASE_JWT_SECRET");
 
   if (!validNodeEnvs.has(nodeEnv)) {
     throw new ConfigError("NODE_ENV must be one of: development, test, production");
@@ -128,6 +136,11 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
         webhookSetup: webhookSetupSecret,
         admin: adminSecret,
       },
+    },
+    supabase: {
+      url: parseUrl(supabaseUrl, "SUPABASE_URL"),
+      serviceRoleKey: supabaseServiceRoleKey,
+      jwtSecret: supabaseJwtSecret,
     },
   };
 }
