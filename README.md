@@ -18,6 +18,16 @@ npm install
 
 2. Create `.env` from `.env.example`.
 
+Required variables:
+
+- `NODE_ENV`
+- `PORT`
+- `HOST`
+- `CORS_ORIGINS`
+- `LOG_LEVEL`
+
+The server fails at startup if any required value is missing or invalid.
+
 3. Start the API:
 
 ```bash
@@ -25,6 +35,8 @@ npm run dev
 ```
 
 The service listens on `0.0.0.0` and uses `PORT`, defaulting to `3000`.
+
+`CORS_ORIGINS` must contain a comma-separated allowlist of approved browser origins.
 
 ## Build and run
 
