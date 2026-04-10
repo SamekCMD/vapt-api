@@ -1,6 +1,7 @@
 import Fastify from "fastify";
 
 import type { AppConfig } from "./lib/config.js";
+import { registerStripeBillingRoutes } from "./modules/billing/stripe/routes.js";
 import { registerAuthRoutes } from "./modules/auth/routes.js";
 import { registerHealthRoutes } from "./modules/health/routes.js";
 import { registerCors } from "./plugins/cors.js";
@@ -18,6 +19,7 @@ export async function buildApp(config: AppConfig) {
   await registerCors(app, config);
   await registerHealthRoutes(app);
   await registerAuthRoutes(app, config);
+  await registerStripeBillingRoutes(app, config);
 
   return app;
 }

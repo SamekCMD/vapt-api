@@ -26,6 +26,8 @@ export function registerErrorHandler(app: FastifyInstance) {
                 ? "Unauthorized"
                 : error.code === "forbidden"
                   ? "Forbidden"
+                  : error.code === "invalid_request"
+                    ? "Invalid request"
                   : error.message,
         },
       });
