@@ -173,5 +173,61 @@ export function createN8nClient(config: AppConfig, fetchImpl: FetchLike = fetch)
           },
         }),
     },
+    asaas: {
+      setup: (input: {
+        restaurantId: string;
+        asaasApiKey: string;
+        asaasEnvironment: "production" | "sandbox";
+        asaasBillingDocument: string;
+      }) =>
+        call<{
+          valid: boolean;
+          webhook_registered: boolean;
+          webhook_id: string | null;
+          setup_status: string;
+          message: string;
+        }>("asaas.setup", {
+          body: {
+            restaurant_id: input.restaurantId,
+            asaas_api_key: input.asaasApiKey,
+            asaas_environment: input.asaasEnvironment,
+            asaas_billing_document: input.asaasBillingDocument,
+          },
+        }),
+      getSetupStatus: (restaurantId: string) =>
+        call<{
+          restaurant_id: string;
+          name: string;
+          setup_status: string | null;
+          webhook_id: string | null;
+          webhook_url: string | null;
+          last_validated_at: string | null;
+          last_error: string | null;
+          has_api_key: boolean;
+          asaas_environment: "production" | "sandbox" | null;
+        }>("asaas.setupStatus", {
+          query: {
+            restaurant_id: restaurantId,
+          },
+        }),
+      createPix: (input: {
+        restaurantId: string;
+        orderId: string;
+        totalPrice: number;
+      }) =>
+        call<{
+          payment_id: string;
+          qr_code_base64: string | null;
+          pix_payload: string | null;
+          expiration: string | null;
+          status: string;
+        }>("asaas.pixCreate", {
+          body: {
+            restaurant_id: input.restaurantId,
+            order_id: input.orderId,
+            total_price: input.totalPrice,
+          },
+        }),
+    },
   };
 }
