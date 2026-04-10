@@ -25,6 +25,11 @@ Required variables:
 - `PORT` defaults to `3000`
 - `HOST` defaults to `0.0.0.0`
 - `LOG_LEVEL` defaults to `info`
+- `N8N_BASE_URL`
+- `N8N_TIMEOUT_MS`
+- `VAPT_APP_ENDPOINT_SECRET`
+- `VAPT_WEBHOOK_SETUP_SECRET`
+- `VAPT_ADMIN_ENDPOINT_SECRET`
 
 The server fails at startup if any required sensitive value is missing or invalid.
 

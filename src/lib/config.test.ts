@@ -10,6 +10,11 @@ test("createConfig parses valid environment values", () => {
     HOST: "0.0.0.0",
     CORS_ORIGINS: "http://localhost:5173,https://app.example.com",
     LOG_LEVEL: "info",
+    N8N_BASE_URL: "https://n8n.example.com",
+    N8N_TIMEOUT_MS: "5000",
+    VAPT_APP_ENDPOINT_SECRET: "app-secret",
+    VAPT_WEBHOOK_SETUP_SECRET: "setup-secret",
+    VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
   });
 
   assert.equal(config.nodeEnv, "development");
@@ -20,11 +25,19 @@ test("createConfig parses valid environment values", () => {
     "http://localhost:5173",
     "https://app.example.com",
   ]);
+  assert.equal(config.n8n.baseUrl.toString(), "https://n8n.example.com/");
+  assert.equal(config.n8n.timeoutMs, 5000);
+  assert.equal(config.n8n.secrets.app, "app-secret");
 });
 
 test("createConfig falls back to safe infrastructure defaults", () => {
   const config = createConfig({
     CORS_ORIGINS: "http://localhost:5173",
+    N8N_BASE_URL: "https://n8n.example.com",
+    N8N_TIMEOUT_MS: "5000",
+    VAPT_APP_ENDPOINT_SECRET: "app-secret",
+    VAPT_WEBHOOK_SETUP_SECRET: "setup-secret",
+    VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
   });
 
   assert.equal(config.nodeEnv, "production");
@@ -40,6 +53,10 @@ test("createConfig throws when a required env is missing", () => {
         NODE_ENV: "development",
         PORT: "3000",
         LOG_LEVEL: "info",
+        N8N_BASE_URL: "https://n8n.example.com",
+        N8N_TIMEOUT_MS: "5000",
+        VAPT_APP_ENDPOINT_SECRET: "app-secret",
+        VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
       }),
     ConfigError,
   );
@@ -54,6 +71,11 @@ test("createConfig throws when port is invalid", () => {
         HOST: "0.0.0.0",
         CORS_ORIGINS: "http://localhost:5173",
         LOG_LEVEL: "info",
+        N8N_BASE_URL: "https://n8n.example.com",
+        N8N_TIMEOUT_MS: "5000",
+        VAPT_APP_ENDPOINT_SECRET: "app-secret",
+        VAPT_WEBHOOK_SETUP_SECRET: "setup-secret",
+        VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
       }),
     ConfigError,
   );
@@ -68,6 +90,41 @@ test("createConfig throws when cors origins is empty", () => {
         HOST: "0.0.0.0",
         CORS_ORIGINS: "   ",
         LOG_LEVEL: "info",
+        N8N_BASE_URL: "https://n8n.example.com",
+        N8N_TIMEOUT_MS: "5000",
+        VAPT_APP_ENDPOINT_SECRET: "app-secret",
+        VAPT_WEBHOOK_SETUP_SECRET: "setup-secret",
+        VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
+      }),
+    ConfigError,
+  );
+});
+
+test("createConfig throws when n8n base url is invalid", () => {
+  assert.throws(
+    () =>
+      createConfig({
+        CORS_ORIGINS: "http://localhost:5173",
+        N8N_BASE_URL: "not-a-url",
+        N8N_TIMEOUT_MS: "5000",
+        VAPT_APP_ENDPOINT_SECRET: "app-secret",
+        VAPT_WEBHOOK_SETUP_SECRET: "setup-secret",
+        VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
+      }),
+    ConfigError,
+  );
+});
+
+test("createConfig throws when n8n timeout is invalid", () => {
+  assert.throws(
+    () =>
+      createConfig({
+        CORS_ORIGINS: "http://localhost:5173",
+        N8N_BASE_URL: "https://n8n.example.com",
+        N8N_TIMEOUT_MS: "0",
+        VAPT_APP_ENDPOINT_SECRET: "app-secret",
+        VAPT_WEBHOOK_SETUP_SECRET: "setup-secret",
+        VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
       }),
     ConfigError,
   );

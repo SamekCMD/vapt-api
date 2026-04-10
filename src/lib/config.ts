@@ -15,6 +15,15 @@ export type AppConfig = {
   host: string;
   corsOrigins: string[];
   logLevel: "fatal" | "error" | "warn" | "info" | "debug" | "trace" | "silent";
+  n8n: {
+    baseUrl: URL;
+    timeoutMs: number;
+    secrets: {
+      app: string;
+      webhookSetup: string;
+      admin: string;
+    };
+  };
 };
 
 export class ConfigError extends Error {
@@ -67,12 +76,35 @@ function parseCorsOrigins(value: string): string[] {
   return origins;
 }
 
+function parseUrl(value: string, key: string): URL {
+  try {
+    return new URL(value);
+  } catch {
+    throw new ConfigError(`${key} must be a valid absolute URL`);
+  }
+}
+
+function parsePositiveInteger(value: string, key: string): number {
+  const parsed = Number(value);
+
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new ConfigError(`${key} must be a positive integer`);
+  }
+
+  return parsed;
+}
+
 export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
   const nodeEnv = getValueOrDefault(env, "NODE_ENV", "production");
   const port = getValueOrDefault(env, "PORT", "3000");
   const host = getValueOrDefault(env, "HOST", "0.0.0.0");
   const corsOrigins = requireValue(env, "CORS_ORIGINS");
   const logLevel = getValueOrDefault(env, "LOG_LEVEL", "info");
+  const n8nBaseUrl = requireValue(env, "N8N_BASE_URL");
+  const n8nTimeoutMs = requireValue(env, "N8N_TIMEOUT_MS");
+  const appSecret = requireValue(env, "VAPT_APP_ENDPOINT_SECRET");
+  const webhookSetupSecret = requireValue(env, "VAPT_WEBHOOK_SETUP_SECRET");
+  const adminSecret = requireValue(env, "VAPT_ADMIN_ENDPOINT_SECRET");
 
   if (!validNodeEnvs.has(nodeEnv)) {
     throw new ConfigError("NODE_ENV must be one of: development, test, production");
@@ -88,6 +120,15 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
     host,
     corsOrigins: parseCorsOrigins(corsOrigins),
     logLevel: logLevel as AppConfig["logLevel"],
+    n8n: {
+      baseUrl: parseUrl(n8nBaseUrl, "N8N_BASE_URL"),
+      timeoutMs: parsePositiveInteger(n8nTimeoutMs, "N8N_TIMEOUT_MS"),
+      secrets: {
+        app: appSecret,
+        webhookSetup: webhookSetupSecret,
+        admin: adminSecret,
+      },
+    },
   };
 }
 

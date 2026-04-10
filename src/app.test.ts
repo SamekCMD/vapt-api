@@ -10,6 +10,15 @@ const validConfig: AppConfig = {
   host: "127.0.0.1",
   corsOrigins: ["http://localhost:5173"],
   logLevel: "silent",
+  n8n: {
+    baseUrl: new URL("https://n8n.example.com"),
+    timeoutMs: 5000,
+    secrets: {
+      app: "app-secret",
+      webhookSetup: "setup-secret",
+      admin: "admin-secret",
+    },
+  },
 };
 
 test("GET /health returns ok", async () => {
