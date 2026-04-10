@@ -34,6 +34,16 @@ function requireValue(env: NodeJS.ProcessEnv, key: string): string {
   return value.trim();
 }
 
+function getValueOrDefault(env: NodeJS.ProcessEnv, key: string, fallback: string): string {
+  const value = env[key];
+
+  if (!value || value.trim() === "") {
+    return fallback;
+  }
+
+  return value.trim();
+}
+
 function parsePort(value: string): number {
   const port = Number(value);
 
@@ -58,11 +68,11 @@ function parseCorsOrigins(value: string): string[] {
 }
 
 export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
-  const nodeEnv = requireValue(env, "NODE_ENV");
-  const port = requireValue(env, "PORT");
-  const host = requireValue(env, "HOST");
+  const nodeEnv = getValueOrDefault(env, "NODE_ENV", "production");
+  const port = getValueOrDefault(env, "PORT", "3000");
+  const host = getValueOrDefault(env, "HOST", "0.0.0.0");
   const corsOrigins = requireValue(env, "CORS_ORIGINS");
-  const logLevel = requireValue(env, "LOG_LEVEL");
+  const logLevel = getValueOrDefault(env, "LOG_LEVEL", "info");
 
   if (!validNodeEnvs.has(nodeEnv)) {
     throw new ConfigError("NODE_ENV must be one of: development, test, production");

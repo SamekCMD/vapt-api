@@ -22,13 +22,23 @@ test("createConfig parses valid environment values", () => {
   ]);
 });
 
+test("createConfig falls back to safe infrastructure defaults", () => {
+  const config = createConfig({
+    CORS_ORIGINS: "http://localhost:5173",
+  });
+
+  assert.equal(config.nodeEnv, "production");
+  assert.equal(config.port, 3000);
+  assert.equal(config.host, "0.0.0.0");
+  assert.equal(config.logLevel, "info");
+});
+
 test("createConfig throws when a required env is missing", () => {
   assert.throws(
     () =>
       createConfig({
         NODE_ENV: "development",
         PORT: "3000",
-        HOST: "0.0.0.0",
         LOG_LEVEL: "info",
       }),
     ConfigError,

@@ -20,13 +20,13 @@ npm install
 
 Required variables:
 
-- `NODE_ENV`
-- `PORT`
-- `HOST`
 - `CORS_ORIGINS`
-- `LOG_LEVEL`
+- `NODE_ENV` defaults to `production`
+- `PORT` defaults to `3000`
+- `HOST` defaults to `0.0.0.0`
+- `LOG_LEVEL` defaults to `info`
 
-The server fails at startup if any required value is missing or invalid.
+The server fails at startup if any required sensitive value is missing or invalid.
 
 3. Start the API:
 
@@ -62,7 +62,8 @@ docker run --rm -p 3000:3000 --env-file .env vapt-api
 
 - Create an app from this repository.
 - Configure build using the included `Dockerfile`.
-- Set `PORT=3000`.
+- Set `CORS_ORIGINS` to your allowed frontend origins.
+- Optionally override `PORT`, `HOST`, `NODE_ENV`, and `LOG_LEVEL` if you need custom infrastructure behavior.
 - Expose container port `3000`.
 - After deploy, verify:
   - `GET /health`
