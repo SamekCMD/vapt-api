@@ -10,15 +10,18 @@ import { registerCors } from "./plugins/cors.js";
 import { registerAuthDecorator } from "./plugins/auth.js";
 import { registerErrorHandler } from "./plugins/error-handler.js";
 import { createLoggerConfig } from "./plugins/logger.js";
+import { registerRateLimit } from "./plugins/rate-limit.js";
 import { registerRawBody } from "./plugins/raw-body.js";
 
 export async function buildApp(config: AppConfig) {
   const app = Fastify({
     logger: createLoggerConfig(config),
+    trustProxy: true,
   });
 
   registerAuthDecorator(app);
   registerErrorHandler(app);
+  registerRateLimit(app);
   await registerRawBody(app);
   await registerCors(app, config);
   await registerHealthRoutes(app);

@@ -2,7 +2,9 @@ import type { FastifyInstance } from "fastify";
 
 import type { AppConfig } from "../../lib/config.js";
 import { createRestaurantAccessChecker } from "../../lib/permissions.js";
+import { validateWithSchema } from "../../lib/validation.js";
 import { requireAuth } from "../../plugins/auth.js";
+import { restaurantAccessParamsSchema } from "./schemas.js";
 
 type OwnershipLookup = (input: { userId: string; restaurantId: string }) => Promise<boolean>;
 
@@ -19,6 +21,9 @@ export async function registerAuthRoutes(
   app.get(
     "/auth/me",
     {
+      config: {
+        rateLimitGroup: "auth",
+      },
       preHandler: async (request, reply) => requireAuth(request, reply, config),
     },
     async (request) => {
@@ -29,10 +34,14 @@ export async function registerAuthRoutes(
   app.get(
     "/auth/restaurants/:restaurantId/access",
     {
+      config: {
+        rateLimitGroup: "auth",
+      },
       preHandler: async (request, reply) => requireAuth(request, reply, config),
     },
     async (request) => {
-      const restaurantId = (request.params as { restaurantId: string }).restaurantId;
+      const params = validateWithSchema(restaurantAccessParamsSchema, request.params);
+      const restaurantId = params.restaurantId;
       const userId = request.auth!.userId;
 
       await assertRestaurantAccess({ userId, restaurantId });

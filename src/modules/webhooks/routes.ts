@@ -1,9 +1,11 @@
 import type { FastifyInstance } from "fastify";
 
 import type { AppConfig } from "../../lib/config.js";
+import { validateWithSchema } from "../../lib/validation.js";
 import { createSupabaseAdminClient } from "../../lib/supabase.js";
 import { createN8nClient } from "../n8n/client.js";
 import { createWebhookRepository } from "./repository.js";
+import { asaasWebhookHeadersSchema, stripeWebhookHeadersSchema } from "./schemas.js";
 import { createWebhookService } from "./service.js";
 
 type WebhookRouteDeps = {
@@ -31,19 +33,15 @@ export async function registerWebhookRoutes(
     {
       config: {
         rawBody: true,
+        rateLimitGroup: "webhooks",
       },
     },
     async (request, reply) => {
+      const headers = validateWithSchema(stripeWebhookHeadersSchema, request.headers);
       const response = await service.handleStripeWebhook({
         rawBody: request.rawBody ?? JSON.stringify(request.body ?? {}),
-        signatureHeader:
-          typeof request.headers["stripe-signature"] === "string"
-            ? request.headers["stripe-signature"]
-            : undefined,
-        contentType:
-          typeof request.headers["content-type"] === "string"
-            ? request.headers["content-type"]
-            : undefined,
+        signatureHeader: headers["stripe-signature"],
+        contentType: headers["content-type"],
       });
 
       reply.status(200).send(response);
@@ -55,19 +53,15 @@ export async function registerWebhookRoutes(
     {
       config: {
         rawBody: true,
+        rateLimitGroup: "webhooks",
       },
     },
     async (request, reply) => {
+      const headers = validateWithSchema(asaasWebhookHeadersSchema, request.headers);
       const response = await service.handleAsaasWebhook({
         rawBody: request.rawBody ?? JSON.stringify(request.body ?? {}),
-        accessToken:
-          typeof request.headers["asaas-access-token"] === "string"
-            ? request.headers["asaas-access-token"]
-            : undefined,
-        contentType:
-          typeof request.headers["content-type"] === "string"
-            ? request.headers["content-type"]
-            : undefined,
+        accessToken: headers["asaas-access-token"],
+        contentType: headers["content-type"],
       });
 
       reply.status(200).send(response);

@@ -16,7 +16,8 @@
     "@fastify/cors": "^11.1.0",
     "@supabase/supabase-js": "^2.57.4",
     "fastify": "^5.2.1",
-    "fastify-raw-body": "^5.0.0"
+    "fastify-raw-body": "^5.0.0",
+    "zod": "^4.1.12"
   },
   "devDependencies": {
     "@types/node": "^22.14.1",

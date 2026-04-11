@@ -28,6 +28,8 @@ export function registerErrorHandler(app: FastifyInstance) {
                   ? "Forbidden"
                   : error.code === "invalid_request"
                     ? "Invalid request"
+                    : error.code === "rate_limit_exceeded"
+                      ? "Too many requests"
                   : error.message,
         },
       });
