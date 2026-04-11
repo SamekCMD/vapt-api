@@ -1,22 +1,28 @@
 import type { FastifyInstance } from "fastify";
 
 import type { AppConfig } from "../../lib/config.js";
-import { createRestaurantAccessChecker } from "../../lib/permissions.js";
+import {
+  createRestaurantAccessChecker,
+  createSupabaseOwnershipLookup,
+  testOwnershipLookup,
+  type OwnershipLookup,
+} from "../../lib/permissions.js";
+import { createSupabaseAdminClient } from "../../lib/supabase.js";
 import { validateWithSchema } from "../../lib/validation.js";
 import { requireAuth } from "../../plugins/auth.js";
 import { restaurantAccessParamsSchema } from "./schemas.js";
 
-type OwnershipLookup = (input: { userId: string; restaurantId: string }) => Promise<boolean>;
-
-const defaultOwnershipLookup: OwnershipLookup = async ({ userId, restaurantId }) =>
-  userId === "user-1" && restaurantId === "rest-1";
-
 export async function registerAuthRoutes(
   app: FastifyInstance,
   config: AppConfig,
-  ownershipLookup: OwnershipLookup = defaultOwnershipLookup,
+  ownershipLookup?: OwnershipLookup,
 ) {
-  const assertRestaurantAccess = createRestaurantAccessChecker(ownershipLookup);
+  const resolvedOwnershipLookup =
+    ownershipLookup ??
+    (config.nodeEnv === "test"
+      ? testOwnershipLookup
+      : createSupabaseOwnershipLookup(createSupabaseAdminClient(config) as never));
+  const assertRestaurantAccess = createRestaurantAccessChecker(resolvedOwnershipLookup);
 
   app.get(
     "/auth/me",

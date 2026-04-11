@@ -1,6 +1,12 @@
 import type { FastifyInstance } from "fastify";
 
 import type { AppConfig } from "../../../lib/config.js";
+import {
+  createSupabaseOwnershipLookup,
+  testOwnershipLookup,
+  type OwnershipLookup,
+} from "../../../lib/permissions.js";
+import { createSupabaseAdminClient } from "../../../lib/supabase.js";
 import { validateWithSchema } from "../../../lib/validation.js";
 import { requireAuth } from "../../../plugins/auth.js";
 import { createN8nClient } from "../../n8n/client.js";
@@ -12,9 +18,18 @@ import {
 } from "./schemas.js";
 import { createStripeBillingService } from "./service.js";
 
-export async function registerStripeBillingRoutes(app: FastifyInstance, config: AppConfig) {
+export async function registerStripeBillingRoutes(
+  app: FastifyInstance,
+  config: AppConfig,
+  ownershipLookup?: OwnershipLookup,
+) {
+  const resolvedOwnershipLookup =
+    ownershipLookup ??
+    (config.nodeEnv === "test"
+      ? testOwnershipLookup
+      : createSupabaseOwnershipLookup(createSupabaseAdminClient(config) as never));
   const client = createN8nClient(config);
-  const service = createStripeBillingService(client);
+  const service = createStripeBillingService(client, resolvedOwnershipLookup);
 
   app.post(
     "/billing/stripe/checkout",
