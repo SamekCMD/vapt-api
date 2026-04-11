@@ -47,7 +47,12 @@ export function createSupabaseOwnershipLookup(client: OwnershipLookupClient): Ow
       .maybeSingle();
 
     if (result.error) {
-      throw new AppError(500, "internal_error", "Failed to verify restaurant access");
+      const details = result.error.message?.trim() || "unknown supabase error";
+      throw new AppError(
+        500,
+        "internal_error",
+        `Failed to verify restaurant access: ${details}`,
+      );
     }
 
     return Boolean(result.data);
