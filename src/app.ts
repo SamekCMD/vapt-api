@@ -4,6 +4,7 @@ import type { AppConfig } from "./lib/config.js";
 import { registerAsaasBillingRoutes } from "./modules/billing/asaas/routes.js";
 import { registerStripeBillingRoutes } from "./modules/billing/stripe/routes.js";
 import { registerAuthRoutes } from "./modules/auth/routes.js";
+import { registerIngestRoutes } from "./modules/ingest/routes.js";
 import { registerHealthRoutes } from "./modules/health/routes.js";
 import { registerWebhookRoutes } from "./modules/webhooks/routes.js";
 import { registerCors } from "./plugins/cors.js";
@@ -28,6 +29,7 @@ export async function buildApp(config: AppConfig) {
   await registerAuthRoutes(app, config);
   await registerStripeBillingRoutes(app, config);
   await registerAsaasBillingRoutes(app, config);
+  await registerIngestRoutes(app, config);
   await registerWebhookRoutes(app, config);
 
   return app;

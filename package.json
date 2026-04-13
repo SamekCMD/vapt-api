@@ -10,7 +10,8 @@
     "dev": "tsx watch src/server.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
-    "test": "tsx --test src/**/*.test.ts"
+    "test": "tsx --test src/**/*.test.ts",
+    "generate:supabase-keys": "node scripts/generate-supabase-jwt-keys.mjs"
   },
   "dependencies": {
     "@fastify/cors": "^11.1.0",

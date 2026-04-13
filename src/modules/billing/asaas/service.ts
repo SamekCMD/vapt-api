@@ -125,5 +125,25 @@ export function createAsaasBillingService(
         status: response.data.status,
       };
     },
+
+    async createPixPublic(input: {
+      restaurantId: string;
+      orderId: string;
+      totalPrice: number;
+    }) {
+      const response = await client.asaas.createPix({
+        restaurantId: input.restaurantId,
+        orderId: input.orderId,
+        totalPrice: input.totalPrice,
+      });
+
+      return {
+        paymentId: response.data.payment_id,
+        qrCodeBase64: response.data.qr_code_base64,
+        pixPayload: response.data.pix_payload,
+        expiration: response.data.expiration,
+        status: response.data.status,
+      };
+    },
   };
 }
