@@ -6,6 +6,7 @@ import { registerStripeBillingRoutes } from "./modules/billing/stripe/routes.js"
 import { registerAuthRoutes } from "./modules/auth/routes.js";
 import { registerIngestRoutes } from "./modules/ingest/routes.js";
 import { registerHealthRoutes } from "./modules/health/routes.js";
+import { registerPaymentModule } from "./modules/payments/service.js";
 import { registerWebhookRoutes } from "./modules/webhooks/routes.js";
 import { registerCors } from "./plugins/cors.js";
 import { registerAuthDecorator } from "./plugins/auth.js";
@@ -23,6 +24,7 @@ export async function buildApp(config: AppConfig) {
   registerAuthDecorator(app);
   registerErrorHandler(app);
   registerRateLimit(app);
+  registerPaymentModule(app, config);
   await registerRawBody(app);
   await registerCors(app, config);
   await registerHealthRoutes(app);

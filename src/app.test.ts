@@ -46,6 +46,15 @@ test("GET /health returns ok", async () => {
   await app.close();
 });
 
+test("payment module is registered without exposing a payment route", async () => {
+  const app = await buildApp(validConfig);
+
+  assert.equal(app.hasDecorator("payments"), true);
+  assert.deepEqual(app.payments.registry.codes(), []);
+
+  await app.close();
+});
+
 test("GET /health/ready returns ready", async () => {
   const app = await buildApp(validConfig);
 

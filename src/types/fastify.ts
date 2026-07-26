@@ -1,6 +1,12 @@
 import "fastify";
 
+import type { PaymentModule } from "../modules/payments/service.js";
+
 declare module "fastify" {
+  interface FastifyInstance {
+    payments: PaymentModule;
+  }
+
   interface FastifyRequest {
     rawBody?: string;
   }
