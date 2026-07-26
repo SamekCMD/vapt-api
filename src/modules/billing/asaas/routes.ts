@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 
 import type { AppConfig } from "../../../lib/config.js";
@@ -13,6 +14,7 @@ import { requireAuth } from "../../../plugins/auth.js";
 import { createN8nClient } from "../../n8n/client.js";
 import {
   asaasPixBodySchema,
+  asaasPixPublicBodySchema,
   asaasSetupBodySchema,
   asaasSetupStatusQuerySchema,
 } from "./schemas.js";
@@ -98,12 +100,13 @@ export async function registerAsaasBillingRoutes(
       },
     },
     async (request) => {
-      const body = validateWithSchema(asaasPixBodySchema, request.body);
+      const body = validateWithSchema(asaasPixPublicBodySchema, request.body);
       const admin = createSupabaseAdminClient(config);
       const { data, error } = await admin
         .from("orders")
         .select("id, restaurant_id, status, total_price")
         .eq("id", body.orderId)
+        .eq("public_access_token_hash", createHash("sha256").update(body.publicToken).digest("hex"))
         .maybeSingle<{ id: string; restaurant_id: string; status: string; total_price: number }>();
 
       if (error) {
@@ -118,7 +121,7 @@ export async function registerAsaasBillingRoutes(
         throw new AppError(409, "invalid_request", "Order is not awaiting payment");
       }
 
-      const totalPrice = Number(body.totalPrice ?? data.total_price);
+      const totalPrice = Number(data.total_price);
 
       return service.createPixPublic({
         restaurantId: body.restaurantId,

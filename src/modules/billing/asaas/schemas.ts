@@ -16,3 +16,9 @@ export const asaasPixBodySchema = z.object({
   orderId: z.string().trim().min(1),
   totalPrice: z.number().finite(),
 });
+
+export const asaasPixPublicBodySchema = z.object({
+  restaurantId: z.string().trim().min(1),
+  orderId: z.string().trim().min(1),
+  publicToken: z.string().trim().min(32).max(256),
+}).strict();

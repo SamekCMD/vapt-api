@@ -5,6 +5,7 @@ import test from "node:test";
 
 import type { AppConfig } from "../../../lib/config.js";
 import { buildApp } from "../../../app.js";
+import { asaasPixPublicBodySchema } from "./schemas.js";
 
 const validConfig: AppConfig = {
   nodeEnv: "test",
@@ -215,6 +216,33 @@ test("asaas setup status succeeds", async () => {
 
   await app.close();
   await stub.close();
+});
+
+test("public pix rejects browser-controlled totals", () => {
+  assert.equal(
+    asaasPixPublicBodySchema.safeParse({
+      restaurantId: "rest-1",
+      orderId: "order-1",
+    }).success,
+    false,
+  );
+  assert.equal(
+    asaasPixPublicBodySchema.safeParse({
+      restaurantId: "rest-1",
+      orderId: "order-1",
+      publicToken: "opaque-public-order-token-that-is-long-enough",
+    }).success,
+    true,
+  );
+  assert.equal(
+    asaasPixPublicBodySchema.safeParse({
+      restaurantId: "rest-1",
+      orderId: "order-1",
+      totalPrice: 0.01,
+      publicToken: "opaque-public-order-token-that-is-long-enough",
+    }).success,
+    false,
+  );
 });
 
 test("asaas pix succeeds", async () => {

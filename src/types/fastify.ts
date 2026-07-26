@@ -12,7 +12,7 @@ declare module "fastify" {
   }
 
   interface FastifyContextConfig {
-    rateLimitGroup?: "auth" | "billing" | "webhooks" | "health";
+    rateLimitGroup?: "auth" | "billing" | "orders" | "webhooks" | "health";
   }
 }
 
