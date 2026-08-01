@@ -35,6 +35,13 @@ test("createConfig parses valid environment values", () => {
   assert.equal(config.webhooks.stripe.signingSecret, "whsec_test");
   assert.equal(config.webhooks.stripe.toleranceSeconds, 300);
   assert.equal(config.supabase.url.toString(), "https://supabase.example.com/");
+  assert.deepEqual(config.paymentEffects, {
+    pollIntervalMs: 5_000,
+    batchSize: 25,
+    leaseMs: 60_000,
+    maxAttempts: 5,
+    retryBaseMs: 30_000,
+  });
 });
 
 test("createConfig falls back to safe infrastructure defaults", () => {

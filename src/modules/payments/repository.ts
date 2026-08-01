@@ -2,6 +2,11 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { AppError } from "../../lib/errors.js";
 import type {
+  ClaimPaymentEffectsInput,
+  CompletePaymentEffectInput,
+  FailPaymentEffectInput,
+} from "./effects.js";
+import type {
   Money,
   PaymentEnvironment,
   PaymentMethod,
@@ -99,18 +104,6 @@ export type PaymentEffectRecord = {
   lockedUntil: string | null;
 };
 
-export type UpdatePaymentEffectStateInput = {
-  effectId: string;
-  status: PaymentEffectRecord["status"];
-  attempts: number;
-  availableAt: string;
-  lockedAt: string | null;
-  lockedUntil: string | null;
-  lockedBy: string | null;
-  processedAt: string | null;
-  lastError: string | null;
-};
-
 export interface PaymentRepository {
   findActiveProviderAccount(
     restaurantId: string,
@@ -132,8 +125,14 @@ export interface PaymentRepository {
     status: "processed" | "ignored" | "failed",
     lastError: string | null,
   ): Promise<void>;
-  listAvailableEffects(limit: number): Promise<PaymentEffectRecord[]>;
-  updateEffectState(input: UpdatePaymentEffectStateInput): Promise<void>;
+  claimEffects(input: ClaimPaymentEffectsInput): Promise<PaymentEffectRecord[]>;
+  completeEffect(input: CompletePaymentEffectInput): Promise<void>;
+  failEffect(input: FailPaymentEffectInput): Promise<void>;
+  releaseOrderToProduction(input: {
+    paymentTransactionId: string;
+    restaurantId: string;
+  }): Promise<void>;
+  countPendingEffects(): Promise<number>;
 }
 
 export class PaymentTransactionConflictError extends Error {
@@ -431,21 +430,21 @@ export function createPaymentRepository(client: SupabaseClient): PaymentReposito
       }
     },
 
-    async listAvailableEffects(limit) {
+    async claimEffects(input) {
       const result = await client
-        .from("payment_effect_outbox")
-        .select("id, restaurant_id, payment_transaction_id, effect_type, status, payload, attempts, available_at, locked_until")
-        .in("status", ["pending", "failed"])
-        .lte("available_at", new Date().toISOString())
-        .order("available_at", { ascending: true })
-        .limit(limit)
-        .returns<RawPaymentEffect[]>();
+        .rpc("claim_payment_effects", {
+          p_worker_id: input.workerId,
+          p_limit: input.limit,
+          p_locked_at: input.lockedAt,
+          p_locked_until: input.lockedUntil,
+        });
 
       if (result.error) {
-        storageFailure("Failed to load payment effects");
+        storageFailure("Failed to claim payment effects");
       }
 
-      return (result.data ?? []).map((effect) => ({
+      const effects = (result.data ?? []) as unknown as RawPaymentEffect[];
+      return effects.map((effect) => ({
         id: effect.id,
         restaurantId: effect.restaurant_id,
         paymentTransactionId: effect.payment_transaction_id,
@@ -458,24 +457,52 @@ export function createPaymentRepository(client: SupabaseClient): PaymentReposito
       }));
     },
 
-    async updateEffectState(input) {
-      const result = await client
-        .from("payment_effect_outbox")
-        .update({
-          status: input.status,
-          attempts: input.attempts,
-          available_at: input.availableAt,
-          locked_at: input.lockedAt,
-          locked_until: input.lockedUntil,
-          locked_by: input.lockedBy,
-          processed_at: input.processedAt,
-          last_error: input.lastError,
-        })
-        .eq("id", input.effectId);
+    async completeEffect(input) {
+      const result = await client.rpc("complete_payment_effect", {
+        p_effect_id: input.effectId,
+        p_worker_id: input.workerId,
+        p_processed_at: input.processedAt,
+      });
 
       if (result.error) {
-        storageFailure("Failed to update payment effect");
+        storageFailure("Failed to complete payment effect");
       }
+    },
+
+    async failEffect(input) {
+      const result = await client.rpc("fail_payment_effect", {
+        p_effect_id: input.effectId,
+        p_worker_id: input.workerId,
+        p_status: input.status,
+        p_attempts: input.attempts,
+        p_available_at: input.availableAt,
+        p_last_error: input.lastError,
+      });
+
+      if (result.error) {
+        storageFailure("Failed to schedule payment effect retry");
+      }
+    },
+
+    async releaseOrderToProduction(input) {
+      const result = await client.rpc("release_paid_order_to_production", {
+        p_payment_transaction_id: input.paymentTransactionId,
+        p_restaurant_id: input.restaurantId,
+      });
+
+      if (result.error) {
+        storageFailure("Failed to release paid order to production");
+      }
+    },
+
+    async countPendingEffects() {
+      const result = await client.rpc("count_pending_payment_effects");
+
+      if (result.error) {
+        storageFailure("Failed to count pending payment effects");
+      }
+
+      return Number(result.data ?? 0);
     },
   };
 }

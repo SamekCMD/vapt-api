@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 
 import type { AppConfig } from "../../lib/config.js";
@@ -6,6 +6,11 @@ import { AppError } from "../../lib/errors.js";
 import { createRestaurantAccessChecker, type OwnershipLookup } from "../../lib/permissions.js";
 import { createSupabaseAdminClient } from "../../lib/supabase.js";
 import type { PaymentProvider } from "./provider.js";
+import { createPaymentEffectProcessor, type PaymentEffectProcessor } from "./effects.js";
+import {
+  createPaymentEffectReconciliation,
+  type PaymentEffectReconciliation,
+} from "./reconciliation.js";
 import {
   PaymentTransactionConflictError,
   createPaymentRepository,
@@ -84,6 +89,8 @@ export type PaymentModule = {
   registry: PaymentProviderRegistry;
   repository: PaymentRepository;
   service: PaymentService;
+  effects: PaymentEffectProcessor;
+  reconciliation: PaymentEffectReconciliation;
 };
 
 function needsProviderAccount(provider: PaymentProvider): boolean {
@@ -224,7 +231,8 @@ export function createPaymentService(
         providerStatus: payment.providerStatus,
         externalPaymentId: payment.externalPaymentId,
         transitionedAt: payment.occurredAt,
-        effectTypes: null,
+        effectTypes:
+          payment.status === "paid" ? ["release_order_to_kitchen"] : null,
       });
     },
 
@@ -319,8 +327,32 @@ export function registerPaymentModule(
   const registry = createPaymentProviderRegistry(providers);
   const repository = createPaymentRepository(createSupabaseAdminClient(config));
   const service = createPaymentService(registry, repository);
-  const module = { registry, repository, service };
+  const effectsConfig = config.paymentEffects ?? {
+    pollIntervalMs: 5_000,
+    batchSize: 25,
+    leaseMs: 60_000,
+    maxAttempts: 5,
+    retryBaseMs: 30_000,
+  };
+  const effects = createPaymentEffectProcessor({
+    repository,
+    workerId: "payment-effects-" + process.pid + "-" + randomUUID(),
+    maxAttempts: effectsConfig.maxAttempts,
+    leaseMs: effectsConfig.leaseMs,
+    baseRetryDelayMs: effectsConfig.retryBaseMs,
+  });
+  const reconciliation = createPaymentEffectReconciliation({
+    processor: effects,
+    batchSize: effectsConfig.batchSize,
+    pollIntervalMs: effectsConfig.pollIntervalMs,
+    onError: (error) => app.log.error({ err: error }, "Payment effect reconciliation failed"),
+  });
+  const module = { registry, repository, service, effects, reconciliation };
 
   app.decorate("payments", module);
+  app.addHook("onReady", () => {
+    if (config.nodeEnv !== "test") reconciliation.start();
+  });
+  app.addHook("onClose", () => reconciliation.stop());
   return module;
 }

@@ -24,6 +24,13 @@ export type AppConfig = {
       admin: string;
     };
   };
+  paymentEffects?: {
+    pollIntervalMs: number;
+    batchSize: number;
+    leaseMs: number;
+    maxAttempts: number;
+    retryBaseMs: number;
+  };
   webhooks: {
     stripe: {
       signingSecret: string;
@@ -116,6 +123,11 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
   const appSecret = requireValue(env, "VAPT_APP_ENDPOINT_SECRET");
   const webhookSetupSecret = requireValue(env, "VAPT_WEBHOOK_SETUP_SECRET");
   const adminSecret = requireValue(env, "VAPT_ADMIN_ENDPOINT_SECRET");
+  const paymentEffectsPollIntervalMs = getValueOrDefault(env, "PAYMENT_EFFECTS_POLL_INTERVAL_MS", "5000");
+  const paymentEffectsBatchSize = getValueOrDefault(env, "PAYMENT_EFFECTS_BATCH_SIZE", "25");
+  const paymentEffectsLeaseMs = getValueOrDefault(env, "PAYMENT_EFFECTS_LEASE_MS", "60000");
+  const paymentEffectsMaxAttempts = getValueOrDefault(env, "PAYMENT_EFFECTS_MAX_ATTEMPTS", "5");
+  const paymentEffectsRetryBaseMs = getValueOrDefault(env, "PAYMENT_EFFECTS_RETRY_BASE_MS", "30000");
   const stripeWebhookSigningSecret = requireValue(env, "STRIPE_WEBHOOK_SIGNING_SECRET");
   const stripeWebhookToleranceSeconds = getValueOrDefault(
     env,
@@ -148,6 +160,13 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
         webhookSetup: webhookSetupSecret,
         admin: adminSecret,
       },
+    },
+    paymentEffects: {
+      pollIntervalMs: parsePositiveInteger(paymentEffectsPollIntervalMs, "PAYMENT_EFFECTS_POLL_INTERVAL_MS"),
+      batchSize: parsePositiveInteger(paymentEffectsBatchSize, "PAYMENT_EFFECTS_BATCH_SIZE"),
+      leaseMs: parsePositiveInteger(paymentEffectsLeaseMs, "PAYMENT_EFFECTS_LEASE_MS"),
+      maxAttempts: parsePositiveInteger(paymentEffectsMaxAttempts, "PAYMENT_EFFECTS_MAX_ATTEMPTS"),
+      retryBaseMs: parsePositiveInteger(paymentEffectsRetryBaseMs, "PAYMENT_EFFECTS_RETRY_BASE_MS"),
     },
     webhooks: {
       stripe: {

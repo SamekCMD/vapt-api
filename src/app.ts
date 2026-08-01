@@ -7,6 +7,7 @@ import { registerAuthRoutes } from "./modules/auth/routes.js";
 import { registerIngestRoutes } from "./modules/ingest/routes.js";
 import { registerHealthRoutes } from "./modules/health/routes.js";
 import { createManualPaymentProvider } from "./modules/payments/providers/manual.js";
+import { registerPaymentEffectRoutes } from "./modules/payments/effects-routes.js";
 import { createManualPaymentRoutes } from "./modules/payments/routes.js";
 import { registerPaymentModule } from "./modules/payments/service.js";
 import { registerOrderRoutes } from "./modules/orders/routes.js";
@@ -36,6 +37,7 @@ export async function buildApp(config: AppConfig) {
   await registerAsaasBillingRoutes(app, config);
   await registerOrderRoutes(app, config);
   await createManualPaymentRoutes(app, config);
+  await registerPaymentEffectRoutes(app, config);
   await registerIngestRoutes(app, config);
   await registerWebhookRoutes(app, config);
 

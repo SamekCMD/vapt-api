@@ -51,6 +51,7 @@ test("payment module registers the manual provider", async () => {
 
   assert.equal(app.hasDecorator("payments"), true);
   assert.deepEqual(app.payments.registry.codes(), ["manual"]);
+  assert.equal(typeof app.payments.reconciliation.runOnce, "function");
 
   await app.close();
 });
@@ -64,7 +65,10 @@ test("GET /health/ready returns ready", async () => {
   });
 
   assert.equal(response.statusCode, 200);
-  assert.deepEqual(response.json(), { status: "ready" });
+  assert.deepEqual(response.json(), {
+    status: "ready",
+    paymentEffects: { pending: null, lastRunAt: null, lastError: null },
+  });
 
   await app.close();
 });

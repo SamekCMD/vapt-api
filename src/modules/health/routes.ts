@@ -6,6 +6,9 @@ export async function registerHealthRoutes(app: FastifyInstance) {
   });
 
   app.get("/health/ready", { config: { rateLimitGroup: "health" } }, async () => {
-    return { status: "ready" };
+    return {
+      status: "ready",
+      paymentEffects: app.payments.reconciliation.snapshot(),
+    };
   });
 }

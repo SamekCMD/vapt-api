@@ -219,11 +219,19 @@ class InMemoryPaymentRepository implements PaymentRepository {
 
   async markWebhookEvent() {}
 
-  async listAvailableEffects() {
+  async claimEffects() {
     return [];
   }
 
-  async updateEffectState() {}
+  async completeEffect() {}
+
+  async failEffect() {}
+
+  async releaseOrderToProduction() {}
+
+  async countPendingEffects() {
+    return 0;
+  }
 }
 
 test("payment service creates one transaction and applies provider result atomically", async () => {
@@ -275,7 +283,7 @@ test("payment service creates one transaction and applies provider result atomic
     providerStatus: "confirmed_by_operator",
     externalPaymentId: null,
     transitionedAt: "2026-07-25T12:01:00.000Z",
-    effectTypes: null,
+    effectTypes: ["release_order_to_kitchen"],
   });
   assert.equal(result.status, "paid");
   assert.equal(result.version, 2);
