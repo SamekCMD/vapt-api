@@ -35,6 +35,7 @@ export type PaymentTransactionRecord = {
   providerStatus: string | null;
   paymentMethod: PaymentMethod | null;
   processingMode: PaymentProcessingMode;
+  manuallyConfirmedBy: string | null;
   checkoutUrl: string | null;
   expiresAt: string | null;
   version: number;
@@ -52,6 +53,17 @@ export type CreatePaymentTransactionInput = {
   amount: Money;
   paymentMethod: PaymentMethod | null;
   processingMode: PaymentProcessingMode;
+  manuallyConfirmedBy?: string | null;
+};
+
+export type ManualPaymentOrderRecord = {
+  id: string;
+  restaurantId: string;
+  displayId: number | null;
+  totalPrice: string;
+  status: string;
+  paymentStatus: string | null;
+  paymentConfirmedAt: string | null;
 };
 
 export type ApplyPaymentTransitionInput = {
@@ -105,6 +117,7 @@ export interface PaymentRepository {
     provider: PaymentProviderCode,
     environment: PaymentEnvironment,
   ): Promise<PaymentProviderAccountRecord | null>;
+  findOrderForManualPayment(orderId: string): Promise<ManualPaymentOrderRecord | null>;
   findTransactionById(transactionId: string): Promise<PaymentTransactionRecord | null>;
   findTransactionByIdempotencyKey(
     restaurantId: string,
@@ -156,11 +169,22 @@ type RawPaymentTransaction = {
   provider_status: string | null;
   payment_method: PaymentMethod | null;
   processing_mode: PaymentProcessingMode;
+  manually_confirmed_by: string | null;
   checkout_url: string | null;
   expires_at: string | null;
   version: number;
   created_at: string;
   updated_at: string;
+};
+
+type RawManualPaymentOrder = {
+  id: string;
+  restaurant_id: string;
+  display_id: number | null;
+  total_price: string | number;
+  status: string;
+  payment_status: string | null;
+  payment_confirmed_at: string | null;
 };
 
 type RawPaymentEffect = {
@@ -190,6 +214,7 @@ const TRANSACTION_COLUMNS = [
   "provider_status",
   "payment_method",
   "processing_mode",
+  "manually_confirmed_by",
   "checkout_url",
   "expires_at",
   "version",
@@ -223,6 +248,7 @@ function mapTransaction(row: RawPaymentTransaction): PaymentTransactionRecord {
     providerStatus: row.provider_status,
     paymentMethod: row.payment_method,
     processingMode: row.processing_mode,
+    manuallyConfirmedBy: row.manually_confirmed_by,
     checkoutUrl: row.checkout_url,
     expiresAt: row.expires_at,
     version: row.version,
@@ -233,6 +259,29 @@ function mapTransaction(row: RawPaymentTransaction): PaymentTransactionRecord {
 
 export function createPaymentRepository(client: SupabaseClient): PaymentRepository {
   return {
+    async findOrderForManualPayment(orderId) {
+      const result = await client
+        .from("orders")
+        .select("id, restaurant_id, display_id, total_price, status, payment_status, payment_confirmed_at")
+        .eq("id", orderId)
+        .maybeSingle<RawManualPaymentOrder>();
+
+      if (result.error) {
+        storageFailure("Failed to load order for manual payment");
+      }
+      if (!result.data) return null;
+
+      return {
+        id: result.data.id,
+        restaurantId: result.data.restaurant_id,
+        displayId: result.data.display_id,
+        totalPrice: Number(result.data.total_price).toFixed(2),
+        status: result.data.status,
+        paymentStatus: result.data.payment_status,
+        paymentConfirmedAt: result.data.payment_confirmed_at,
+      };
+    },
+
     async findActiveProviderAccount(restaurantId, provider, environment) {
       const result = await client
         .from("payment_provider_accounts")
@@ -306,6 +355,7 @@ export function createPaymentRepository(client: SupabaseClient): PaymentReposito
           currency: input.amount.currency,
           payment_method: input.paymentMethod,
           processing_mode: input.processingMode,
+          manually_confirmed_by: input.manuallyConfirmedBy ?? null,
         })
         .select(TRANSACTION_COLUMNS)
         .single<RawPaymentTransaction>();

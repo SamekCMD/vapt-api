@@ -116,5 +116,6 @@ export type StartPaymentInput = {
   description: string;
   idempotencyKey: string;
   requestFingerprint: string;
+  confirmedByUserId?: string;
   returnUrls: PaymentReturnUrls | null;
 };

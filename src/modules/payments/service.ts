@@ -1,21 +1,31 @@
+import { createHash } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 
 import type { AppConfig } from "../../lib/config.js";
+import { AppError } from "../../lib/errors.js";
+import { createRestaurantAccessChecker, type OwnershipLookup } from "../../lib/permissions.js";
 import { createSupabaseAdminClient } from "../../lib/supabase.js";
 import type { PaymentProvider } from "./provider.js";
 import {
   PaymentTransactionConflictError,
   createPaymentRepository,
+  type ManualPaymentOrderRecord,
   type PaymentProviderAccountRecord,
   type PaymentRepository,
   type PaymentTransactionRecord,
 } from "./repository.js";
 import {
   createPaymentProviderRegistry,
+  PaymentProviderNotFoundError,
   type PaymentProviderRegistry,
 } from "./registry.js";
 import { assertPaymentTransition } from "./state-machine.js";
-import type { NormalizedPayment, PaymentEnvironment, StartPaymentInput } from "./types.js";
+import type {
+  NormalizedPayment,
+  PaymentEnvironment,
+  PaymentMethod,
+  StartPaymentInput,
+} from "./types.js";
 
 export class PaymentIdempotencyConflictError extends Error {
   constructor() {
@@ -42,6 +52,33 @@ export interface PaymentService {
   startPayment(input: StartPaymentInput): Promise<PaymentTransactionRecord>;
   getTransaction(transactionId: string): Promise<PaymentTransactionRecord | null>;
 }
+
+export type ConfirmManualPaymentInput = {
+  orderId: string;
+  paymentMethod: Exclude<PaymentMethod, "pix">;
+  idempotencyKey: string;
+  userId: string;
+  authRole: string;
+};
+
+export interface ManualPaymentService {
+  confirm(input: ConfirmManualPaymentInput): Promise<PaymentTransactionRecord>;
+}
+
+type ManualPaymentServiceDependencies = {
+  repository: Pick<PaymentRepository, "findOrderForManualPayment">;
+  paymentService: PaymentService;
+  ownershipLookup: OwnershipLookup;
+};
+
+const PAID_ORDER_STATUSES = new Set([
+  "paid",
+  "confirmed",
+  "received",
+  "received_in_cash",
+  "payment_confirmed",
+  "payment_received",
+]);
 
 export type PaymentModule = {
   registry: PaymentProviderRegistry;
@@ -133,6 +170,7 @@ export function createPaymentService(
           amount: input.amount,
           paymentMethod: input.paymentMethod,
           processingMode: input.processingMode,
+          manuallyConfirmedBy: input.confirmedByUserId ?? null,
         });
       } catch (error) {
         if (!(error instanceof PaymentTransactionConflictError)) {
@@ -192,6 +230,83 @@ export function createPaymentService(
 
     getTransaction(transactionId) {
       return repository.findTransactionById(transactionId);
+    },
+  };
+}
+
+function isOrderPaid(order: ManualPaymentOrderRecord): boolean {
+  return order.paymentConfirmedAt !== null ||
+    PAID_ORDER_STATUSES.has(order.paymentStatus?.trim().toLowerCase() ?? "");
+}
+
+function manualFingerprint(orderId: string, paymentMethod: PaymentMethod): string {
+  return createHash("sha256")
+    .update(JSON.stringify({ orderId, paymentMethod, provider: "manual" }))
+    .digest("hex");
+}
+
+export function createManualPaymentService({
+  repository,
+  paymentService,
+  ownershipLookup,
+}: ManualPaymentServiceDependencies): ManualPaymentService {
+  const assertRestaurantAccess = createRestaurantAccessChecker(ownershipLookup);
+
+  return {
+    async confirm(input) {
+      if (input.authRole !== "authenticated") {
+        throw new AppError(403, "forbidden", "Forbidden");
+      }
+
+      const order = await repository.findOrderForManualPayment(input.orderId);
+      if (!order) {
+        throw new AppError(404, "order_not_found", "Order not found");
+      }
+
+      await assertRestaurantAccess({
+        userId: input.userId,
+        restaurantId: order.restaurantId,
+      });
+
+      if (isOrderPaid(order)) {
+        throw new AppError(409, "order_already_paid", "Order is already paid");
+      }
+
+      const normalizedAmount = Number(order.totalPrice);
+      if (!Number.isFinite(normalizedAmount) || normalizedAmount <= 0) {
+        throw new AppError(409, "order_not_payable", "Order does not have a payable total");
+      }
+
+      try {
+        const transaction = await paymentService.startPayment({
+          restaurantId: order.restaurantId,
+          orderId: order.id,
+          provider: "manual",
+          environment: "production",
+          amount: { amount: normalizedAmount.toFixed(2), currency: "BRL" },
+          paymentMethod: input.paymentMethod,
+          processingMode: "manual",
+          description: order.displayId === null ? `Pedido ${order.id}` : `Pedido ${order.displayId}`,
+          idempotencyKey: input.idempotencyKey,
+          requestFingerprint: manualFingerprint(order.id, input.paymentMethod),
+          confirmedByUserId: input.userId,
+          returnUrls: null,
+        });
+
+        if (transaction.status !== "paid") {
+          throw new AppError(409, "payment_processing", "Payment confirmation is still processing");
+        }
+        return transaction;
+      } catch (error) {
+        if (
+          error instanceof PaymentTransactionConflictError ||
+          error instanceof PaymentIdempotencyConflictError ||
+          error instanceof PaymentProviderNotFoundError
+        ) {
+          throw new AppError(409, "payment_conflict", "Payment confirmation conflicts with another request");
+        }
+        throw error;
+      }
     },
   };
 }

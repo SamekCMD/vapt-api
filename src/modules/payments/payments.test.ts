@@ -151,6 +151,10 @@ class InMemoryPaymentRepository implements PaymentRepository {
   readonly transitions: ApplyPaymentTransitionInput[] = [];
   createCount = 0;
 
+  async findOrderForManualPayment() {
+    return null;
+  }
+
   async findActiveProviderAccount() {
     return null;
   }
@@ -183,6 +187,7 @@ class InMemoryPaymentRepository implements PaymentRepository {
       providerStatus: null,
       paymentMethod: input.paymentMethod,
       processingMode: input.processingMode,
+      manuallyConfirmedBy: input.manuallyConfirmedBy ?? null,
       checkoutUrl: null,
       expiresAt: null,
       version: 1,
