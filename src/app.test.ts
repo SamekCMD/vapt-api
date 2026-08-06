@@ -129,3 +129,28 @@ test("blocked CORS origin is rejected", async () => {
 
   await app.close();
 });
+
+test("buildApp registers Mercado Pago OAuth routes only when configured", async () => {
+  const app = await buildApp({
+    ...validConfig,
+    frontendUrl: new URL("https://app.vapt.test"),
+    apiPublicUrl: new URL("https://api.vapt.test"),
+    mercadoPago: {
+      clientId: "app-123",
+      clientSecret: "client-secret",
+      redirectUri: new URL("https://api.vapt.test/payments/mercado-pago/oauth/callback"),
+      webhookSecret: "webhook-secret",
+      tokenEncryptionKey: Buffer.alloc(32, 5),
+      credentialKeyId: "env-v1",
+    },
+  });
+
+  const response = await app.inject({
+    method: "POST",
+    url: "/restaurants/10000000-0000-4000-8000-000000000001/payments/mercado-pago/connect",
+    payload: { environment: "sandbox" },
+  });
+
+  assert.equal(response.statusCode, 401);
+  await app.close();
+});

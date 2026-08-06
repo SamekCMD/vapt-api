@@ -1,3 +1,5 @@
+import { parseSecretEncryptionKey } from "./crypto.js";
+
 const validNodeEnvs = new Set(["development", "test", "production"]);
 const validLogLevels = new Set([
   "fatal",
@@ -30,6 +32,16 @@ export type AppConfig = {
     leaseMs: number;
     maxAttempts: number;
     retryBaseMs: number;
+  };
+  frontendUrl?: URL;
+  apiPublicUrl?: URL;
+  mercadoPago?: {
+    clientId: string;
+    clientSecret: string;
+    redirectUri: URL;
+    webhookSecret: string;
+    tokenEncryptionKey: Buffer;
+    credentialKeyId: string;
   };
   webhooks: {
     stripe: {
@@ -137,6 +149,46 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
   const supabaseUrl = requireValue(env, "SUPABASE_URL");
   const supabaseServiceRoleKey = requireValue(env, "SUPABASE_SERVICE_ROLE_KEY");
   const supabaseJwtSecret = requireValue(env, "SUPABASE_JWT_SECRET");
+  const mercadoPagoKeys = [
+    "MERCADO_PAGO_CLIENT_ID",
+    "MERCADO_PAGO_CLIENT_SECRET",
+    "MERCADO_PAGO_REDIRECT_URI",
+    "MERCADO_PAGO_WEBHOOK_SECRET",
+    "PAYMENT_TOKEN_ENCRYPTION_KEY",
+    "FRONTEND_URL",
+    "API_PUBLIC_URL",
+  ] as const;
+  const mercadoPagoEnabled = mercadoPagoKeys.some((key) => Boolean(env[key]?.trim()));
+  const mercadoPago = mercadoPagoEnabled
+    ? {
+        clientId: requireValue(env, "MERCADO_PAGO_CLIENT_ID"),
+        clientSecret: requireValue(env, "MERCADO_PAGO_CLIENT_SECRET"),
+        redirectUri: parseUrl(
+          requireValue(env, "MERCADO_PAGO_REDIRECT_URI"),
+          "MERCADO_PAGO_REDIRECT_URI",
+        ),
+        webhookSecret: requireValue(env, "MERCADO_PAGO_WEBHOOK_SECRET"),
+        tokenEncryptionKey: parseSecretEncryptionKey(
+          requireValue(env, "PAYMENT_TOKEN_ENCRYPTION_KEY"),
+        ),
+        credentialKeyId: "env-v1",
+      }
+    : undefined;
+  const frontendUrl = mercadoPagoEnabled
+    ? parseUrl(requireValue(env, "FRONTEND_URL"), "FRONTEND_URL")
+    : undefined;
+  const apiPublicUrl = mercadoPagoEnabled
+    ? parseUrl(requireValue(env, "API_PUBLIC_URL"), "API_PUBLIC_URL")
+    : undefined;
+  if (
+    mercadoPago &&
+    apiPublicUrl &&
+    mercadoPago.redirectUri.origin !== apiPublicUrl.origin
+  ) {
+    throw new ConfigError(
+      "MERCADO_PAGO_REDIRECT_URI must use the API_PUBLIC_URL origin",
+    );
+  }
 
   if (!validNodeEnvs.has(nodeEnv)) {
     throw new ConfigError("NODE_ENV must be one of: development, test, production");
@@ -168,6 +220,9 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
       maxAttempts: parsePositiveInteger(paymentEffectsMaxAttempts, "PAYMENT_EFFECTS_MAX_ATTEMPTS"),
       retryBaseMs: parsePositiveInteger(paymentEffectsRetryBaseMs, "PAYMENT_EFFECTS_RETRY_BASE_MS"),
     },
+    frontendUrl,
+    apiPublicUrl,
+    mercadoPago,
     webhooks: {
       stripe: {
         signingSecret: stripeWebhookSigningSecret,
