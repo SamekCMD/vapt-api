@@ -422,6 +422,58 @@ test("Mercado Pago client sends authorization code and refresh grants only to th
   });
 });
 
+test("Mercado Pago client accepts optional sandbox metadata variations", async () => {
+  const client = createMercadoPagoOAuthClient({
+    clientId: "app-123",
+    clientSecret: "client-secret",
+    fetchImpl: async () => new Response(JSON.stringify({
+      access_token: "TEST-sandbox-token",
+      refresh_token: "TG-refresh-token",
+      expires_in: "3600",
+      user_id: 42,
+    }), { status: 200, headers: { "content-type": "application/json" } }),
+  });
+
+  const token = await client.exchangeAuthorizationCode({
+    code: "authorization-code",
+    redirectUri: "https://api.vapt.test/callback",
+    codeVerifier: "verifier",
+    testToken: true,
+  });
+
+  assert.deepEqual(token, {
+    accessToken: "TEST-sandbox-token",
+    refreshToken: "TG-refresh-token",
+    tokenType: "bearer",
+    expiresIn: 3600,
+    scope: "",
+    userId: "42",
+    liveMode: false,
+  });
+});
+
+test("Mercado Pago client reports only invalid field names from successful responses", async () => {
+  const client = createMercadoPagoOAuthClient({
+    clientId: "app-123",
+    clientSecret: "client-secret",
+    fetchImpl: async () => new Response(JSON.stringify({
+      access_token: "APP_USR-sensitive-token",
+      expires_in: 3600,
+      user_id: 42,
+    }), { status: 200, headers: { "content-type": "application/json" } }),
+  });
+
+  await assert.rejects(
+    client.refreshAccessToken({ refreshToken: "TG-sensitive" }),
+    (error: unknown) =>
+      error instanceof AppError &&
+      error.statusCode === 424 &&
+      error.message === "Mercado Pago returned invalid OAuth fields: refresh_token" &&
+      !error.message.includes("APP_USR") &&
+      !error.message.includes("TG-sensitive"),
+  );
+});
+
 test("Mercado Pago client sanitizes provider errors without leaking credentials", async () => {
   const client = createMercadoPagoOAuthClient({
     clientId: "app-123",

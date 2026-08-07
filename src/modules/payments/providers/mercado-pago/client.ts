@@ -57,32 +57,60 @@ async function readSafeProviderError(response: Response): Promise<string | null>
 }
 
 function mapTokenResponse(value: RawTokenResponse): MercadoPagoTokenResponse {
+  const invalidFields: string[] = [];
+  const accessToken = typeof value.access_token === "string" && value.access_token.length > 0
+    ? value.access_token
+    : null;
+  const refreshToken = typeof value.refresh_token === "string" && value.refresh_token.length > 0
+    ? value.refresh_token
+    : null;
+  const expiresIn = typeof value.expires_in === "number"
+    ? value.expires_in
+    : typeof value.expires_in === "string" && /^\d+$/.test(value.expires_in)
+      ? Number(value.expires_in)
+      : Number.NaN;
+  const userId = typeof value.user_id === "string" || typeof value.user_id === "number"
+    ? String(value.user_id)
+    : null;
+
+  if (!accessToken) invalidFields.push("access_token");
+  if (!refreshToken) invalidFields.push("refresh_token");
+  if (!Number.isFinite(expiresIn) || expiresIn <= 0) invalidFields.push("expires_in");
+  if (!userId) invalidFields.push("user_id");
+
   if (
-    typeof value.access_token !== "string" ||
-    typeof value.refresh_token !== "string" ||
-    typeof value.token_type !== "string" ||
-    typeof value.expires_in !== "number" ||
-    !Number.isFinite(value.expires_in) ||
-    value.expires_in <= 0 ||
-    typeof value.scope !== "string" ||
-    (typeof value.user_id !== "string" && typeof value.user_id !== "number") ||
-    typeof value.live_mode !== "boolean"
+    !accessToken ||
+    !refreshToken ||
+    !Number.isFinite(expiresIn) || expiresIn <= 0 ||
+    !userId
   ) {
     throw new AppError(
-      502,
+      424,
       "mercado_pago_oauth_failed",
-      "Mercado Pago returned an invalid OAuth response",
+      `Mercado Pago returned invalid OAuth fields: ${invalidFields.join(", ")}`,
     );
   }
 
+  const scope = typeof value.scope === "string"
+    ? value.scope
+    : Array.isArray(value.scope) && value.scope.every((entry) => typeof entry === "string")
+      ? value.scope.join(" ")
+      : "";
+  const tokenType = typeof value.token_type === "string" && value.token_type.length > 0
+    ? value.token_type
+    : "bearer";
+  const liveMode = typeof value.live_mode === "boolean"
+    ? value.live_mode
+    : !accessToken.startsWith("TEST-");
+
   return {
-    accessToken: value.access_token,
-    refreshToken: value.refresh_token,
-    tokenType: value.token_type,
-    expiresIn: value.expires_in,
-    scope: value.scope,
-    userId: String(value.user_id),
-    liveMode: value.live_mode,
+    accessToken,
+    refreshToken,
+    tokenType,
+    expiresIn,
+    scope,
+    userId,
+    liveMode,
   };
 }
 
