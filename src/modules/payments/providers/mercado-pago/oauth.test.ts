@@ -437,6 +437,8 @@ test("Mercado Pago client sanitizes provider errors without leaking credentials"
     (error: unknown) =>
       error instanceof AppError &&
       error.code === "mercado_pago_oauth_failed" &&
+      error.statusCode === 424 &&
+      error.message === "Mercado Pago OAuth request failed (invalid_grant)" &&
       !error.message.includes("super-secret") &&
       !error.message.includes("APP_USR") &&
       !error.message.includes("TG-sensitive"),

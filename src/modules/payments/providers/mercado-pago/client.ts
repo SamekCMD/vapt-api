@@ -36,6 +36,26 @@ type RawTokenResponse = {
   live_mode?: unknown;
 };
 
+type RawOAuthError = {
+  error?: unknown;
+};
+
+async function readSafeProviderError(response: Response): Promise<string | null> {
+  try {
+    const payload = await response.json() as RawOAuthError;
+    if (
+      typeof payload.error === "string" &&
+      /^[a-z0-9_]{1,64}$/i.test(payload.error)
+    ) {
+      return payload.error;
+    }
+  } catch {
+    // Provider responses are untrusted; omit malformed details.
+  }
+
+  return null;
+}
+
 function mapTokenResponse(value: RawTokenResponse): MercadoPagoTokenResponse {
   if (
     typeof value.access_token !== "string" ||
@@ -78,7 +98,11 @@ export function createMercadoPagoOAuthClient(input: {
     try {
       response = await fetchImpl(TOKEN_ENDPOINT, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: {
+          accept: "application/json",
+          "content-type": "application/json",
+        },
+        signal: AbortSignal.timeout(10_000),
         body: JSON.stringify({
           client_id: input.clientId,
           client_secret: input.clientSecret,
@@ -94,10 +118,13 @@ export function createMercadoPagoOAuthClient(input: {
     }
 
     if (!response.ok) {
+      const providerError = await readSafeProviderError(response);
       throw new AppError(
-        502,
+        424,
         "mercado_pago_oauth_failed",
-        "Mercado Pago OAuth request failed",
+        providerError
+          ? `Mercado Pago OAuth request failed (${providerError})`
+          : "Mercado Pago OAuth request failed",
       );
     }
 
