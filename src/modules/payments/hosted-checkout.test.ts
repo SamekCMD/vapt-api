@@ -525,3 +525,64 @@ test("payment diagnostics reject a transaction from another order before provide
   );
   assert.equal(providerCalls, 0);
 });
+
+test("payment diagnostics preserve the payment attempt when preference lookup fails", async () => {
+  const serviceModule = await import("./service.js") as unknown as {
+    createMercadoPagoPaymentDiagnosticsService?: (input: Record<string, unknown>) => {
+      inspect(input: Record<string, string>): Promise<Record<string, unknown>>;
+    };
+  };
+  assert.equal(typeof serviceModule.createMercadoPagoPaymentDiagnosticsService, "function");
+  const service = serviceModule.createMercadoPagoPaymentDiagnosticsService!({
+    orderService: { async getPublicOrder() { return publicOrder(); } },
+    paymentService: { async getTransaction() { return pendingTransaction(); } },
+    resolveAccessToken: async () => "TEST-private-token",
+    resolvePreferenceAccessToken: async () => "APP_USR-application-token",
+    paymentClient: {
+      async searchPayments() {
+        return [{
+          id: "987654321",
+          status: "rejected",
+          statusDetail: "cc_rejected_other_reason",
+          transactionAmount: "42.50",
+          currency: "BRL",
+          externalReference: pendingTransaction().id,
+          collectorId: "seller-123",
+          dateLastUpdated: "2026-08-08T12:10:00.000Z",
+          paymentMethodId: "visa",
+        }];
+      },
+    },
+    checkoutClient: {
+      async getPreference() {
+        throw new AppError(424, "mercado_pago_checkout_failed", "Mercado Pago preference request failed (status 403)");
+      },
+    },
+  });
+
+  const result = await service.inspect({
+    orderId: ORDER_ID,
+    transactionId: pendingTransaction().id,
+    publicOrderToken: "public-order-token-12345678901234567890",
+  });
+
+  assert.deepEqual(result, {
+    transactionId: pendingTransaction().id,
+    transactionStatus: "pending",
+    found: true,
+    preference: null,
+    preferenceLookup: "unavailable",
+    attempt: {
+      paymentId: "987654321",
+      status: "rejected",
+      statusDetail: "cc_rejected_other_reason",
+      paymentMethodId: "visa",
+      amount: "42.50",
+      currency: "BRL",
+      collectorId: "seller-123",
+      dateLastUpdated: "2026-08-08T12:10:00.000Z",
+    },
+  });
+  assert.equal(JSON.stringify(result).includes("TEST-private-token"), false);
+  assert.equal(JSON.stringify(result).includes("APP_USR-application-token"), false);
+});

@@ -407,12 +407,20 @@ export function createMercadoPagoPaymentDiagnosticsService({
         ? transaction.providerPayload.preferenceId
         : null;
       let preference = null;
+      let preferenceLookup: "available" | "unavailable" | null = null;
       if (preferenceId) {
-        const preferenceAccessToken = await resolvePreferenceAccessToken();
-        preference = await checkoutClient.getPreference({
-          accessToken: preferenceAccessToken,
-          preferenceId,
-        });
+        try {
+          const preferenceAccessToken = await resolvePreferenceAccessToken();
+          preference = await checkoutClient.getPreference({
+            accessToken: preferenceAccessToken,
+            preferenceId,
+          });
+          preferenceLookup = "available";
+        } catch {
+          // A consulta da preferência usa credenciais da aplicação e não pode ocultar
+          // o diagnóstico da tentativa, que usa o token OAuth do vendedor.
+          preferenceLookup = "unavailable";
+        }
       }
 
       return {
@@ -420,6 +428,7 @@ export function createMercadoPagoPaymentDiagnosticsService({
         transactionStatus: transaction.status,
         found: attempt !== null,
         preference,
+        ...(preferenceLookup === "unavailable" ? { preferenceLookup } : {}),
         attempt: attempt
           ? {
               paymentId: attempt.id,
