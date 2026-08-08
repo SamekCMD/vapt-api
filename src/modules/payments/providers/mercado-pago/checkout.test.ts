@@ -99,8 +99,8 @@ test("Mercado Pago client creates a hosted preference from server-owned payment 
     },
     auto_return: "approved",
     notification_url: "https://api.vapt.example.com/payments/mercado-pago/webhook",
-    marketplace_fee: 0.01,
   });
+  assert.equal("marketplace_fee" in JSON.parse(String(captured.init.body)), false);
   assert.equal(result.preferenceId, "preference-123");
   assert.equal(
     result.checkoutUrl.toString(),
@@ -117,7 +117,7 @@ test("Mercado Pago client creates a hosted preference from server-owned payment 
   });
 });
 
-test("Mercado Pago client preserves zero marketplace fee in production", async () => {
+test("Mercado Pago client omits the default zero marketplace fee in production", async () => {
   const clientModule = await import("./client.js") as unknown as {
     createMercadoPagoCheckoutClient?: (input: { fetchImpl: typeof fetch }) => CheckoutClient;
   };
@@ -149,7 +149,7 @@ test("Mercado Pago client preserves zero marketplace fee in production", async (
   });
 
   const capturedBody = requestBody as unknown as Record<string, unknown>;
-  assert.equal(capturedBody.marketplace_fee, 0);
+  assert.equal("marketplace_fee" in capturedBody, false);
 });
 
 test("Mercado Pago client reads safe persisted preference diagnostics", async () => {
