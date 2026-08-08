@@ -1,4 +1,5 @@
 import { AppError } from "../../../../lib/errors.js";
+import type { PaymentEnvironment } from "../../types.js";
 
 const TOKEN_ENDPOINT = "https://api.mercadopago.com/oauth/token";
 const PREFERENCE_ENDPOINT = "https://api.mercadopago.com/checkout/preferences";
@@ -27,6 +28,7 @@ export type MercadoPagoOAuthClient = {
 };
 export type MercadoPagoPreferenceInput = {
   accessToken: string;
+  environment: PaymentEnvironment;
   transactionId: string;
   restaurantId: string;
   orderId: string;
@@ -333,7 +335,7 @@ export function createMercadoPagoCheckoutClient(input: {
             },
             auto_return: "approved",
             notification_url: preference.notificationUrl.toString(),
-            marketplace_fee: preference.accessToken.startsWith("TEST-")
+            marketplace_fee: preference.environment === "sandbox"
               ? SANDBOX_MARKETPLACE_FEE
               : 0,
           }),

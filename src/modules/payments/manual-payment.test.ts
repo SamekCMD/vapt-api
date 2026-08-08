@@ -118,6 +118,7 @@ test("manual provider confirms an operator-recorded payment without external cap
     restaurantId: RESTAURANT_ID,
     orderId: ORDER_ID,
     providerAccountId: null,
+    environment: "sandbox",
     amount: { amount: "42.50", currency: "BRL" },
     paymentMethod: "cash",
     description: "Pedido 42",

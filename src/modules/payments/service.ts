@@ -222,6 +222,7 @@ export function createPaymentService(
           restaurantId: transaction.restaurantId,
           orderId: transaction.orderId,
           providerAccountId: transaction.providerAccountId,
+          environment: input.environment,
           amount: transaction.amount,
           paymentMethod: transaction.paymentMethod,
           description: input.description,

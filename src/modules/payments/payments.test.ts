@@ -244,9 +244,11 @@ class InMemoryPaymentRepository implements PaymentRepository {
 
 test("payment service creates one transaction and applies provider result atomically", async () => {
   let providerCalls = 0;
+  let providerEnvironment: string | null = null;
   const provider = createProvider("manual");
   provider.createPayment = async (input) => {
     providerCalls += 1;
+    providerEnvironment = input.environment;
     return {
       transactionId: input.transactionId,
       provider: "manual",
@@ -282,6 +284,7 @@ test("payment service creates one transaction and applies provider result atomic
   });
 
   assert.equal(providerCalls, 1);
+  assert.equal(providerEnvironment, "sandbox");
   assert.equal(repository.createCount, 1);
   assert.equal(repository.transitions.length, 1);
   assert.deepEqual(repository.transitions[0], {

@@ -51,6 +51,7 @@ export function createMercadoPagoPaymentProvider(input: {
       });
       const preference = await input.client.createPreference({
         accessToken,
+        environment: payment.environment,
         transactionId: payment.transactionId,
         restaurantId: payment.restaurantId,
         orderId: payment.orderId,

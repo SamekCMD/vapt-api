@@ -48,6 +48,7 @@ export type CreatePaymentInput = {
   restaurantId: string;
   orderId: string;
   providerAccountId: string | null;
+  environment: PaymentEnvironment;
   amount: Money;
   paymentMethod: PaymentMethod | null;
   description: string;

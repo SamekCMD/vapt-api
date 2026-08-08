@@ -4,6 +4,7 @@ import test from "node:test";
 type CheckoutClient = {
   createPreference(input: {
     accessToken: string;
+    environment: "sandbox" | "production";
     transactionId: string;
     restaurantId: string;
     orderId: string;
@@ -50,7 +51,8 @@ test("Mercado Pago client creates a hosted preference from server-owned payment 
   });
 
   const result = await client.createPreference({
-    accessToken: "TEST-private-access-token",
+    accessToken: "APP_USR-sandbox-oauth-access-token",
+    environment: "sandbox",
     transactionId: "30000000-0000-4000-8000-000000000001",
     restaurantId: "20000000-0000-4000-8000-000000000001",
     orderId: "10000000-0000-4000-8000-000000000001",
@@ -69,7 +71,7 @@ test("Mercado Pago client creates a hosted preference from server-owned payment 
   assert.equal(captured.init.method, "POST");
   assert.deepEqual(captured.init.headers, {
     accept: "application/json",
-    authorization: "Bearer TEST-private-access-token",
+    authorization: "Bearer APP_USR-sandbox-oauth-access-token",
     "content-type": "application/json",
   });
   assert.deepEqual(JSON.parse(String(captured.init.body)), {
@@ -128,6 +130,7 @@ test("Mercado Pago client preserves zero marketplace fee in production", async (
 
   await client.createPreference({
     accessToken: "APP_USR-production-access-token",
+    environment: "production",
     transactionId: "transaction-production",
     restaurantId: "restaurant-production",
     orderId: "order-production",
@@ -162,6 +165,7 @@ test("Mercado Pago client rejects malformed responses without leaking provider p
   await assert.rejects(
     client.createPreference({
       accessToken: secret,
+      environment: "sandbox",
       transactionId: "transaction-1",
       restaurantId: "restaurant-1",
       orderId: "order-1",
@@ -237,6 +241,7 @@ test("Mercado Pago provider resolves credentials internally and returns a pendin
     restaurantId: "restaurant-1",
     orderId: "order-1",
     providerAccountId: "account-1",
+    environment: "sandbox",
     amount: { amount: "42.50", currency: "BRL" },
     paymentMethod: null,
     description: "Pedido 42",
@@ -253,6 +258,7 @@ test("Mercado Pago provider resolves credentials internally and returns a pendin
     restaurantId: "restaurant-1",
   });
   assert.equal((preferenceRequest as { accessToken: string }).accessToken, "TEST-private-access-token");
+  assert.equal((preferenceRequest as { environment: string }).environment, "sandbox");
   assert.equal(result.status, "pending");
   assert.equal(result.providerStatus, "preference_created");
   assert.equal(result.externalPaymentId, null);
