@@ -26,7 +26,6 @@ export type MercadoPagoOAuthClient = {
 };
 export type MercadoPagoPreferenceInput = {
   accessToken: string;
-  environment: "sandbox" | "production";
   transactionId: string;
   restaurantId: string;
   orderId: string;
@@ -228,20 +227,14 @@ function isMercadoPagoCheckoutUrl(url: URL): boolean {
     url.hostname.endsWith(".mercadopago.com.br");
 }
 
-function mapPreferenceResponse(
-  value: RawPreferenceResponse,
-  environment: MercadoPagoPreferenceInput["environment"],
-): MercadoPagoPreferenceResult {
+function mapPreferenceResponse(value: RawPreferenceResponse): MercadoPagoPreferenceResult {
   if (typeof value.id !== "string" || value.id.length === 0) {
     throw new AppError(502, "mercado_pago_checkout_failed", "Mercado Pago returned an invalid checkout response");
   }
 
   let checkoutUrl: URL;
   try {
-    const rawCheckoutUrl = environment === "sandbox"
-      ? value.sandbox_init_point
-      : value.init_point;
-    checkoutUrl = new URL(typeof rawCheckoutUrl === "string" ? rawCheckoutUrl : "");
+    checkoutUrl = new URL(typeof value.init_point === "string" ? value.init_point : "");
   } catch {
     throw new AppError(502, "mercado_pago_checkout_failed", "Mercado Pago returned an invalid checkout response");
   }
@@ -306,10 +299,7 @@ export function createMercadoPagoCheckoutClient(input: {
       }
 
       try {
-        return mapPreferenceResponse(
-          await response.json() as RawPreferenceResponse,
-          preference.environment,
-        );
+        return mapPreferenceResponse(await response.json() as RawPreferenceResponse);
       } catch (error) {
         if (error instanceof AppError) throw error;
         throw new AppError(502, "mercado_pago_checkout_failed", "Mercado Pago returned an invalid checkout response");
