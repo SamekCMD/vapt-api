@@ -9,6 +9,7 @@ export type MercadoPagoAccessTokenResolver = (input: {
 
 export function createMercadoPagoPaymentProvider(input: {
   client: MercadoPagoCheckoutClient;
+  environment: "sandbox" | "production";
   resolveAccessToken: MercadoPagoAccessTokenResolver;
   notificationUrl: URL;
   now?: () => string;
@@ -51,6 +52,7 @@ export function createMercadoPagoPaymentProvider(input: {
       });
       const preference = await input.client.createPreference({
         accessToken,
+        environment: input.environment,
         transactionId: payment.transactionId,
         restaurantId: payment.restaurantId,
         orderId: payment.orderId,

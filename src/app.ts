@@ -49,6 +49,7 @@ export async function buildApp(config: AppConfig) {
   if (config.mercadoPago && config.apiPublicUrl && mercadoPagoOAuth) {
     paymentProviders.push(createMercadoPagoPaymentProvider({
       client: createMercadoPagoCheckoutClient(),
+      environment: config.mercadoPago.environment,
       resolveAccessToken: (input) => mercadoPagoOAuth.resolveAccessToken(input),
       notificationUrl: new URL("/webhooks/payments/mercado-pago", config.apiPublicUrl),
     }));

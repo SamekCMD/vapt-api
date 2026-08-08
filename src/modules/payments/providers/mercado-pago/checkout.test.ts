@@ -9,6 +9,7 @@ type CheckoutClient = {
     orderId: string;
     amount: { amount: string; currency: string };
     description: string;
+    environment: "sandbox" | "production";
     returnUrls: { success: URL; pending: URL; failure: URL };
     notificationUrl: URL;
   }): Promise<{ preferenceId: string; checkoutUrl: URL }>;
@@ -39,6 +40,7 @@ test("Mercado Pago client creates a hosted preference from server-owned payment 
     orderId: "10000000-0000-4000-8000-000000000001",
     amount: { amount: "42.50", currency: "BRL" },
     description: "Pedido 42",
+    environment: "sandbox",
     returnUrls: {
       success: new URL("https://vapt.example.com/payment/return?result=success"),
       pending: new URL("https://vapt.example.com/payment/return?result=pending"),
@@ -80,7 +82,7 @@ test("Mercado Pago client creates a hosted preference from server-owned payment 
   assert.equal(result.preferenceId, "preference-123");
   assert.equal(
     result.checkoutUrl.toString(),
-    "https://www.mercadopago.com.br/checkout/v1/redirect?pref_id=preference-123",
+    "https://sandbox.mercadopago.com.br/checkout/v1/redirect?pref_id=preference-123",
   );
 });
 
@@ -106,6 +108,7 @@ test("Mercado Pago client rejects malformed responses without leaking provider p
       orderId: "order-1",
       amount: { amount: "42.50", currency: "BRL" },
       description: "Pedido 42",
+      environment: "sandbox",
       returnUrls: {
         success: new URL("https://vapt.example.com/payment/return"),
         pending: new URL("https://vapt.example.com/payment/return"),
@@ -125,6 +128,7 @@ test("Mercado Pago provider resolves credentials internally and returns a pendin
   const paymentModule = await import("./payment.js").catch(() => ({})) as {
     createMercadoPagoPaymentProvider?: (input: {
       client: CheckoutClient;
+      environment: "sandbox" | "production";
       resolveAccessToken: (input: { providerAccountId: string; restaurantId: string }) => Promise<string>;
       notificationUrl: URL;
     }) => {
@@ -146,6 +150,7 @@ test("Mercado Pago provider resolves credentials internally and returns a pendin
         };
       },
     },
+    environment: "sandbox",
     resolveAccessToken: async (input) => {
       credentialRequest = input;
       return "TEST-private-access-token";
