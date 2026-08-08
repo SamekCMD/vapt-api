@@ -125,6 +125,9 @@ export async function registerHostedCheckoutRoutes(
         amount: transaction.amount,
         checkoutUrl: transaction.checkoutUrl,
         expiresAt: transaction.expiresAt,
+        ...(config.mercadoPago?.environment === "sandbox"
+          ? { diagnostics: transaction.providerPayload.checkoutDiagnostics ?? null }
+          : {}),
       };
     },
   );

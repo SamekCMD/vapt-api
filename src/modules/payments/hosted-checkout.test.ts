@@ -56,7 +56,18 @@ function pendingTransaction(): PaymentTransactionRecord {
     providerStatus: "preference_created",
     paymentMethod: null,
     processingMode: "online",
-    providerPayload: { preferenceId: "preference-123" },
+    providerPayload: {
+      preferenceId: "preference-123",
+      checkoutDiagnostics: {
+        collectorId: "seller-123",
+        clientId: "client-id",
+        marketplace: "MP-MKT-client-id",
+        siteId: "MLB",
+        operationType: "regular_payment",
+        checkoutHost: "www.mercadopago.com.br",
+        sandboxCheckoutHost: "sandbox.mercadopago.com.br",
+      },
+    },
     manuallyConfirmedBy: null,
     checkoutUrl: "https://www.mercadopago.com.br/checkout/v1/redirect?pref_id=preference-123",
     expiresAt: null,
@@ -272,6 +283,15 @@ test("public hosted checkout route requires the order token and returns only saf
     amount: { amount: "42.50", currency: "BRL" },
     checkoutUrl: pendingTransaction().checkoutUrl,
     expiresAt: null,
+    diagnostics: {
+      collectorId: "seller-123",
+      clientId: "client-id",
+      marketplace: "MP-MKT-client-id",
+      siteId: "MLB",
+      operationType: "regular_payment",
+      checkoutHost: "www.mercadopago.com.br",
+      sandboxCheckoutHost: "sandbox.mercadopago.com.br",
+    },
   });
   assert.equal(response.body.includes("accessToken"), false);
   assert.equal(response.body.includes("providerPayload"), false);
