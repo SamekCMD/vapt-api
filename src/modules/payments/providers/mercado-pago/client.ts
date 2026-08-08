@@ -38,6 +38,17 @@ export type MercadoPagoPreferenceInput = {
 export type MercadoPagoPreferenceResult = {
   preferenceId: string;
   checkoutUrl: URL;
+  diagnostics: MercadoPagoCheckoutDiagnostics;
+};
+
+export type MercadoPagoCheckoutDiagnostics = {
+  collectorId: string | null;
+  clientId: string | null;
+  marketplace: string | null;
+  siteId: string | null;
+  operationType: string | null;
+  checkoutHost: string;
+  sandboxCheckoutHost: string | null;
 };
 
 export type MercadoPagoCheckoutClient = {
@@ -65,6 +76,11 @@ type RawOAuthError = {
 
 type RawPreferenceResponse = {
   id?: unknown;
+  collector_id?: unknown;
+  client_id?: unknown;
+  marketplace?: unknown;
+  site_id?: unknown;
+  operation_type?: unknown;
   init_point?: unknown;
   sandbox_init_point?: unknown;
 };
@@ -227,6 +243,22 @@ function isMercadoPagoCheckoutUrl(url: URL): boolean {
     url.hostname.endsWith(".mercadopago.com.br");
 }
 
+function optionalProviderIdentifier(value: unknown): string | null {
+  if (typeof value === "string" && value.length > 0) return value;
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return null;
+}
+
+function optionalCheckoutHost(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  try {
+    const url = new URL(value);
+    return isMercadoPagoCheckoutUrl(url) ? url.hostname : null;
+  } catch {
+    return null;
+  }
+}
+
 function mapPreferenceResponse(value: RawPreferenceResponse): MercadoPagoPreferenceResult {
   if (typeof value.id !== "string" || value.id.length === 0) {
     throw new AppError(502, "mercado_pago_checkout_failed", "Mercado Pago returned an invalid checkout response");
@@ -242,7 +274,19 @@ function mapPreferenceResponse(value: RawPreferenceResponse): MercadoPagoPrefere
     throw new AppError(502, "mercado_pago_checkout_failed", "Mercado Pago returned an invalid checkout response");
   }
 
-  return { preferenceId: value.id, checkoutUrl };
+  return {
+    preferenceId: value.id,
+    checkoutUrl,
+    diagnostics: {
+      collectorId: optionalProviderIdentifier(value.collector_id),
+      clientId: optionalProviderIdentifier(value.client_id),
+      marketplace: optionalProviderIdentifier(value.marketplace),
+      siteId: optionalProviderIdentifier(value.site_id),
+      operationType: optionalProviderIdentifier(value.operation_type),
+      checkoutHost: checkoutUrl.hostname,
+      sandboxCheckoutHost: optionalCheckoutHost(value.sandbox_init_point),
+    },
+  };
 }
 
 export function createMercadoPagoCheckoutClient(input: {
@@ -288,6 +332,7 @@ export function createMercadoPagoCheckoutClient(input: {
             },
             auto_return: "approved",
             notification_url: preference.notificationUrl.toString(),
+            marketplace_fee: 0,
           }),
         });
       } catch {

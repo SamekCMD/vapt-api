@@ -111,6 +111,13 @@ export async function registerHostedCheckoutRoutes(
         idempotencyKey: headers["idempotency-key"],
       });
 
+      request.log.info({
+        transactionId: transaction.id,
+        orderId: transaction.orderId,
+        preferenceId: transaction.providerPayload.preferenceId ?? null,
+        checkoutDiagnostics: transaction.providerPayload.checkoutDiagnostics ?? null,
+      }, "Mercado Pago hosted checkout created");
+
       return {
         transactionId: transaction.id,
         orderId: transaction.orderId,

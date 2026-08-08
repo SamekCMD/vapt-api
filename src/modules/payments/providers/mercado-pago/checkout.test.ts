@@ -11,7 +11,19 @@ type CheckoutClient = {
     description: string;
     returnUrls: { success: URL; pending: URL; failure: URL };
     notificationUrl: URL;
-  }): Promise<{ preferenceId: string; checkoutUrl: URL }>;
+  }): Promise<{
+    preferenceId: string;
+    checkoutUrl: URL;
+    diagnostics: {
+      collectorId: string | null;
+      clientId: string | null;
+      marketplace: string | null;
+      siteId: string | null;
+      operationType: string | null;
+      checkoutHost: string;
+      sandboxCheckoutHost: string | null;
+    };
+  }>;
 };
 
 test("Mercado Pago client creates a hosted preference from server-owned payment data", async () => {
@@ -26,6 +38,11 @@ test("Mercado Pago client creates a hosted preference from server-owned payment 
       request = { url: String(input), init: init ?? {} };
       return new Response(JSON.stringify({
         id: "preference-123",
+        collector_id: 3595396809,
+        client_id: "883582241802094",
+        marketplace: "MP-MKT-883582241802094",
+        site_id: "MLB",
+        operation_type: "regular_payment",
         init_point: "https://www.mercadopago.com.br/checkout/v1/redirect?pref_id=preference-123",
         sandbox_init_point: "https://sandbox.mercadopago.com.br/checkout/v1/redirect?pref_id=preference-123",
       }), { status: 201, headers: { "content-type": "application/json" } });
@@ -76,12 +93,22 @@ test("Mercado Pago client creates a hosted preference from server-owned payment 
     },
     auto_return: "approved",
     notification_url: "https://api.vapt.example.com/payments/mercado-pago/webhook",
+    marketplace_fee: 0,
   });
   assert.equal(result.preferenceId, "preference-123");
   assert.equal(
     result.checkoutUrl.toString(),
     "https://www.mercadopago.com.br/checkout/v1/redirect?pref_id=preference-123",
   );
+  assert.deepEqual(result.diagnostics, {
+    collectorId: "3595396809",
+    clientId: "883582241802094",
+    marketplace: "MP-MKT-883582241802094",
+    siteId: "MLB",
+    operationType: "regular_payment",
+    checkoutHost: "www.mercadopago.com.br",
+    sandboxCheckoutHost: "sandbox.mercadopago.com.br",
+  });
 });
 
 test("Mercado Pago client rejects malformed responses without leaking provider payloads", async () => {
@@ -143,6 +170,15 @@ test("Mercado Pago provider resolves credentials internally and returns a pendin
         return {
           preferenceId: "preference-123",
           checkoutUrl: new URL("https://www.mercadopago.com.br/checkout/v1/redirect?pref_id=preference-123"),
+          diagnostics: {
+            collectorId: "3595396809",
+            clientId: "883582241802094",
+            marketplace: "MP-MKT-883582241802094",
+            siteId: "MLB",
+            operationType: "regular_payment",
+            checkoutHost: "www.mercadopago.com.br",
+            sandboxCheckoutHost: "sandbox.mercadopago.com.br",
+          },
         };
       },
     },
@@ -186,5 +222,16 @@ test("Mercado Pago provider resolves credentials internally and returns a pendin
   assert.equal(result.status, "pending");
   assert.equal(result.providerStatus, "preference_created");
   assert.equal(result.externalPaymentId, null);
-  assert.deepEqual(result.metadata, { preferenceId: "preference-123" });
+  assert.deepEqual(result.metadata, {
+    preferenceId: "preference-123",
+    checkoutDiagnostics: {
+      collectorId: "3595396809",
+      clientId: "883582241802094",
+      marketplace: "MP-MKT-883582241802094",
+      siteId: "MLB",
+      operationType: "regular_payment",
+      checkoutHost: "www.mercadopago.com.br",
+      sandboxCheckoutHost: "sandbox.mercadopago.com.br",
+    },
+  });
 });

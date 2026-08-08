@@ -69,7 +69,10 @@ export function createMercadoPagoPaymentProvider(input: {
         externalPaymentId: null,
         providerStatus: "preference_created",
         occurredAt: now(),
-        metadata: { preferenceId: preference.preferenceId },
+        metadata: {
+          preferenceId: preference.preferenceId,
+          checkoutDiagnostics: preference.diagnostics,
+        },
         checkoutUrl: preference.checkoutUrl,
         expiresAt: null,
       };
