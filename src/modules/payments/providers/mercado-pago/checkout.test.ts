@@ -252,6 +252,44 @@ test("Mercado Pago client reports only the safe provider code when preference lo
   );
 });
 
+test("Mercado Pago application token resolver uses the client credentials flow", async () => {
+  const clientModule = await import("./client.js") as unknown as {
+    createMercadoPagoApplicationAccessTokenResolver?: (input: {
+      clientId: string;
+      clientSecret: string;
+      fetchImpl: typeof fetch;
+    }) => () => Promise<string>;
+  };
+  assert.equal(typeof clientModule.createMercadoPagoApplicationAccessTokenResolver, "function");
+
+  let request: { url: string; init: RequestInit } | null = null;
+  const resolveAccessToken = clientModule.createMercadoPagoApplicationAccessTokenResolver!({
+    clientId: "app-123",
+    clientSecret: "private-client-secret",
+    fetchImpl: async (input, init) => {
+      request = { url: String(input), init: init ?? {} };
+      return new Response(JSON.stringify({
+        access_token: "APP_USR-application-token",
+        token_type: "bearer",
+        expires_in: 21_600,
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    },
+  });
+
+  assert.equal(await resolveAccessToken(), "APP_USR-application-token");
+  const captured = request as unknown as { url: string; init: RequestInit };
+  assert.equal(captured.url, "https://api.mercadopago.com/oauth/token");
+  assert.deepEqual(captured.init.headers, {
+    accept: "application/json",
+    "content-type": "application/json",
+  });
+  assert.deepEqual(JSON.parse(String(captured.init.body)), {
+    client_id: "app-123",
+    client_secret: "private-client-secret",
+    grant_type: "client_credentials",
+  });
+});
+
 test("Mercado Pago client rejects malformed responses without leaking provider payloads", async () => {
   const clientModule = await import("./client.js") as unknown as {
     createMercadoPagoCheckoutClient?: (input: { fetchImpl: typeof fetch }) => CheckoutClient;

@@ -100,6 +100,10 @@ type RawTokenResponse = {
   live_mode?: unknown;
 };
 
+type RawApplicationTokenResponse = {
+  access_token?: unknown;
+};
+
 type RawOAuthError = {
   error?: unknown;
 };
@@ -272,6 +276,72 @@ export function createMercadoPagoOAuthClient(input: {
         refresh_token: refreshInput.refreshToken,
       });
     },
+  };
+}
+
+export function createMercadoPagoApplicationAccessTokenResolver(input: {
+  clientId: string;
+  clientSecret: string;
+  fetchImpl?: FetchLike;
+}): () => Promise<string> {
+  const fetchImpl = input.fetchImpl ?? fetch;
+
+  return async () => {
+    let response: Response;
+    try {
+      response = await fetchImpl(TOKEN_ENDPOINT, {
+        method: "POST",
+        headers: {
+          accept: "application/json",
+          "content-type": "application/json",
+        },
+        signal: AbortSignal.timeout(10_000),
+        body: JSON.stringify({
+          client_id: input.clientId,
+          client_secret: input.clientSecret,
+          grant_type: "client_credentials",
+        }),
+      });
+    } catch {
+      throw new AppError(
+        502,
+        "mercado_pago_oauth_failed",
+        "Mercado Pago application token request failed",
+      );
+    }
+
+    if (!response.ok) {
+      const providerError = await readSafeProviderError(response);
+      const detail = providerError
+        ? `status ${response.status}: ${providerError}`
+        : `status ${response.status}`;
+      throw new AppError(
+        424,
+        "mercado_pago_oauth_failed",
+        `Mercado Pago application token request failed (${detail})`,
+      );
+    }
+
+    let payload: RawApplicationTokenResponse;
+    try {
+      payload = await response.json() as RawApplicationTokenResponse;
+    } catch {
+      throw new AppError(
+        502,
+        "mercado_pago_oauth_failed",
+        "Mercado Pago returned an invalid application token response",
+      );
+    }
+
+    if (typeof payload.access_token !== "string" || payload.access_token.length === 0) {
+      throw new AppError(
+        502,
+        "mercado_pago_oauth_failed",
+        "Mercado Pago returned an invalid application token response",
+      );
+    }
+
+    return payload.access_token;
   };
 }
 

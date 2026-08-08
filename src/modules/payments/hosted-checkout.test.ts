@@ -407,6 +407,7 @@ test("payment diagnostics load the latest Mercado Pago attempt without exposing 
       tokenResolution = input;
       return "TEST-private-token";
     },
+    resolvePreferenceAccessToken: async () => "APP_USR-application-token",
     paymentClient: {
       async searchPayments(input: unknown) {
         searchInput = input;
@@ -426,7 +427,7 @@ test("payment diagnostics load the latest Mercado Pago attempt without exposing 
     checkoutClient: {
       async getPreference(input: unknown) {
         assert.deepEqual(input, {
-          accessToken: "TEST-private-token",
+          accessToken: "APP_USR-application-token",
           preferenceId: "preference-123",
         });
         return {
@@ -495,6 +496,10 @@ test("payment diagnostics reject a transaction from another order before provide
     resolveAccessToken: async () => {
       providerCalls += 1;
       return "TEST-private-token";
+    },
+    resolvePreferenceAccessToken: async () => {
+      providerCalls += 1;
+      return "APP_USR-application-token";
     },
     paymentClient: {
       async searchPayments() {
