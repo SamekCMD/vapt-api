@@ -56,9 +56,12 @@ export async function buildApp(config: AppConfig) {
   const mercadoPagoPaymentClient = config.mercadoPago
     ? createMercadoPagoPaymentClient()
     : null;
+  const mercadoPagoCheckoutClient = config.mercadoPago
+    ? createMercadoPagoCheckoutClient()
+    : null;
   if (config.mercadoPago && config.apiPublicUrl && mercadoPagoOAuth) {
     paymentProviders.push(createMercadoPagoPaymentProvider({
-      client: createMercadoPagoCheckoutClient(),
+      client: mercadoPagoCheckoutClient!,
       resolveAccessToken: (input) => mercadoPagoOAuth.resolveAccessToken(input),
       notificationUrl: new URL("/webhooks/payments/mercado-pago", config.apiPublicUrl),
     }));
@@ -92,6 +95,7 @@ export async function buildApp(config: AppConfig) {
         paymentService: paymentModule.service,
         resolveAccessToken: (input) => mercadoPagoOAuth.resolveAccessToken(input),
         paymentClient: mercadoPagoPaymentClient,
+        checkoutClient: mercadoPagoCheckoutClient!,
       }),
     );
     await registerMercadoPagoWebhookRoutes(

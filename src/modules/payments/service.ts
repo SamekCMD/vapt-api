@@ -8,6 +8,10 @@ import { createRestaurantAccessChecker, type OwnershipLookup } from "../../lib/p
 import { createSupabaseAdminClient } from "../../lib/supabase.js";
 import type { PaymentProvider } from "./provider.js";
 import type { MercadoPagoPaymentClient } from "./providers/mercado-pago/payment-client.js";
+import type {
+  MercadoPagoCheckoutClient,
+  MercadoPagoPersistedPreferenceDiagnostics,
+} from "./providers/mercado-pago/client.js";
 import { createPaymentEffectProcessor, type PaymentEffectProcessor } from "./effects.js";
 import {
   createPaymentEffectReconciliation,
@@ -89,6 +93,7 @@ export type MercadoPagoPaymentDiagnostics = {
   transactionId: string;
   transactionStatus: PaymentStatus;
   found: boolean;
+  preference: MercadoPagoPersistedPreferenceDiagnostics | null;
   attempt: {
     paymentId: string;
     status: string;
@@ -124,6 +129,7 @@ type MercadoPagoPaymentDiagnosticsDependencies = {
     restaurantId: string;
   }): Promise<string>;
   paymentClient: Pick<MercadoPagoPaymentClient, "searchPayments">;
+  checkoutClient: Pick<MercadoPagoCheckoutClient, "getPreference">;
 };
 
 type ManualPaymentServiceDependencies = {
@@ -368,6 +374,7 @@ export function createMercadoPagoPaymentDiagnosticsService({
   paymentService,
   resolveAccessToken,
   paymentClient,
+  checkoutClient,
 }: MercadoPagoPaymentDiagnosticsDependencies): MercadoPagoPaymentDiagnosticsService {
   return {
     async inspect(input) {
@@ -394,11 +401,18 @@ export function createMercadoPagoPaymentDiagnosticsService({
       const attempt = payments.find(
         (payment) => payment.externalReference === transaction.id,
       ) ?? null;
+      const preferenceId = typeof transaction.providerPayload.preferenceId === "string"
+        ? transaction.providerPayload.preferenceId
+        : null;
+      const preference = preferenceId
+        ? await checkoutClient.getPreference({ accessToken, preferenceId })
+        : null;
 
       return {
         transactionId: transaction.id,
         transactionStatus: transaction.status,
         found: attempt !== null,
+        preference,
         attempt: attempt
           ? {
               paymentId: attempt.id,

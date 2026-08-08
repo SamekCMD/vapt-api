@@ -54,10 +54,37 @@ export type MercadoPagoCheckoutDiagnostics = {
   sandboxCheckoutHost: string | null;
 };
 
+export type MercadoPagoPersistedPreferenceDiagnostics = {
+  preferenceId: string;
+  collectorId: string | null;
+  clientId: string | null;
+  marketplace: string | null;
+  marketplaceFee: string | null;
+  siteId: string | null;
+  operationType: string | null;
+  externalReference: string | null;
+  binaryMode: boolean | null;
+  expires: boolean | null;
+  preferenceExpired: boolean | null;
+  purpose: string | null;
+  processingModes: string[];
+  itemCount: number;
+  amount: string | null;
+  currency: string | null;
+  backUrlHosts: string[];
+  notificationHost: string | null;
+  checkoutHost: string | null;
+  sandboxCheckoutHost: string | null;
+};
+
 export type MercadoPagoCheckoutClient = {
   createPreference(
     input: MercadoPagoPreferenceInput,
   ): Promise<MercadoPagoPreferenceResult>;
+  getPreference(input: {
+    accessToken: string;
+    preferenceId: string;
+  }): Promise<MercadoPagoPersistedPreferenceDiagnostics>;
 };
 
 
@@ -84,6 +111,16 @@ type RawPreferenceResponse = {
   marketplace?: unknown;
   site_id?: unknown;
   operation_type?: unknown;
+  marketplace_fee?: unknown;
+  external_reference?: unknown;
+  binary_mode?: unknown;
+  expires?: unknown;
+  preference_expired?: unknown;
+  purpose?: unknown;
+  processing_modes?: unknown;
+  items?: unknown;
+  back_urls?: unknown;
+  notification_url?: unknown;
   init_point?: unknown;
   sandbox_init_point?: unknown;
 };
@@ -262,6 +299,85 @@ function optionalCheckoutHost(value: unknown): string | null {
   }
 }
 
+function optionalUrlHost(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" || url.protocol === "http:" ? url.hostname : null;
+  } catch {
+    return null;
+  }
+}
+
+function optionalBoolean(value: unknown): boolean | null {
+  return typeof value === "boolean" ? value : null;
+}
+
+function optionalMoney(value: unknown): string | null {
+  const parsed = typeof value === "number"
+    ? value
+    : typeof value === "string" && value.trim().length > 0
+      ? Number(value)
+      : Number.NaN;
+  return Number.isFinite(parsed) ? parsed.toFixed(2) : null;
+}
+
+function mapPersistedPreference(value: RawPreferenceResponse): MercadoPagoPersistedPreferenceDiagnostics {
+  if (typeof value.id !== "string" || value.id.length === 0) {
+    throw new AppError(502, "mercado_pago_checkout_failed", "Mercado Pago returned an invalid preference response");
+  }
+
+  const items = Array.isArray(value.items) ? value.items : [];
+  let amount = 0;
+  let amountValid = items.length > 0;
+  let currency: string | null = null;
+  for (const rawItem of items) {
+    if (!rawItem || typeof rawItem !== "object") {
+      amountValid = false;
+      continue;
+    }
+    const item = rawItem as Record<string, unknown>;
+    const quantity = Number(item.quantity);
+    const unitPrice = Number(item.unit_price);
+    if (!Number.isFinite(quantity) || !Number.isFinite(unitPrice)) {
+      amountValid = false;
+    } else {
+      amount += quantity * unitPrice;
+    }
+    if (currency === null && typeof item.currency_id === "string") currency = item.currency_id;
+  }
+
+  const backUrls = value.back_urls && typeof value.back_urls === "object"
+    ? Object.values(value.back_urls as Record<string, unknown>)
+    : [];
+  const backUrlHosts = [...new Set(backUrls.map(optionalUrlHost).filter((host): host is string => host !== null))];
+
+  return {
+    preferenceId: value.id,
+    collectorId: optionalProviderIdentifier(value.collector_id),
+    clientId: optionalProviderIdentifier(value.client_id),
+    marketplace: optionalProviderIdentifier(value.marketplace),
+    marketplaceFee: optionalMoney(value.marketplace_fee),
+    siteId: optionalProviderIdentifier(value.site_id),
+    operationType: optionalProviderIdentifier(value.operation_type),
+    externalReference: optionalProviderIdentifier(value.external_reference),
+    binaryMode: optionalBoolean(value.binary_mode),
+    expires: optionalBoolean(value.expires),
+    preferenceExpired: optionalBoolean(value.preference_expired),
+    purpose: optionalProviderIdentifier(value.purpose),
+    processingModes: Array.isArray(value.processing_modes)
+      ? value.processing_modes.filter((mode): mode is string => typeof mode === "string")
+      : [],
+    itemCount: items.length,
+    amount: amountValid ? amount.toFixed(2) : null,
+    currency,
+    backUrlHosts,
+    notificationHost: optionalUrlHost(value.notification_url),
+    checkoutHost: optionalCheckoutHost(value.init_point),
+    sandboxCheckoutHost: optionalCheckoutHost(value.sandbox_init_point),
+  };
+}
+
 function mapPreferenceResponse(value: RawPreferenceResponse): MercadoPagoPreferenceResult {
   if (typeof value.id !== "string" || value.id.length === 0) {
     throw new AppError(502, "mercado_pago_checkout_failed", "Mercado Pago returned an invalid checkout response");
@@ -353,6 +469,32 @@ export function createMercadoPagoCheckoutClient(input: {
       } catch (error) {
         if (error instanceof AppError) throw error;
         throw new AppError(502, "mercado_pago_checkout_failed", "Mercado Pago returned an invalid checkout response");
+      }
+    },
+
+    async getPreference(preference) {
+      let response: Response;
+      try {
+        response = await fetchImpl(`${PREFERENCE_ENDPOINT}/${encodeURIComponent(preference.preferenceId)}`, {
+          headers: {
+            accept: "application/json",
+            authorization: `Bearer ${preference.accessToken}`,
+          },
+          signal: AbortSignal.timeout(10_000),
+        });
+      } catch {
+        throw new AppError(502, "mercado_pago_checkout_failed", "Mercado Pago preference request failed");
+      }
+
+      if (!response.ok) {
+        throw new AppError(424, "mercado_pago_checkout_failed", "Mercado Pago preference request failed");
+      }
+
+      try {
+        return mapPersistedPreference(await response.json() as RawPreferenceResponse);
+      } catch (error) {
+        if (error instanceof AppError) throw error;
+        throw new AppError(502, "mercado_pago_checkout_failed", "Mercado Pago returned an invalid preference response");
       }
     },
   };

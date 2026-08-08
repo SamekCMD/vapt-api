@@ -423,6 +423,20 @@ test("payment diagnostics load the latest Mercado Pago attempt without exposing 
         }];
       },
     },
+    checkoutClient: {
+      async getPreference(input: unknown) {
+        assert.deepEqual(input, {
+          accessToken: "TEST-private-token",
+          preferenceId: "preference-123",
+        });
+        return {
+          preferenceId: "preference-123",
+          collectorId: "seller-123",
+          marketplaceFee: "0.01",
+          externalReference: pendingTransaction().id,
+        };
+      },
+    },
   });
 
   const result = await service.inspect({
@@ -443,6 +457,12 @@ test("payment diagnostics load the latest Mercado Pago attempt without exposing 
     transactionId: pendingTransaction().id,
     transactionStatus: "pending",
     found: true,
+    preference: {
+      preferenceId: "preference-123",
+      collectorId: "seller-123",
+      marketplaceFee: "0.01",
+      externalReference: pendingTransaction().id,
+    },
     attempt: {
       paymentId: "987654321",
       status: "rejected",
@@ -480,6 +500,12 @@ test("payment diagnostics reject a transaction from another order before provide
       async searchPayments() {
         providerCalls += 1;
         return [];
+      },
+    },
+    checkoutClient: {
+      async getPreference() {
+        providerCalls += 1;
+        return {};
       },
     },
   });

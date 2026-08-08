@@ -25,6 +25,10 @@ type CheckoutClient = {
       sandboxCheckoutHost: string | null;
     };
   }>;
+  getPreference(input: {
+    accessToken: string;
+    preferenceId: string;
+  }): Promise<Record<string, unknown>>;
 };
 
 test("Mercado Pago client creates a hosted preference from server-owned payment data", async () => {
@@ -148,6 +152,79 @@ test("Mercado Pago client preserves zero marketplace fee in production", async (
   assert.equal(capturedBody.marketplace_fee, 0);
 });
 
+test("Mercado Pago client reads safe persisted preference diagnostics", async () => {
+  const clientModule = await import("./client.js") as unknown as {
+    createMercadoPagoCheckoutClient?: (input: { fetchImpl: typeof fetch }) => CheckoutClient;
+  };
+  let request: { url: string; init: RequestInit } | null = null;
+  const client = clientModule.createMercadoPagoCheckoutClient!({
+    fetchImpl: async (input, init) => {
+      request = { url: String(input), init: init ?? {} };
+      return new Response(JSON.stringify({
+        id: "preference-123",
+        collector_id: 3595396809,
+        client_id: "883582241802094",
+        marketplace: "MP-MKT-883582241802094",
+        marketplace_fee: 0.01,
+        site_id: "MLB",
+        operation_type: "regular_payment",
+        external_reference: "transaction-123",
+        binary_mode: false,
+        expires: false,
+        preference_expired: false,
+        purpose: "wallet_purchase",
+        processing_modes: ["aggregator"],
+        items: [{ currency_id: "BRL", quantity: 1, unit_price: 23 }],
+        back_urls: {
+          success: "https://vapt.example.com/payment/return?result=success",
+          pending: "https://vapt.example.com/payment/return?result=pending",
+          failure: "https://vapt.example.com/payment/return?result=failure",
+        },
+        notification_url: "https://api.vapt.example.com/webhooks/payments/mercado-pago",
+        init_point: "https://www.mercadopago.com.br/checkout/v1/redirect?pref_id=preference-123",
+        sandbox_init_point: "https://sandbox.mercadopago.com.br/checkout/v1/redirect?pref_id=preference-123",
+        payer: { email: "must-not-leak@example.com", identification: { number: "12345678909" } },
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    },
+  });
+
+  const result = await client.getPreference({
+    accessToken: "TEST-private-token",
+    preferenceId: "preference-123",
+  });
+
+  const captured = request as unknown as { url: string; init: RequestInit };
+  assert.equal(captured.url, "https://api.mercadopago.com/checkout/preferences/preference-123");
+  assert.deepEqual(captured.init.headers, {
+    accept: "application/json",
+    authorization: "Bearer TEST-private-token",
+  });
+  assert.deepEqual(result, {
+    preferenceId: "preference-123",
+    collectorId: "3595396809",
+    clientId: "883582241802094",
+    marketplace: "MP-MKT-883582241802094",
+    marketplaceFee: "0.01",
+    siteId: "MLB",
+    operationType: "regular_payment",
+    externalReference: "transaction-123",
+    binaryMode: false,
+    expires: false,
+    preferenceExpired: false,
+    purpose: "wallet_purchase",
+    processingModes: ["aggregator"],
+    itemCount: 1,
+    amount: "23.00",
+    currency: "BRL",
+    backUrlHosts: ["vapt.example.com"],
+    notificationHost: "api.vapt.example.com",
+    checkoutHost: "www.mercadopago.com.br",
+    sandboxCheckoutHost: "sandbox.mercadopago.com.br",
+  });
+  assert.equal(JSON.stringify(result).includes("must-not-leak"), false);
+  assert.equal(JSON.stringify(result).includes("12345678909"), false);
+});
+
 test("Mercado Pago client rejects malformed responses without leaking provider payloads", async () => {
   const clientModule = await import("./client.js") as unknown as {
     createMercadoPagoCheckoutClient?: (input: { fetchImpl: typeof fetch }) => CheckoutClient;
@@ -218,6 +295,9 @@ test("Mercado Pago provider resolves credentials internally and returns a pendin
             sandboxCheckoutHost: "sandbox.mercadopago.com.br",
           },
         };
+      },
+      async getPreference() {
+        throw new Error("getPreference should not be called while creating a payment");
       },
     },
     resolveAccessToken: async (input) => {
