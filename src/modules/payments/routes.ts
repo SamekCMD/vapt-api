@@ -18,6 +18,8 @@ import {
   manualPaymentBodySchema,
   manualPaymentHeadersSchema,
   manualPaymentParamsSchema,
+  paymentDiagnosticsHeadersSchema,
+  paymentDiagnosticsParamsSchema,
 } from "./schemas.js";
 import {
   createHostedCheckoutService,
@@ -25,6 +27,14 @@ import {
   type HostedCheckoutService,
   type ManualPaymentService,
 } from "./service.js";
+
+export type MercadoPagoPaymentDiagnosticsService = {
+  inspect(input: {
+    orderId: string;
+    transactionId: string;
+    publicOrderToken: string;
+  }): Promise<Readonly<Record<string, unknown>>>;
+};
 
 export async function createManualPaymentRoutes(
   app: FastifyInstance,
@@ -129,6 +139,28 @@ export async function registerHostedCheckoutRoutes(
           ? { diagnostics: transaction.providerPayload.checkoutDiagnostics ?? null }
           : {}),
       };
+    },
+  );
+}
+
+export async function registerMercadoPagoDiagnosticsRoutes(
+  app: FastifyInstance,
+  config: AppConfig,
+  service: MercadoPagoPaymentDiagnosticsService,
+) {
+  if (config.mercadoPago?.environment !== "sandbox") return;
+
+  app.get(
+    "/public/orders/:orderId/payments/:transactionId/diagnostics",
+    { config: { rateLimitGroup: "billing" } },
+    async (request) => {
+      const params = validateWithSchema(paymentDiagnosticsParamsSchema, request.params);
+      const headers = validateWithSchema(paymentDiagnosticsHeadersSchema, request.headers);
+      return service.inspect({
+        orderId: params.orderId,
+        transactionId: params.transactionId,
+        publicOrderToken: headers["x-vapt-order-token"],
+      });
     },
   );
 }

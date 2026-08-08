@@ -31,3 +31,12 @@ export const hostedCheckoutHeadersSchema = z.object({
   "idempotency-key": z.string().trim().min(8).max(128),
   "x-vapt-order-token": z.string().trim().min(32).max(256),
 }).passthrough();
+
+export const paymentDiagnosticsParamsSchema = z.object({
+  orderId: z.string().uuid(),
+  transactionId: z.string().uuid(),
+}).strict();
+
+export const paymentDiagnosticsHeadersSchema = z.object({
+  "x-vapt-order-token": z.string().trim().min(32).max(256),
+}).passthrough();

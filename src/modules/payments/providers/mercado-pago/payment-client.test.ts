@@ -59,3 +59,69 @@ test("Mercado Pago payment client rejects incomplete provider responses", async 
     /invalid payment response/i,
   );
 });
+
+test("Mercado Pago payment client searches attempts by external reference", async () => {
+  let request: { url: string; init: RequestInit } | null = null;
+  const client = createMercadoPagoPaymentClient({
+    fetchImpl: async (input, init) => {
+      request = { url: String(input), init: init ?? {} };
+      return new Response(JSON.stringify({
+        paging: { total: 1, limit: 30, offset: 0 },
+        results: [{
+          id: 987654321,
+          status: "rejected",
+          status_detail: "cc_rejected_other_reason",
+          transaction_amount: 23,
+          currency_id: "BRL",
+          external_reference: "10000000-0000-4000-8000-000000000001",
+          collector_id: 3595396809,
+          date_last_updated: "2026-08-08T12:10:00.000Z",
+          payment_method_id: "visa",
+        }],
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    },
+  });
+
+  const result = await client.searchPayments({
+    accessToken: "TEST-private-token",
+    externalReference: "10000000-0000-4000-8000-000000000001",
+  });
+
+  const captured = request as unknown as { url: string; init: RequestInit };
+  const url = new URL(captured.url);
+  assert.equal(url.origin + url.pathname, "https://api.mercadopago.com/v1/payments/search");
+  assert.equal(url.searchParams.get("external_reference"), "10000000-0000-4000-8000-000000000001");
+  assert.equal(url.searchParams.get("sort"), "date_created");
+  assert.equal(url.searchParams.get("criteria"), "desc");
+  assert.deepEqual(captured.init.headers, {
+    accept: "application/json",
+    authorization: "Bearer TEST-private-token",
+  });
+  assert.deepEqual(result, [{
+    id: "987654321",
+    status: "rejected",
+    statusDetail: "cc_rejected_other_reason",
+    transactionAmount: "23.00",
+    currency: "BRL",
+    externalReference: "10000000-0000-4000-8000-000000000001",
+    collectorId: "3595396809",
+    dateLastUpdated: "2026-08-08T12:10:00.000Z",
+    paymentMethodId: "visa",
+  }]);
+});
+
+test("Mercado Pago payment search accepts an empty result", async () => {
+  const client = createMercadoPagoPaymentClient({
+    fetchImpl: async () => new Response(JSON.stringify({
+      paging: { total: 0, limit: 30, offset: 0 },
+      results: [],
+    }), { status: 200 }),
+  });
+
+  const result = await client.searchPayments({
+    accessToken: "TEST-private-token",
+    externalReference: "10000000-0000-4000-8000-000000000001",
+  });
+
+  assert.deepEqual(result, []);
+});

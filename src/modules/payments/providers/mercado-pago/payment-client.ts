@@ -1,6 +1,7 @@
 import { AppError } from "../../../../lib/errors.js";
 
 const PAYMENT_ENDPOINT = "https://api.mercadopago.com/v1/payments";
+const PAYMENT_SEARCH_ENDPOINT = `${PAYMENT_ENDPOINT}/search`;
 
 type FetchLike = typeof fetch;
 
@@ -14,6 +15,10 @@ type RawPaymentResponse = {
   collector_id?: unknown;
   date_last_updated?: unknown;
   payment_method_id?: unknown;
+};
+
+type RawPaymentSearchResponse = {
+  results?: unknown;
 };
 
 export type MercadoPagoPaymentResult = {
@@ -33,6 +38,10 @@ export type MercadoPagoPaymentClient = {
     accessToken: string;
     paymentId: string;
   }): Promise<MercadoPagoPaymentResult>;
+  searchPayments(input: {
+    accessToken: string;
+    externalReference: string;
+  }): Promise<MercadoPagoPaymentResult[]>;
 };
 
 function requiredString(value: unknown): string | null {
@@ -116,6 +125,57 @@ export function createMercadoPagoPaymentClient(input: {
           502,
           "mercado_pago_payment_failed",
           "Mercado Pago returned an invalid payment response",
+        );
+      }
+    },
+    async searchPayments(search) {
+      const url = new URL(PAYMENT_SEARCH_ENDPOINT);
+      url.searchParams.set("external_reference", search.externalReference);
+      url.searchParams.set("sort", "date_created");
+      url.searchParams.set("criteria", "desc");
+
+      let response: Response;
+      try {
+        response = await fetchImpl(url, {
+          method: "GET",
+          headers: {
+            accept: "application/json",
+            authorization: `Bearer ${search.accessToken}`,
+          },
+          signal: AbortSignal.timeout(10_000),
+        });
+      } catch {
+        throw new AppError(
+          502,
+          "mercado_pago_payment_failed",
+          "Mercado Pago payment search failed",
+        );
+      }
+
+      if (!response.ok) {
+        throw new AppError(
+          424,
+          "mercado_pago_payment_failed",
+          "Mercado Pago payment search failed",
+        );
+      }
+
+      try {
+        const body = await response.json() as RawPaymentSearchResponse;
+        if (!Array.isArray(body.results)) {
+          throw new AppError(
+            502,
+            "mercado_pago_payment_failed",
+            "Mercado Pago returned an invalid payment search response",
+          );
+        }
+        return body.results.map((payment) => mapPaymentResponse(payment as RawPaymentResponse));
+      } catch (error) {
+        if (error instanceof AppError) throw error;
+        throw new AppError(
+          502,
+          "mercado_pago_payment_failed",
+          "Mercado Pago returned an invalid payment search response",
         );
       }
     },

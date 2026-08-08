@@ -1,6 +1,7 @@
 import Fastify from "fastify";
 
 import type { AppConfig } from "./lib/config.js";
+import { createSupabaseAdminClient } from "./lib/supabase.js";
 import { registerAsaasBillingRoutes } from "./modules/billing/asaas/routes.js";
 import { registerStripeBillingRoutes } from "./modules/billing/stripe/routes.js";
 import { registerAuthRoutes } from "./modules/auth/routes.js";
@@ -18,9 +19,18 @@ import {
 import { registerMercadoPagoWebhookRoutes } from "./modules/payments/providers/mercado-pago/webhook-routes.js";
 import { createMercadoPagoWebhookService } from "./modules/payments/providers/mercado-pago/webhook.js";
 import { registerPaymentEffectRoutes } from "./modules/payments/effects-routes.js";
-import { createManualPaymentRoutes, registerHostedCheckoutRoutes } from "./modules/payments/routes.js";
-import { registerPaymentModule } from "./modules/payments/service.js";
+import {
+  createManualPaymentRoutes,
+  registerHostedCheckoutRoutes,
+  registerMercadoPagoDiagnosticsRoutes,
+} from "./modules/payments/routes.js";
+import {
+  createMercadoPagoPaymentDiagnosticsService,
+  registerPaymentModule,
+} from "./modules/payments/service.js";
+import { createOrderRepository } from "./modules/orders/repository.js";
 import { registerOrderRoutes } from "./modules/orders/routes.js";
+import { createOrderService } from "./modules/orders/service.js";
 import { registerWebhookRoutes } from "./modules/webhooks/routes.js";
 import { registerCors } from "./plugins/cors.js";
 import { registerAuthDecorator } from "./plugins/auth.js";
@@ -71,6 +81,19 @@ export async function buildApp(config: AppConfig) {
   ) {
     await registerMercadoPagoOAuthRoutes(app, config, mercadoPagoOAuth);
     await registerHostedCheckoutRoutes(app, config);
+    await registerMercadoPagoDiagnosticsRoutes(
+      app,
+      config,
+      createMercadoPagoPaymentDiagnosticsService({
+        orderService: createOrderService(
+          createOrderRepository(createSupabaseAdminClient(config)),
+          config.supabase.jwtSecret,
+        ),
+        paymentService: paymentModule.service,
+        resolveAccessToken: (input) => mercadoPagoOAuth.resolveAccessToken(input),
+        paymentClient: mercadoPagoPaymentClient,
+      }),
+    );
     await registerMercadoPagoWebhookRoutes(
       app,
       createMercadoPagoWebhookService({

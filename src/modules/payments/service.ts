@@ -7,6 +7,7 @@ import type { OrderService } from "../orders/service.js";
 import { createRestaurantAccessChecker, type OwnershipLookup } from "../../lib/permissions.js";
 import { createSupabaseAdminClient } from "../../lib/supabase.js";
 import type { PaymentProvider } from "./provider.js";
+import type { MercadoPagoPaymentClient } from "./providers/mercado-pago/payment-client.js";
 import { createPaymentEffectProcessor, type PaymentEffectProcessor } from "./effects.js";
 import {
   createPaymentEffectReconciliation,
@@ -32,6 +33,7 @@ import type {
   PaymentEnvironment,
   PaymentMethod,
   PaymentReturnUrls,
+  PaymentStatus,
   StartPaymentInput,
 } from "./types.js";
 
@@ -83,11 +85,45 @@ export interface HostedCheckoutService {
   start(input: StartHostedCheckoutInput): Promise<PaymentTransactionRecord>;
 }
 
+export type MercadoPagoPaymentDiagnostics = {
+  transactionId: string;
+  transactionStatus: PaymentStatus;
+  found: boolean;
+  attempt: {
+    paymentId: string;
+    status: string;
+    statusDetail: string;
+    paymentMethodId: string | null;
+    amount: string;
+    currency: string;
+    collectorId: string;
+    dateLastUpdated: string | null;
+  } | null;
+};
+
+export interface MercadoPagoPaymentDiagnosticsService {
+  inspect(input: {
+    orderId: string;
+    transactionId: string;
+    publicOrderToken: string;
+  }): Promise<MercadoPagoPaymentDiagnostics>;
+}
+
 type HostedCheckoutServiceDependencies = {
   orderService: Pick<OrderService, "getPublicOrder">;
   paymentService: PaymentService;
   environment: PaymentEnvironment;
   returnUrls: PaymentReturnUrls;
+};
+
+type MercadoPagoPaymentDiagnosticsDependencies = {
+  orderService: Pick<OrderService, "getPublicOrder">;
+  paymentService: Pick<PaymentService, "getTransaction">;
+  resolveAccessToken(input: {
+    providerAccountId: string;
+    restaurantId: string;
+  }): Promise<string>;
+  paymentClient: Pick<MercadoPagoPaymentClient, "searchPayments">;
 };
 
 type ManualPaymentServiceDependencies = {
@@ -323,6 +359,59 @@ export function createHostedCheckoutService({
         throw new AppError(502, "checkout_unavailable", "Checkout is not available");
       }
       return transaction;
+    },
+  };
+}
+
+export function createMercadoPagoPaymentDiagnosticsService({
+  orderService,
+  paymentService,
+  resolveAccessToken,
+  paymentClient,
+}: MercadoPagoPaymentDiagnosticsDependencies): MercadoPagoPaymentDiagnosticsService {
+  return {
+    async inspect(input) {
+      const order = await orderService.getPublicOrder(input.orderId, input.publicOrderToken);
+      const transaction = await paymentService.getTransaction(input.transactionId);
+      if (
+        !transaction ||
+        transaction.orderId !== order.orderId ||
+        transaction.restaurantId !== order.restaurantId ||
+        transaction.provider !== "mercado_pago" ||
+        !transaction.providerAccountId
+      ) {
+        throw new AppError(404, "not_found", "Payment transaction not found");
+      }
+
+      const accessToken = await resolveAccessToken({
+        providerAccountId: transaction.providerAccountId,
+        restaurantId: transaction.restaurantId,
+      });
+      const payments = await paymentClient.searchPayments({
+        accessToken,
+        externalReference: transaction.id,
+      });
+      const attempt = payments.find(
+        (payment) => payment.externalReference === transaction.id,
+      ) ?? null;
+
+      return {
+        transactionId: transaction.id,
+        transactionStatus: transaction.status,
+        found: attempt !== null,
+        attempt: attempt
+          ? {
+              paymentId: attempt.id,
+              status: attempt.status,
+              statusDetail: attempt.statusDetail,
+              paymentMethodId: attempt.paymentMethodId,
+              amount: attempt.transactionAmount,
+              currency: attempt.currency,
+              collectorId: attempt.collectorId,
+              dateLastUpdated: attempt.dateLastUpdated,
+            }
+          : null,
+      };
     },
   };
 }

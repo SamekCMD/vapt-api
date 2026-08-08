@@ -187,7 +187,7 @@ export function createMercadoPagoWebhookService(input: {
   webhookSecret: string;
   repository: MercadoPagoWebhookRepository;
   resolveAccessToken: (input: { providerAccountId: string; restaurantId: string }) => Promise<string>;
-  client: MercadoPagoPaymentClient;
+  client: Pick<MercadoPagoPaymentClient, "getPayment">;
   now?: () => string;
 }): MercadoPagoWebhookService {
   const now = input.now ?? (() => new Date().toISOString());

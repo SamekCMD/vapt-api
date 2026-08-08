@@ -297,3 +297,200 @@ test("public hosted checkout route requires the order token and returns only saf
   assert.equal(response.body.includes("providerPayload"), false);
   await app.close();
 });
+
+test("sandbox payment diagnostics require the order token and return only safe attempt details", async () => {
+  const routesModule = await import("./routes.js") as unknown as {
+    registerMercadoPagoDiagnosticsRoutes?: (
+      app: ReturnType<typeof Fastify>,
+      config: AppConfig,
+      service: { inspect(input: Record<string, string>): Promise<Record<string, unknown>> },
+    ) => Promise<void>;
+  };
+  assert.equal(typeof routesModule.registerMercadoPagoDiagnosticsRoutes, "function");
+  let received: unknown = null;
+  const service = {
+    async inspect(input: Record<string, string>) {
+      received = input;
+      return {
+        transactionId: pendingTransaction().id,
+        transactionStatus: "pending",
+        found: true,
+        attempt: {
+          paymentId: "987654321",
+          status: "rejected",
+          statusDetail: "cc_rejected_other_reason",
+          paymentMethodId: "visa",
+          amount: "42.50",
+          currency: "BRL",
+          collectorId: "seller-123",
+          dateLastUpdated: "2026-08-08T12:10:00.000Z",
+        },
+      };
+    },
+  };
+  const app = Fastify({ logger: false });
+  registerErrorHandler(app);
+  await routesModule.registerMercadoPagoDiagnosticsRoutes!(app, validConfig, service);
+
+  const missingToken = await app.inject({
+    method: "GET",
+    url: `/public/orders/${ORDER_ID}/payments/${pendingTransaction().id}/diagnostics`,
+  });
+  assert.equal(missingToken.statusCode, 400);
+
+  const response = await app.inject({
+    method: "GET",
+    url: `/public/orders/${ORDER_ID}/payments/${pendingTransaction().id}/diagnostics`,
+    headers: { "x-vapt-order-token": "public-order-token-12345678901234567890" },
+  });
+
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(received, {
+    orderId: ORDER_ID,
+    transactionId: pendingTransaction().id,
+    publicOrderToken: "public-order-token-12345678901234567890",
+  });
+  assert.deepEqual(response.json(), await service.inspect({}));
+  assert.equal(response.body.includes("accessToken"), false);
+  assert.equal(response.body.includes("providerPayload"), false);
+  await app.close();
+});
+
+test("payment diagnostics route is unavailable outside the sandbox", async () => {
+  const routesModule = await import("./routes.js") as unknown as {
+    registerMercadoPagoDiagnosticsRoutes?: (
+      app: ReturnType<typeof Fastify>,
+      config: AppConfig,
+      service: { inspect(input: Record<string, string>): Promise<Record<string, unknown>> },
+    ) => Promise<void>;
+  };
+  assert.equal(typeof routesModule.registerMercadoPagoDiagnosticsRoutes, "function");
+  const app = Fastify({ logger: false });
+  registerErrorHandler(app);
+  await routesModule.registerMercadoPagoDiagnosticsRoutes!(app, {
+    ...validConfig,
+    mercadoPago: { ...validConfig.mercadoPago, environment: "production" },
+  }, { async inspect() { return {}; } });
+
+  const response = await app.inject({
+    method: "GET",
+    url: `/public/orders/${ORDER_ID}/payments/${pendingTransaction().id}/diagnostics`,
+    headers: { "x-vapt-order-token": "public-order-token-12345678901234567890" },
+  });
+  assert.equal(response.statusCode, 404);
+  await app.close();
+});
+
+test("payment diagnostics load the latest Mercado Pago attempt without exposing credentials", async () => {
+  const serviceModule = await import("./service.js") as unknown as {
+    createMercadoPagoPaymentDiagnosticsService?: (input: Record<string, unknown>) => {
+      inspect(input: Record<string, string>): Promise<Record<string, unknown>>;
+    };
+  };
+  assert.equal(typeof serviceModule.createMercadoPagoPaymentDiagnosticsService, "function");
+  let tokenResolution: unknown = null;
+  let searchInput: unknown = null;
+  const service = serviceModule.createMercadoPagoPaymentDiagnosticsService!({
+    orderService: {
+      async getPublicOrder(orderId: string, token: string) {
+        assert.deepEqual({ orderId, token }, {
+          orderId: ORDER_ID,
+          token: "public-order-token-12345678901234567890",
+        });
+        return publicOrder();
+      },
+    },
+    paymentService: {
+      async getTransaction() { return pendingTransaction(); },
+    },
+    resolveAccessToken: async (input: unknown) => {
+      tokenResolution = input;
+      return "TEST-private-token";
+    },
+    paymentClient: {
+      async searchPayments(input: unknown) {
+        searchInput = input;
+        return [{
+          id: "987654321",
+          status: "rejected",
+          statusDetail: "cc_rejected_other_reason",
+          transactionAmount: "42.50",
+          currency: "BRL",
+          externalReference: pendingTransaction().id,
+          collectorId: "seller-123",
+          dateLastUpdated: "2026-08-08T12:10:00.000Z",
+          paymentMethodId: "visa",
+        }];
+      },
+    },
+  });
+
+  const result = await service.inspect({
+    orderId: ORDER_ID,
+    transactionId: pendingTransaction().id,
+    publicOrderToken: "public-order-token-12345678901234567890",
+  });
+
+  assert.deepEqual(tokenResolution, {
+    providerAccountId: pendingTransaction().providerAccountId,
+    restaurantId: RESTAURANT_ID,
+  });
+  assert.deepEqual(searchInput, {
+    accessToken: "TEST-private-token",
+    externalReference: pendingTransaction().id,
+  });
+  assert.deepEqual(result, {
+    transactionId: pendingTransaction().id,
+    transactionStatus: "pending",
+    found: true,
+    attempt: {
+      paymentId: "987654321",
+      status: "rejected",
+      statusDetail: "cc_rejected_other_reason",
+      paymentMethodId: "visa",
+      amount: "42.50",
+      currency: "BRL",
+      collectorId: "seller-123",
+      dateLastUpdated: "2026-08-08T12:10:00.000Z",
+    },
+  });
+  assert.equal(JSON.stringify(result).includes("TEST-private-token"), false);
+});
+
+test("payment diagnostics reject a transaction from another order before provider access", async () => {
+  const serviceModule = await import("./service.js") as unknown as {
+    createMercadoPagoPaymentDiagnosticsService?: (input: Record<string, unknown>) => {
+      inspect(input: Record<string, string>): Promise<Record<string, unknown>>;
+    };
+  };
+  assert.equal(typeof serviceModule.createMercadoPagoPaymentDiagnosticsService, "function");
+  let providerCalls = 0;
+  const service = serviceModule.createMercadoPagoPaymentDiagnosticsService!({
+    orderService: { async getPublicOrder() { return publicOrder(); } },
+    paymentService: {
+      async getTransaction() {
+        return { ...pendingTransaction(), orderId: "50000000-0000-4000-8000-000000000001" };
+      },
+    },
+    resolveAccessToken: async () => {
+      providerCalls += 1;
+      return "TEST-private-token";
+    },
+    paymentClient: {
+      async searchPayments() {
+        providerCalls += 1;
+        return [];
+      },
+    },
+  });
+
+  await assert.rejects(
+    service.inspect({
+      orderId: ORDER_ID,
+      transactionId: pendingTransaction().id,
+      publicOrderToken: "public-order-token-12345678901234567890",
+    }),
+    (error: unknown) => error instanceof AppError && error.statusCode === 404,
+  );
+  assert.equal(providerCalls, 0);
+});
