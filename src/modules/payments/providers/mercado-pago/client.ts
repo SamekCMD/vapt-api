@@ -487,7 +487,15 @@ export function createMercadoPagoCheckoutClient(input: {
       }
 
       if (!response.ok) {
-        throw new AppError(424, "mercado_pago_checkout_failed", "Mercado Pago preference request failed");
+        const providerError = await readSafeProviderError(response);
+        const detail = providerError
+          ? `status ${response.status}: ${providerError}`
+          : `status ${response.status}`;
+        throw new AppError(
+          424,
+          "mercado_pago_checkout_failed",
+          `Mercado Pago preference request failed (${detail})`,
+        );
       }
 
       try {

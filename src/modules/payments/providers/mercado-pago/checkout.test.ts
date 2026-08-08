@@ -225,6 +225,33 @@ test("Mercado Pago client reads safe persisted preference diagnostics", async ()
   assert.equal(JSON.stringify(result).includes("12345678909"), false);
 });
 
+test("Mercado Pago client reports only the safe provider code when preference lookup fails", async () => {
+  const clientModule = await import("./client.js") as unknown as {
+    createMercadoPagoCheckoutClient?: (input: { fetchImpl: typeof fetch }) => CheckoutClient;
+  };
+  const secret = "TEST-private-token-must-not-leak";
+  const client = clientModule.createMercadoPagoCheckoutClient!({
+    fetchImpl: async () => new Response(JSON.stringify({
+      error: "invalid_access_token",
+      message: `sensitive provider detail containing ${secret}`,
+    }), { status: 401, headers: { "content-type": "application/json" } }),
+  });
+
+  await assert.rejects(
+    client.getPreference({ accessToken: secret, preferenceId: "preference-123" }),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal(
+        error.message,
+        "Mercado Pago preference request failed (status 401: invalid_access_token)",
+      );
+      assert.equal(error.message.includes(secret), false);
+      assert.equal(error.message.includes("sensitive provider detail"), false);
+      return true;
+    },
+  );
+});
+
 test("Mercado Pago client rejects malformed responses without leaking provider payloads", async () => {
   const clientModule = await import("./client.js") as unknown as {
     createMercadoPagoCheckoutClient?: (input: { fetchImpl: typeof fetch }) => CheckoutClient;
