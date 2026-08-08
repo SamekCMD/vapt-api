@@ -2,6 +2,7 @@ import { AppError } from "../../../../lib/errors.js";
 
 const TOKEN_ENDPOINT = "https://api.mercadopago.com/oauth/token";
 const PREFERENCE_ENDPOINT = "https://api.mercadopago.com/checkout/preferences";
+const SANDBOX_MARKETPLACE_FEE = 0.01;
 
 export type MercadoPagoTokenResponse = {
   accessToken: string;
@@ -332,7 +333,9 @@ export function createMercadoPagoCheckoutClient(input: {
             },
             auto_return: "approved",
             notification_url: preference.notificationUrl.toString(),
-            marketplace_fee: 0,
+            marketplace_fee: preference.accessToken.startsWith("TEST-")
+              ? SANDBOX_MARKETPLACE_FEE
+              : 0,
           }),
         });
       } catch {

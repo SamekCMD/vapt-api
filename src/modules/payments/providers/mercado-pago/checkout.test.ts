@@ -93,7 +93,7 @@ test("Mercado Pago client creates a hosted preference from server-owned payment 
     },
     auto_return: "approved",
     notification_url: "https://api.vapt.example.com/payments/mercado-pago/webhook",
-    marketplace_fee: 0,
+    marketplace_fee: 0.01,
   });
   assert.equal(result.preferenceId, "preference-123");
   assert.equal(
@@ -109,6 +109,40 @@ test("Mercado Pago client creates a hosted preference from server-owned payment 
     checkoutHost: "www.mercadopago.com.br",
     sandboxCheckoutHost: "sandbox.mercadopago.com.br",
   });
+});
+
+test("Mercado Pago client preserves zero marketplace fee in production", async () => {
+  const clientModule = await import("./client.js") as unknown as {
+    createMercadoPagoCheckoutClient?: (input: { fetchImpl: typeof fetch }) => CheckoutClient;
+  };
+  let requestBody: Record<string, unknown> | null = null;
+  const client = clientModule.createMercadoPagoCheckoutClient!({
+    fetchImpl: async (_input, init) => {
+      requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return new Response(JSON.stringify({
+        id: "preference-production",
+        init_point: "https://www.mercadopago.com.br/checkout/v1/redirect?pref_id=preference-production",
+      }), { status: 201, headers: { "content-type": "application/json" } });
+    },
+  });
+
+  await client.createPreference({
+    accessToken: "APP_USR-production-access-token",
+    transactionId: "transaction-production",
+    restaurantId: "restaurant-production",
+    orderId: "order-production",
+    amount: { amount: "10.00", currency: "BRL" },
+    description: "Pedido em produção",
+    returnUrls: {
+      success: new URL("https://vapt.example.com/payment/return?result=success"),
+      pending: new URL("https://vapt.example.com/payment/return?result=pending"),
+      failure: new URL("https://vapt.example.com/payment/return?result=failure"),
+    },
+    notificationUrl: new URL("https://api.vapt.example.com/payments/mercado-pago/webhook"),
+  });
+
+  const capturedBody = requestBody as unknown as Record<string, unknown>;
+  assert.equal(capturedBody.marketplace_fee, 0);
 });
 
 test("Mercado Pago client rejects malformed responses without leaking provider payloads", async () => {
