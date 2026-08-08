@@ -155,7 +155,7 @@ test("Mercado Pago provider resolves credentials internally and returns a pendin
 
   assert.deepEqual(provider.getCapabilities(), {
     onlineCheckout: true,
-    webhooks: false,
+    webhooks: true,
     cancellation: false,
     fullRefunds: false,
     partialRefunds: false,

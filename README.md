@@ -35,6 +35,17 @@ Required variables:
 - `SUPABASE_URL`
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `SUPABASE_JWT_SECRET`
+- `FRONTEND_URL`
+- `API_PUBLIC_URL`
+- `PAYMENT_TOKEN_ENCRYPTION_KEY`
+
+Mercado Pago order payments are enabled only when the complete configuration is present:
+
+- `MERCADO_PAGO_CLIENT_ID`
+- `MERCADO_PAGO_CLIENT_SECRET`
+- `MERCADO_PAGO_REDIRECT_URI`
+- `MERCADO_PAGO_WEBHOOK_SECRET`
+- `MERCADO_PAGO_ENVIRONMENT`, which defaults to `sandbox`
 
 The server fails at startup if any required sensitive value is missing or invalid.
 
@@ -75,7 +86,9 @@ docker run --rm -p 3000:3000 --env-file .env vapt-api
 - Create an app from this repository.
 - Configure build using the included `Dockerfile`.
 - Set `CORS_ORIGINS` to your allowed frontend origins.
+- Set `API_PUBLIC_URL` to the externally reachable API origin.
 - Set `STRIPE_WEBHOOK_SIGNING_SECRET` before enabling the Stripe webhook route.
+- Set `MERCADO_PAGO_WEBHOOK_SECRET` to the secret generated for the Mercado Pago Payments webhook.
 - Optionally override `PORT`, `HOST`, `NODE_ENV`, and `LOG_LEVEL` if you need custom infrastructure behavior.
 - Expose container port `3000`.
 - After deploy, verify:
@@ -83,3 +96,4 @@ docker run --rm -p 3000:3000 --env-file .env vapt-api
   - `GET /health/ready`
   - `POST /webhooks/stripe`
   - `POST /webhooks/asaas`
+  - `POST /webhooks/payments/mercado-pago`

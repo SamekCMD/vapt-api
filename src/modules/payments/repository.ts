@@ -114,6 +114,11 @@ export interface PaymentRepository {
     provider: PaymentProviderCode,
     environment: PaymentEnvironment,
   ): Promise<PaymentProviderAccountRecord | null>;
+  findActiveProviderAccountByExternalAccountId(
+    provider: PaymentProviderCode,
+    externalAccountId: string,
+    environment: PaymentEnvironment,
+  ): Promise<PaymentProviderAccountRecord | null>;
   findOrderForManualPayment(orderId: string): Promise<ManualPaymentOrderRecord | null>;
   findTransactionById(transactionId: string): Promise<PaymentTransactionRecord | null>;
   findTransactionByIdempotencyKey(
@@ -318,6 +323,36 @@ export function createPaymentRepository(client: SupabaseClient): PaymentReposito
       };
     },
 
+    async findActiveProviderAccountByExternalAccountId(provider, externalAccountId, environment) {
+      const result = await client
+        .from("payment_provider_accounts")
+        .select("id, restaurant_id, provider, environment, status, external_account_id, capabilities, version")
+        .eq("provider", provider)
+        .eq("external_account_id", externalAccountId)
+        .eq("status", "active")
+        .eq("environment", environment)
+        .maybeSingle<RawProviderAccount>();
+
+      if (result.error) {
+        storageFailure("Failed to load payment provider account");
+      }
+
+      if (!result.data) {
+        return null;
+      }
+
+      return {
+        id: result.data.id,
+        restaurantId: result.data.restaurant_id,
+        provider: result.data.provider,
+        environment: result.data.environment,
+        status: result.data.status,
+        externalAccountId: result.data.external_account_id,
+        capabilities: result.data.capabilities ?? {},
+        version: result.data.version,
+      };
+    },
+
     async findTransactionById(transactionId) {
       const result = await client
         .from("payment_transactions")
@@ -409,17 +444,49 @@ export function createPaymentRepository(client: SupabaseClient): PaymentReposito
         payment_transaction_id: input.paymentTransactionId,
         signature_valid: input.signatureValid,
         payload: input.payload,
+        attempts: 1,
       });
 
       if (!result.error) {
         return { duplicate: false };
       }
 
-      if (isDuplicateError(result.error)) {
+      if (!isDuplicateError(result.error)) {
+        storageFailure("Failed to reserve payment webhook event");
+      }
+
+      const existing = await client
+        .from("payment_webhook_events")
+        .select("status, attempts")
+        .eq("provider", input.provider)
+        .eq("external_event_id", input.externalEventId)
+        .maybeSingle<{ status: string; attempts: number }>();
+      if (existing.error) {
+        storageFailure("Failed to inspect duplicate payment webhook event");
+      }
+      if (existing.data?.status !== "failed") {
         return { duplicate: true };
       }
 
-      storageFailure("Failed to reserve payment webhook event");
+      const retry = await client
+        .from("payment_webhook_events")
+        .update({
+          status: "received",
+          attempts: existing.data.attempts + 1,
+          last_error: null,
+          processed_at: null,
+        })
+        .eq("provider", input.provider)
+        .eq("external_event_id", input.externalEventId)
+        .eq("status", "failed")
+        .eq("attempts", existing.data.attempts)
+        .select("id")
+        .maybeSingle<{ id: string }>();
+      if (retry.error) {
+        storageFailure("Failed to retry payment webhook event");
+      }
+
+      return { duplicate: !retry.data };
     },
 
     async markWebhookEvent(provider, externalEventId, status, lastError) {

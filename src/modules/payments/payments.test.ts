@@ -159,6 +159,10 @@ class InMemoryPaymentRepository implements PaymentRepository {
     return null;
   }
 
+  async findActiveProviderAccountByExternalAccountId() {
+    return null;
+  }
+
   async findTransactionById(transactionId: string) {
     return this.transactions.get(transactionId) ?? null;
   }

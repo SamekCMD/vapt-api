@@ -21,7 +21,7 @@ export function createMercadoPagoPaymentProvider(input: {
     getCapabilities() {
       return {
         onlineCheckout: true,
-        webhooks: false,
+        webhooks: true,
         cancellation: false,
         fullRefunds: false,
         partialRefunds: false,
@@ -79,7 +79,7 @@ export function createMercadoPagoPaymentProvider(input: {
       throw new AppError(
         405,
         "unsupported_operation",
-        "Mercado Pago status synchronization is not available yet",
+        "Mercado Pago status synchronization is handled by the signed webhook flow",
       );
     },
   };

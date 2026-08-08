@@ -42,6 +42,9 @@ Implemented phases:
 - Phase 4 Asaas: public billing routes backed by n8n
 - Phase 5: provider webhooks in `vapt-api` with signature validation and persisted idempotency
 - Phase 6: request validation with Zod and grouped rate limits
+- Payment providers v2: manual payment and hosted Mercado Pago checkout for restaurant orders
+- Mercado Pago OAuth: encrypted restaurant credentials with rotation
+- Mercado Pago webhook: signed, idempotent payment confirmation without n8n
 
 ## Current Public API Surface
 
@@ -74,10 +77,21 @@ Ingest:
 - `POST /ingest/order-feedback`
 - `POST /ingest/push-subscription`
 
+Order payments:
+
+- `POST /orders/:orderId/payments/manual`
+- `POST /orders/:orderId/payments/checkout`
+- `POST /restaurants/:restaurantId/payments/mercado-pago/connect`
+- `GET /restaurants/:restaurantId/payments/mercado-pago/status`
+- `POST /restaurants/:restaurantId/payments/mercado-pago/disconnect`
+- `GET /payments/mercado-pago/oauth/callback`
+
 Webhooks:
 
 - `POST /webhooks/stripe`
 - `POST /webhooks/asaas`
+- `POST /webhooks/payments/mercado-pago`
+- `POST /payments/mercado-pago/webhook` remains as a temporary compatibility alias
 
 ## Security Rules
 
@@ -137,6 +151,20 @@ Processing rule:
 5. mark processed only after successful forward
 6. if forwarding fails, persist failure state for future retry
 
+Mercado Pago order payments use the provider v2 flow instead of n8n:
+
+1. validate the Mercado Pago HMAC signature
+2. reserve the external event id
+3. resolve the restaurant account from the provider account id and environment
+4. fetch the authoritative payment from Mercado Pago
+5. validate transaction, restaurant, currency and server-owned amount
+6. apply the payment state transition atomically
+7. enqueue `release_order_to_kitchen` only when the payment becomes paid
+8. acknowledge duplicates without repeating provider calls or effects
+
+Failed events remain retryable. Processed events cannot be reopened. Stripe and Asaas
+billing integrations remain unchanged during the compatibility period.
+
 ## Authorization Model
 
 Current implementation:
@@ -165,6 +193,14 @@ Important env vars currently required:
 - `SUPABASE_URL`
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `SUPABASE_JWT_SECRET`
+- `FRONTEND_URL`
+- `API_PUBLIC_URL`
+- `PAYMENT_TOKEN_ENCRYPTION_KEY`
+- `MERCADO_PAGO_CLIENT_ID`
+- `MERCADO_PAGO_CLIENT_SECRET`
+- `MERCADO_PAGO_REDIRECT_URI`
+- `MERCADO_PAGO_WEBHOOK_SECRET`
+- `MERCADO_PAGO_ENVIRONMENT`
 
 Useful optional/defaulted env vars:
 

@@ -9,11 +9,14 @@ import { registerHealthRoutes } from "./modules/health/routes.js";
 import type { PaymentProvider } from "./modules/payments/provider.js";
 import { createManualPaymentProvider } from "./modules/payments/providers/manual.js";
 import { createMercadoPagoCheckoutClient } from "./modules/payments/providers/mercado-pago/client.js";
+import { createMercadoPagoPaymentClient } from "./modules/payments/providers/mercado-pago/payment-client.js";
 import { createMercadoPagoPaymentProvider } from "./modules/payments/providers/mercado-pago/payment.js";
 import {
   createMercadoPagoOAuthServiceFromConfig,
   registerMercadoPagoOAuthRoutes,
 } from "./modules/payments/providers/mercado-pago/routes.js";
+import { registerMercadoPagoWebhookRoutes } from "./modules/payments/providers/mercado-pago/webhook-routes.js";
+import { createMercadoPagoWebhookService } from "./modules/payments/providers/mercado-pago/webhook.js";
 import { registerPaymentEffectRoutes } from "./modules/payments/effects-routes.js";
 import { createManualPaymentRoutes, registerHostedCheckoutRoutes } from "./modules/payments/routes.js";
 import { registerPaymentModule } from "./modules/payments/service.js";
@@ -40,14 +43,17 @@ export async function buildApp(config: AppConfig) {
   const mercadoPagoOAuth = config.mercadoPago && config.frontendUrl && config.apiPublicUrl
     ? createMercadoPagoOAuthServiceFromConfig(config)
     : null;
+  const mercadoPagoPaymentClient = config.mercadoPago
+    ? createMercadoPagoPaymentClient()
+    : null;
   if (config.mercadoPago && config.apiPublicUrl && mercadoPagoOAuth) {
     paymentProviders.push(createMercadoPagoPaymentProvider({
       client: createMercadoPagoCheckoutClient(),
       resolveAccessToken: (input) => mercadoPagoOAuth.resolveAccessToken(input),
-      notificationUrl: new URL("/payments/mercado-pago/webhook", config.apiPublicUrl),
+      notificationUrl: new URL("/webhooks/payments/mercado-pago", config.apiPublicUrl),
     }));
   }
-  registerPaymentModule(app, config, paymentProviders);
+  const paymentModule = registerPaymentModule(app, config, paymentProviders);
   await registerRawBody(app);
   await registerCors(app, config);
   await registerHealthRoutes(app);
@@ -56,9 +62,24 @@ export async function buildApp(config: AppConfig) {
   await registerAsaasBillingRoutes(app, config);
   await registerOrderRoutes(app, config);
   await createManualPaymentRoutes(app, config);
-  if (config.mercadoPago && config.frontendUrl && config.apiPublicUrl && mercadoPagoOAuth) {
+  if (
+    config.mercadoPago &&
+    config.frontendUrl &&
+    config.apiPublicUrl &&
+    mercadoPagoOAuth &&
+    mercadoPagoPaymentClient
+  ) {
     await registerMercadoPagoOAuthRoutes(app, config, mercadoPagoOAuth);
     await registerHostedCheckoutRoutes(app, config);
+    await registerMercadoPagoWebhookRoutes(
+      app,
+      createMercadoPagoWebhookService({
+        webhookSecret: config.mercadoPago.webhookSecret,
+        repository: paymentModule.repository,
+        resolveAccessToken: (input) => mercadoPagoOAuth.resolveAccessToken(input),
+        client: mercadoPagoPaymentClient,
+      }),
+    );
   }
   await registerPaymentEffectRoutes(app, config);
   await registerIngestRoutes(app, config);
