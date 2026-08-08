@@ -61,6 +61,9 @@ export interface MercadoPagoOAuthRepository {
     restaurantId: string,
     environment: PaymentEnvironment,
   ): Promise<ProviderCredentialRecord | null>;
+  findProviderAccountById(
+    accountId: string,
+  ): Promise<ProviderCredentialRecord | null>;
   updateProviderTokens(input: {
     accountId: string;
     expectedVersion: number;
@@ -252,6 +255,18 @@ export function createMercadoPagoOAuthRepository(
       return result.data ? mapProviderCredential(result.data) : null;
     },
 
+    async findProviderAccountById(accountId) {
+      const result = await client
+        .from("payment_provider_accounts")
+        .select(PROVIDER_CREDENTIAL_COLUMNS)
+        .eq("id", accountId)
+        .eq("provider", "mercado_pago")
+        .maybeSingle<RawProviderCredential>();
+
+      if (result.error) oauthStorageFailure("Failed to load Mercado Pago connection");
+      return result.data ? mapProviderCredential(result.data) : null;
+    },
+
     async updateProviderTokens(input) {
       const result = await client
         .from("payment_provider_accounts")
@@ -315,6 +330,22 @@ function credentialsAad(restaurantId: string, environment: PaymentEnvironment): 
 
 function tokenExpiration(now: Date, token: MercadoPagoTokenResponse): string {
   return new Date(now.getTime() + token.expiresIn * 1000).toISOString();
+}
+
+function unavailableAccount(): AppError {
+  return new AppError(
+    409,
+    "payment_account_unavailable",
+    "An active Mercado Pago account is required",
+  );
+}
+
+function decryptCredential(cipher: SecretCipher, encrypted: string, aad: string): string {
+  try {
+    return cipher.decrypt(encrypted, aad);
+  } catch {
+    throw unavailableAccount();
+  }
 }
 
 export function createMercadoPagoOAuthService(input: {
@@ -468,6 +499,44 @@ export function createMercadoPagoOAuthService(input: {
       }
 
       return { status: updated.status, tokenExpiresAt: updated.tokenExpiresAt };
+    },
+
+    async resolveAccessToken(resolveInput: {
+      providerAccountId: string;
+      restaurantId: string;
+    }) {
+      let account = await input.repository.findProviderAccountById(
+        resolveInput.providerAccountId,
+      );
+      if (
+        !account ||
+        account.restaurantId !== resolveInput.restaurantId ||
+        account.status !== "active" ||
+        !account.accessTokenEncrypted ||
+        !account.refreshTokenEncrypted ||
+        !account.tokenExpiresAt
+      ) {
+        throw unavailableAccount();
+      }
+
+      const expiration = Date.parse(account.tokenExpiresAt);
+      if (!Number.isFinite(expiration)) throw unavailableAccount();
+      if (expiration <= now().getTime() + 60_000) {
+        await this.refreshConnection({
+          restaurantId: account.restaurantId,
+          environment: account.environment,
+        });
+        account = await input.repository.findProviderAccountById(account.id);
+        if (!account?.accessTokenEncrypted || account.status !== "active") {
+          throw unavailableAccount();
+        }
+      }
+
+      return decryptCredential(
+        input.cipher,
+        account.accessTokenEncrypted,
+        credentialsAad(account.restaurantId, account.environment),
+      );
     },
 
     async getStatus(statusInput: {

@@ -3,6 +3,7 @@ import type { FastifyInstance } from "fastify";
 
 import type { AppConfig } from "../../lib/config.js";
 import { AppError } from "../../lib/errors.js";
+import type { OrderService } from "../orders/service.js";
 import { createRestaurantAccessChecker, type OwnershipLookup } from "../../lib/permissions.js";
 import { createSupabaseAdminClient } from "../../lib/supabase.js";
 import type { PaymentProvider } from "./provider.js";
@@ -26,9 +27,11 @@ import {
 } from "./registry.js";
 import { assertPaymentTransition } from "./state-machine.js";
 import type {
+  CreatePaymentResult,
   NormalizedPayment,
   PaymentEnvironment,
   PaymentMethod,
+  PaymentReturnUrls,
   StartPaymentInput,
 } from "./types.js";
 
@@ -69,6 +72,23 @@ export type ConfirmManualPaymentInput = {
 export interface ManualPaymentService {
   confirm(input: ConfirmManualPaymentInput): Promise<PaymentTransactionRecord>;
 }
+
+export type StartHostedCheckoutInput = {
+  orderId: string;
+  publicOrderToken: string;
+  idempotencyKey: string;
+};
+
+export interface HostedCheckoutService {
+  start(input: StartHostedCheckoutInput): Promise<PaymentTransactionRecord>;
+}
+
+type HostedCheckoutServiceDependencies = {
+  orderService: Pick<OrderService, "getPublicOrder">;
+  paymentService: PaymentService;
+  environment: PaymentEnvironment;
+  returnUrls: PaymentReturnUrls;
+};
 
 type ManualPaymentServiceDependencies = {
   repository: Pick<PaymentRepository, "findOrderForManualPayment">;
@@ -195,7 +215,7 @@ export function createPaymentService(
         return concurrent;
       }
 
-      let payment: NormalizedPayment;
+      let payment: CreatePaymentResult;
       try {
         payment = await provider.createPayment({
           transactionId: transaction.id,
@@ -216,6 +236,9 @@ export function createPaymentService(
           providerStatus: "provider_error",
           externalPaymentId: null,
           transitionedAt: new Date().toISOString(),
+          checkoutUrl: null,
+          expiresAt: null,
+          providerPayload: {},
           effectTypes: null,
         });
         throw error;
@@ -231,6 +254,9 @@ export function createPaymentService(
         providerStatus: payment.providerStatus,
         externalPaymentId: payment.externalPaymentId,
         transitionedAt: payment.occurredAt,
+        checkoutUrl: payment.checkoutUrl?.toString() ?? null,
+        expiresAt: payment.expiresAt,
+        providerPayload: payment.metadata,
         effectTypes:
           payment.status === "paid" ? ["release_order_to_kitchen"] : null,
       });
@@ -238,6 +264,64 @@ export function createPaymentService(
 
     getTransaction(transactionId) {
       return repository.findTransactionById(transactionId);
+    },
+  };
+}
+
+function hostedCheckoutFingerprint(
+  orderId: string,
+  amount: string,
+  environment: PaymentEnvironment,
+): string {
+  return createHash("sha256")
+    .update(JSON.stringify({
+      orderId,
+      provider: "mercado_pago",
+      amount,
+      currency: "BRL",
+      environment,
+    }))
+    .digest("hex");
+}
+
+export function createHostedCheckoutService({
+  orderService,
+  paymentService,
+  environment,
+  returnUrls,
+}: HostedCheckoutServiceDependencies): HostedCheckoutService {
+  return {
+    async start(input) {
+      const order = await orderService.getPublicOrder(input.orderId, input.publicOrderToken);
+      if (
+        PAID_ORDER_STATUSES.has(order.paymentStatus?.trim().toLowerCase() ?? "")
+      ) {
+        throw new AppError(409, "order_already_paid", "Order is already paid");
+      }
+
+      const amount = Number(order.totalPrice);
+      if (!Number.isFinite(amount) || amount <= 0) {
+        throw new AppError(409, "order_not_payable", "Order does not have a payable total");
+      }
+      const normalizedAmount = amount.toFixed(2);
+      const transaction = await paymentService.startPayment({
+        restaurantId: order.restaurantId,
+        orderId: order.orderId,
+        provider: "mercado_pago",
+        environment,
+        amount: { amount: normalizedAmount, currency: "BRL" },
+        paymentMethod: null,
+        processingMode: "online",
+        description: order.displayId === null ? `Pedido ${order.orderId}` : `Pedido ${order.displayId}`,
+        idempotencyKey: input.idempotencyKey,
+        requestFingerprint: hostedCheckoutFingerprint(order.orderId, normalizedAmount, environment),
+        returnUrls,
+      });
+
+      if (!transaction.checkoutUrl) {
+        throw new AppError(502, "checkout_unavailable", "Checkout is not available");
+      }
+      return transaction;
     },
   };
 }

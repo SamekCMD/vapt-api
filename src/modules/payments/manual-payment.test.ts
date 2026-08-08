@@ -77,6 +77,7 @@ function paidTransaction(overrides: Partial<PaymentTransactionRecord> = {}): Pay
     providerStatus: "confirmed_by_operator",
     paymentMethod: "cash",
     processingMode: "manual",
+    providerPayload: {},
     checkoutUrl: null,
     expiresAt: null,
     manuallyConfirmedBy: "user-1",

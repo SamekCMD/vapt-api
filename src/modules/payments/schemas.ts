@@ -20,3 +20,14 @@ export const manualPaymentParamsSchema = z.object({
 export const manualPaymentHeadersSchema = z.object({
   "idempotency-key": z.string().trim().min(8).max(128),
 }).passthrough();
+
+export const hostedCheckoutBodySchema = z.object({}).strict();
+
+export const hostedCheckoutParamsSchema = z.object({
+  orderId: z.string().uuid(),
+}).strict();
+
+export const hostedCheckoutHeadersSchema = z.object({
+  "idempotency-key": z.string().trim().min(8).max(128),
+  "x-vapt-order-token": z.string().trim().min(32).max(256),
+}).passthrough();

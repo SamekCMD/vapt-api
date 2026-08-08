@@ -142,8 +142,10 @@ test("buildApp registers Mercado Pago OAuth routes only when configured", async 
       webhookSecret: "webhook-secret",
       tokenEncryptionKey: Buffer.alloc(32, 5),
       credentialKeyId: "env-v1",
+      environment: "sandbox",
     },
   });
+  assert.deepEqual(app.payments.registry.codes(), ["manual", "mercado_pago"]);
 
   const response = await app.inject({
     method: "POST",

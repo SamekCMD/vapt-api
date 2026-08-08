@@ -187,6 +187,7 @@ class InMemoryPaymentRepository implements PaymentRepository {
       providerStatus: null,
       paymentMethod: input.paymentMethod,
       processingMode: input.processingMode,
+      providerPayload: {},
       manuallyConfirmedBy: input.manuallyConfirmedBy ?? null,
       checkoutUrl: null,
       expiresAt: null,
@@ -207,6 +208,9 @@ class InMemoryPaymentRepository implements PaymentRepository {
       status: input.newStatus,
       providerStatus: input.providerStatus ?? current.providerStatus,
       externalPaymentId: input.externalPaymentId ?? current.externalPaymentId,
+      checkoutUrl: input.checkoutUrl ?? current.checkoutUrl,
+      expiresAt: input.expiresAt ?? current.expiresAt,
+      providerPayload: input.providerPayload,
       version: current.version + (current.status === input.newStatus ? 0 : 1),
     };
     this.transactions.set(updated.id, updated);
@@ -247,10 +251,10 @@ test("payment service creates one transaction and applies provider result atomic
       paymentMethod: "cash",
       externalPaymentId: null,
       providerStatus: "confirmed_by_operator",
-      checkoutUrl: null,
-      expiresAt: null,
+      checkoutUrl: new URL("https://sandbox.mercadopago.com.br/checkout/v1/redirect?pref_id=preference-1"),
+      expiresAt: "2026-07-25T12:31:00.000Z",
+      metadata: { preferenceId: "preference-1" },
       occurredAt: "2026-07-25T12:01:00.000Z",
-      metadata: {},
     };
   };
   const repository = new InMemoryPaymentRepository();
@@ -283,10 +287,16 @@ test("payment service creates one transaction and applies provider result atomic
     providerStatus: "confirmed_by_operator",
     externalPaymentId: null,
     transitionedAt: "2026-07-25T12:01:00.000Z",
+    checkoutUrl: "https://sandbox.mercadopago.com.br/checkout/v1/redirect?pref_id=preference-1",
+    expiresAt: "2026-07-25T12:31:00.000Z",
+    providerPayload: { preferenceId: "preference-1" },
     effectTypes: ["release_order_to_kitchen"],
   });
   assert.equal(result.status, "paid");
   assert.equal(result.version, 2);
+  assert.equal(result.checkoutUrl, "https://sandbox.mercadopago.com.br/checkout/v1/redirect?pref_id=preference-1");
+  assert.equal(result.expiresAt, "2026-07-25T12:31:00.000Z");
+  assert.deepEqual(result.providerPayload, { preferenceId: "preference-1" });
 });
 
 test("payment service reuses an idempotent transaction without calling the provider", async () => {

@@ -1,6 +1,8 @@
 import { parseSecretEncryptionKey } from "./crypto.js";
+import type { PaymentEnvironment } from "../modules/payments/types.js";
 
 const validNodeEnvs = new Set(["development", "test", "production"]);
+const validPaymentEnvironments = new Set<PaymentEnvironment>(["sandbox", "production"]);
 const validLogLevels = new Set([
   "fatal",
   "error",
@@ -42,6 +44,7 @@ export type AppConfig = {
     webhookSecret: string;
     tokenEncryptionKey: Buffer;
     credentialKeyId: string;
+    environment: PaymentEnvironment;
   };
   webhooks: {
     stripe: {
@@ -124,6 +127,13 @@ function parsePositiveInteger(value: string, key: string): number {
   return parsed;
 }
 
+function parsePaymentEnvironment(value: string): PaymentEnvironment {
+  if (!validPaymentEnvironments.has(value as PaymentEnvironment)) {
+    throw new ConfigError("MERCADO_PAGO_ENVIRONMENT must be one of: sandbox, production");
+  }
+  return value as PaymentEnvironment;
+}
+
 export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
   const nodeEnv = getValueOrDefault(env, "NODE_ENV", "production");
   const port = getValueOrDefault(env, "PORT", "3000");
@@ -172,6 +182,9 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
           requireValue(env, "PAYMENT_TOKEN_ENCRYPTION_KEY"),
         ),
         credentialKeyId: "env-v1",
+        environment: parsePaymentEnvironment(
+          getValueOrDefault(env, "MERCADO_PAGO_ENVIRONMENT", "sandbox"),
+        ),
       }
     : undefined;
   const frontendUrl = mercadoPagoEnabled

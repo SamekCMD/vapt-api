@@ -40,6 +40,7 @@ export type PaymentTransactionRecord = {
   providerStatus: string | null;
   paymentMethod: PaymentMethod | null;
   processingMode: PaymentProcessingMode;
+  providerPayload: Readonly<Record<string, unknown>>;
   manuallyConfirmedBy: string | null;
   checkoutUrl: string | null;
   expiresAt: string | null;
@@ -78,6 +79,9 @@ export type ApplyPaymentTransitionInput = {
   providerStatus: string | null;
   externalPaymentId: string | null;
   transitionedAt: string;
+  checkoutUrl: string | null;
+  expiresAt: string | null;
+  providerPayload: Readonly<Record<string, unknown>>;
   effectTypes: string[] | null;
 };
 
@@ -169,6 +173,7 @@ type RawPaymentTransaction = {
   payment_method: PaymentMethod | null;
   processing_mode: PaymentProcessingMode;
   manually_confirmed_by: string | null;
+  provider_payload: Record<string, unknown> | null;
   checkout_url: string | null;
   expires_at: string | null;
   version: number;
@@ -214,6 +219,7 @@ const TRANSACTION_COLUMNS = [
   "payment_method",
   "processing_mode",
   "manually_confirmed_by",
+  "provider_payload",
   "checkout_url",
   "expires_at",
   "version",
@@ -247,6 +253,7 @@ function mapTransaction(row: RawPaymentTransaction): PaymentTransactionRecord {
     providerStatus: row.provider_status,
     paymentMethod: row.payment_method,
     processingMode: row.processing_mode,
+    providerPayload: row.provider_payload ?? {},
     manuallyConfirmedBy: row.manually_confirmed_by,
     checkoutUrl: row.checkout_url,
     expiresAt: row.expires_at,
@@ -371,13 +378,16 @@ export function createPaymentRepository(client: SupabaseClient): PaymentReposito
 
     async applyPaymentTransition(input) {
       const result = await client
-        .rpc("apply_payment_transition", {
+        .rpc("apply_payment_transition_v2", {
           p_transaction_id: input.transactionId,
           p_expected_version: input.expectedVersion,
           p_new_status: input.newStatus,
           p_provider_status: input.providerStatus,
           p_external_payment_id: input.externalPaymentId,
           p_transitioned_at: input.transitionedAt,
+          p_checkout_url: input.checkoutUrl,
+          p_expires_at: input.expiresAt,
+          p_provider_payload: input.providerPayload,
           p_effect_types: input.effectTypes,
         })
         .single<RawPaymentTransaction>();

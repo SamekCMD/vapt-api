@@ -44,7 +44,7 @@ export type MercadoPagoOAuthRouteService = Pick<
   "beginConnection" | "handleCallback" | "getStatus" | "disconnect"
 >;
 
-function createRouteService(config: AppConfig): MercadoPagoOAuthService {
+export function createMercadoPagoOAuthServiceFromConfig(config: AppConfig): MercadoPagoOAuthService {
   if (!config.mercadoPago || !config.frontendUrl) {
     throw new AppError(
       503,
@@ -79,7 +79,7 @@ export async function registerMercadoPagoOAuthRoutes(
   config: AppConfig,
   service?: MercadoPagoOAuthRouteService,
 ) {
-  const resolvedService = service ?? createRouteService(config);
+  const resolvedService = service ?? createMercadoPagoOAuthServiceFromConfig(config);
   if (!config.frontendUrl) {
     throw new AppError(
       503,

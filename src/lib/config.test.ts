@@ -216,6 +216,7 @@ test("createConfig enables Mercado Pago only with a complete secure configuratio
   );
   assert.deepEqual(config.mercadoPago?.tokenEncryptionKey, Buffer.alloc(32, 4));
   assert.equal(config.mercadoPago?.credentialKeyId, "env-v1");
+  assert.equal(config.mercadoPago?.environment, "sandbox");
   assert.equal(config.frontendUrl?.toString(), "https://app.vapt.test/");
   assert.equal(config.apiPublicUrl?.toString(), "https://api.vapt.test/");
 });

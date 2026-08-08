@@ -83,6 +83,9 @@ function createMemoryRepository() {
         ? account
         : null;
     },
+    async findProviderAccountById(accountId) {
+      return account?.id === accountId ? account : null;
+    },
     async updateProviderTokens(input) {
       if (!account || account.id !== input.accountId || account.version !== input.expectedVersion) {
         return null;
@@ -340,6 +343,86 @@ test("refreshConnection replaces both access and refresh tokens atomically", asy
   assert.equal(cipher.decrypt(account.refreshTokenEncrypted!, aad), "TG-new-refresh");
 });
 
+test("checkout credential resolver decrypts an active token without exposing it through routes", async () => {
+  const fixture = createService();
+  const connection = await fixture.service.beginConnection({
+    restaurantId: RESTAURANT_ID,
+    userId: "owner-1",
+    environment: "sandbox",
+  });
+  const state = new URL(connection.authorizationUrl).searchParams.get("state")!;
+  await fixture.service.handleCallback({ state, code: "authorization-code" });
+  const service = fixture.service as unknown as {
+    resolveAccessToken?: (input: {
+      providerAccountId: string;
+      restaurantId: string;
+    }) => Promise<string>;
+  };
+
+  assert.equal(typeof service.resolveAccessToken, "function");
+  const token = await service.resolveAccessToken!({
+    providerAccountId: "account-1",
+    restaurantId: RESTAURANT_ID,
+  });
+
+  assert.equal(token, "APP_USR-access-token");
+  assert.equal(fixture.refreshCalls, 0);
+});
+
+test("checkout credential resolver refreshes a token near expiration", async () => {
+  const fixture = createService({
+    exchange: async () => tokenResponse({ expiresIn: 30 }),
+    refresh: async () => tokenResponse({
+      accessToken: "APP_USR-refreshed-access",
+      refreshToken: "TG-refreshed-token",
+    }),
+  });
+  const connection = await fixture.service.beginConnection({
+    restaurantId: RESTAURANT_ID,
+    userId: "owner-1",
+    environment: "sandbox",
+  });
+  const state = new URL(connection.authorizationUrl).searchParams.get("state")!;
+  await fixture.service.handleCallback({ state, code: "authorization-code" });
+  const service = fixture.service as unknown as {
+    resolveAccessToken?: (input: {
+      providerAccountId: string;
+      restaurantId: string;
+    }) => Promise<string>;
+  };
+
+  assert.equal(typeof service.resolveAccessToken, "function");
+  const token = await service.resolveAccessToken!({
+    providerAccountId: "account-1",
+    restaurantId: RESTAURANT_ID,
+  });
+
+  assert.equal(token, "APP_USR-refreshed-access");
+  assert.equal(fixture.refreshCalls, 1);
+});
+
+test("checkout credential resolver rejects an account from another restaurant", async () => {
+  const fixture = createService();
+  const service = fixture.service as unknown as {
+    resolveAccessToken?: (input: {
+      providerAccountId: string;
+      restaurantId: string;
+    }) => Promise<string>;
+  };
+  assert.equal(typeof service.resolveAccessToken, "function");
+
+  await assert.rejects(
+    service.resolveAccessToken!({
+      providerAccountId: "account-1",
+      restaurantId: "20000000-0000-4000-8000-000000000002",
+    }),
+    (error: unknown) =>
+      error instanceof AppError &&
+      error.statusCode === 409 &&
+      error.code === "payment_account_unavailable",
+  );
+});
+
 test("status and disconnect never expose credentials", async () => {
   const fixture = createService();
   const connection = await fixture.service.beginConnection({
@@ -525,6 +608,7 @@ const routeConfig: AppConfig = {
     webhookSecret: "webhook-secret",
     tokenEncryptionKey: encryptionKey,
     credentialKeyId: "env-v1",
+    environment: "sandbox",
   },
 };
 

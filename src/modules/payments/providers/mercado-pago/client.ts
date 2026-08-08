@@ -1,6 +1,7 @@
 import { AppError } from "../../../../lib/errors.js";
 
 const TOKEN_ENDPOINT = "https://api.mercadopago.com/oauth/token";
+const PREFERENCE_ENDPOINT = "https://api.mercadopago.com/checkout/preferences";
 
 export type MercadoPagoTokenResponse = {
   accessToken: string;
@@ -23,6 +24,28 @@ export type MercadoPagoOAuthClient = {
     refreshToken: string;
   }) => Promise<MercadoPagoTokenResponse>;
 };
+export type MercadoPagoPreferenceInput = {
+  accessToken: string;
+  transactionId: string;
+  restaurantId: string;
+  orderId: string;
+  amount: { amount: string; currency: string };
+  description: string;
+  returnUrls: { success: URL; pending: URL; failure: URL };
+  notificationUrl: URL;
+};
+
+export type MercadoPagoPreferenceResult = {
+  preferenceId: string;
+  checkoutUrl: URL;
+};
+
+export type MercadoPagoCheckoutClient = {
+  createPreference(
+    input: MercadoPagoPreferenceInput,
+  ): Promise<MercadoPagoPreferenceResult>;
+};
+
 
 type FetchLike = typeof fetch;
 
@@ -38,6 +61,12 @@ type RawTokenResponse = {
 
 type RawOAuthError = {
   error?: unknown;
+};
+
+type RawPreferenceResponse = {
+  id?: unknown;
+  init_point?: unknown;
+  sandbox_init_point?: unknown;
 };
 
 async function readSafeProviderError(response: Response): Promise<string | null> {
@@ -186,6 +215,95 @@ export function createMercadoPagoOAuthClient(input: {
         grant_type: "refresh_token",
         refresh_token: refreshInput.refreshToken,
       });
+    },
+  };
+}
+
+function isMercadoPagoCheckoutUrl(url: URL): boolean {
+  if (url.protocol !== "https:") return false;
+  return url.hostname === "mercadopago.com" ||
+    url.hostname.endsWith(".mercadopago.com") ||
+    url.hostname === "mercadopago.com.br" ||
+    url.hostname.endsWith(".mercadopago.com.br");
+}
+
+function mapPreferenceResponse(value: RawPreferenceResponse): MercadoPagoPreferenceResult {
+  if (typeof value.id !== "string" || value.id.length === 0) {
+    throw new AppError(502, "mercado_pago_checkout_failed", "Mercado Pago returned an invalid checkout response");
+  }
+
+  let checkoutUrl: URL;
+  try {
+    checkoutUrl = new URL(typeof value.init_point === "string" ? value.init_point : "");
+  } catch {
+    throw new AppError(502, "mercado_pago_checkout_failed", "Mercado Pago returned an invalid checkout response");
+  }
+  if (!isMercadoPagoCheckoutUrl(checkoutUrl)) {
+    throw new AppError(502, "mercado_pago_checkout_failed", "Mercado Pago returned an invalid checkout response");
+  }
+
+  return { preferenceId: value.id, checkoutUrl };
+}
+
+export function createMercadoPagoCheckoutClient(input: {
+  fetchImpl?: FetchLike;
+} = {}): MercadoPagoCheckoutClient {
+  const fetchImpl = input.fetchImpl ?? fetch;
+
+  return {
+    async createPreference(preference) {
+      const amount = Number(preference.amount.amount);
+      if (!Number.isFinite(amount) || amount <= 0 || preference.amount.currency !== "BRL") {
+        throw new AppError(409, "order_not_payable", "Order does not have a payable total");
+      }
+
+      let response: Response;
+      try {
+        response = await fetchImpl(PREFERENCE_ENDPOINT, {
+          method: "POST",
+          headers: {
+            accept: "application/json",
+            authorization: `Bearer ${preference.accessToken}`,
+            "content-type": "application/json",
+          },
+          signal: AbortSignal.timeout(10_000),
+          body: JSON.stringify({
+            items: [{
+              id: preference.orderId,
+              title: preference.description,
+              quantity: 1,
+              currency_id: preference.amount.currency,
+              unit_price: amount,
+            }],
+            external_reference: preference.transactionId,
+            metadata: {
+              transaction_id: preference.transactionId,
+              restaurant_id: preference.restaurantId,
+              order_id: preference.orderId,
+            },
+            back_urls: {
+              success: preference.returnUrls.success.toString(),
+              pending: preference.returnUrls.pending.toString(),
+              failure: preference.returnUrls.failure.toString(),
+            },
+            auto_return: "approved",
+            notification_url: preference.notificationUrl.toString(),
+          }),
+        });
+      } catch {
+        throw new AppError(502, "mercado_pago_checkout_failed", "Mercado Pago checkout request failed");
+      }
+
+      if (!response.ok) {
+        throw new AppError(424, "mercado_pago_checkout_failed", "Mercado Pago checkout request failed");
+      }
+
+      try {
+        return mapPreferenceResponse(await response.json() as RawPreferenceResponse);
+      } catch (error) {
+        if (error instanceof AppError) throw error;
+        throw new AppError(502, "mercado_pago_checkout_failed", "Mercado Pago returned an invalid checkout response");
+      }
     },
   };
 }
