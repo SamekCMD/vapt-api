@@ -526,6 +526,7 @@ export function createMercadoPagoCheckoutClient(input: {
             },
             auto_return: "approved",
             notification_url: preference.notificationUrl.toString(),
+            marketplace_fee: 0,
           }),
         });
       } catch {
