@@ -586,3 +586,60 @@ test("payment diagnostics preserve the payment attempt when preference lookup fa
   assert.equal(JSON.stringify(result).includes("TEST-private-token"), false);
   assert.equal(JSON.stringify(result).includes("APP_USR-application-token"), false);
 });
+
+test("Mercado Pago return URLs use the API relay instead of pointing directly to the frontend", async () => {
+  const routesModule = await import("./routes.js") as unknown as {
+    createMercadoPagoReturnUrls?: (config: AppConfig) => {
+      success: URL;
+      pending: URL;
+      failure: URL;
+    };
+  };
+
+  assert.equal(typeof routesModule.createMercadoPagoReturnUrls, "function");
+  const urls = routesModule.createMercadoPagoReturnUrls!(validConfig);
+
+  assert.equal(
+    urls.success.toString(),
+    "https://api.vapt.example.com/payments/mercado-pago/return?result=success",
+  );
+  assert.equal(
+    urls.pending.toString(),
+    "https://api.vapt.example.com/payments/mercado-pago/return?result=pending",
+  );
+  assert.equal(
+    urls.failure.toString(),
+    "https://api.vapt.example.com/payments/mercado-pago/return?result=failure",
+  );
+});
+
+test("Mercado Pago return relay redirects to the fixed frontend and preserves only safe parameters", async () => {
+  const routesModule = await import("./routes.js") as unknown as {
+    registerMercadoPagoReturnRoutes?: (
+      app: ReturnType<typeof Fastify>,
+      config: AppConfig,
+    ) => Promise<void>;
+  };
+
+  assert.equal(typeof routesModule.registerMercadoPagoReturnRoutes, "function");
+  const app = Fastify({ logger: false });
+  await routesModule.registerMercadoPagoReturnRoutes!(app, validConfig);
+
+  const response = await app.inject({
+    method: "GET",
+    url: "/payments/mercado-pago/return?result=success&payment_id=123&status=approved&external_reference=transaction-456&preference_id=preference-789&unsafe_secret=hidden",
+  });
+
+  assert.equal(response.statusCode, 302);
+  const location = new URL(response.headers.location!);
+  assert.equal(location.origin, "https://vapt.example.com");
+  assert.equal(location.pathname, "/payment/return");
+  assert.equal(location.searchParams.get("result"), "success");
+  assert.equal(location.searchParams.get("payment_id"), "123");
+  assert.equal(location.searchParams.get("status"), "approved");
+  assert.equal(location.searchParams.get("external_reference"), "transaction-456");
+  assert.equal(location.searchParams.get("preference_id"), "preference-789");
+  assert.equal(location.searchParams.has("unsafe_secret"), false);
+
+  await app.close();
+});

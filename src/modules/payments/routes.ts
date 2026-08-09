@@ -1,4 +1,4 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply } from "fastify";
 
 import type { AppConfig } from "../../lib/config.js";
 import { AppError } from "../../lib/errors.js";
@@ -35,6 +35,73 @@ export type MercadoPagoPaymentDiagnosticsService = {
     publicOrderToken: string;
   }): Promise<Readonly<Record<string, unknown>>>;
 };
+
+const SAFE_MERCADO_PAGO_RETURN_PARAMS = [
+  "payment_id",
+  "status",
+  "external_reference",
+  "merchant_order_id",
+  "preference_id",
+] as const;
+
+function queryStringValue(value: unknown): string | null {
+  return typeof value === "string" && value.length <= 256 ? value : null;
+}
+
+export function createMercadoPagoReturnUrls(config: AppConfig) {
+  if (!config.apiPublicUrl) {
+    throw new AppError(503, "mercado_pago_not_configured", "Mercado Pago return URL is not configured");
+  }
+
+  const createUrl = (result: "success" | "pending" | "failure") => {
+    const url = new URL("/payments/mercado-pago/return", config.apiPublicUrl);
+    url.searchParams.set("result", result);
+    return url;
+  };
+
+  return {
+    success: createUrl("success"),
+    pending: createUrl("pending"),
+    failure: createUrl("failure"),
+  };
+}
+
+export async function registerMercadoPagoReturnRoutes(
+  app: FastifyInstance,
+  config: AppConfig,
+) {
+  if (!config.frontendUrl) {
+    throw new AppError(503, "mercado_pago_not_configured", "Mercado Pago frontend return is not configured");
+  }
+
+  app.get(
+    "/payments/mercado-pago/return",
+    async (request, reply: FastifyReply) => {
+      const query = request.query as Record<string, unknown>;
+      const requestedResult = queryStringValue(query.result);
+      const result = requestedResult === "success" || requestedResult === "pending"
+        ? requestedResult
+        : "failure";
+      const destination = new URL("/payment/return", config.frontendUrl);
+      destination.searchParams.set("result", result);
+
+      for (const parameter of SAFE_MERCADO_PAGO_RETURN_PARAMS) {
+        const value = queryStringValue(query[parameter]);
+        if (value !== null) destination.searchParams.set(parameter, value);
+      }
+
+      request.log.info({
+        result,
+        paymentId: destination.searchParams.get("payment_id"),
+        status: destination.searchParams.get("status"),
+        externalReference: destination.searchParams.get("external_reference"),
+        preferenceId: destination.searchParams.get("preference_id"),
+      }, "Mercado Pago browser returned from checkout");
+
+      return reply.redirect(destination.toString());
+    },
+  );
+}
 
 export async function createManualPaymentRoutes(
   app: FastifyInstance,
@@ -85,7 +152,7 @@ export async function registerHostedCheckoutRoutes(
   config: AppConfig,
   service?: HostedCheckoutService,
 ) {
-  if (!config.mercadoPago || !config.frontendUrl) {
+  if (!config.mercadoPago || !config.frontendUrl || !config.apiPublicUrl) {
     throw new AppError(
       503,
       "mercado_pago_not_configured",
@@ -101,11 +168,7 @@ export async function registerHostedCheckoutRoutes(
     ),
     paymentService: app.payments.service,
     environment: config.mercadoPago.environment,
-    returnUrls: {
-      success: new URL("/payment/return?result=success", config.frontendUrl),
-      pending: new URL("/payment/return?result=pending", config.frontendUrl),
-      failure: new URL("/payment/return?result=failure", config.frontendUrl),
-    },
+    returnUrls: createMercadoPagoReturnUrls(config),
   });
 
   app.post(

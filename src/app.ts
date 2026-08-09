@@ -26,6 +26,7 @@ import {
   createManualPaymentRoutes,
   registerHostedCheckoutRoutes,
   registerMercadoPagoDiagnosticsRoutes,
+  registerMercadoPagoReturnRoutes,
 } from "./modules/payments/routes.js";
 import {
   createMercadoPagoPaymentDiagnosticsService,
@@ -92,6 +93,7 @@ export async function buildApp(config: AppConfig) {
     mercadoPagoPaymentClient
   ) {
     await registerMercadoPagoOAuthRoutes(app, config, mercadoPagoOAuth);
+    await registerMercadoPagoReturnRoutes(app, config);
     await registerHostedCheckoutRoutes(app, config);
     await registerMercadoPagoDiagnosticsRoutes(
       app,
