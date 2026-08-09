@@ -447,14 +447,20 @@ function mapPersistedPreference(value: RawPreferenceResponse): MercadoPagoPersis
   };
 }
 
-function mapPreferenceResponse(value: RawPreferenceResponse): MercadoPagoPreferenceResult {
+function mapPreferenceResponse(
+  value: RawPreferenceResponse,
+  environment: "sandbox" | "production",
+): MercadoPagoPreferenceResult {
   if (typeof value.id !== "string" || value.id.length === 0) {
     throw new AppError(502, "mercado_pago_checkout_failed", "Mercado Pago returned an invalid checkout response");
   }
 
   let checkoutUrl: URL;
   try {
-    checkoutUrl = new URL(typeof value.init_point === "string" ? value.init_point : "");
+    const rawCheckoutUrl = environment === "sandbox"
+      ? value.sandbox_init_point
+      : value.init_point;
+    checkoutUrl = new URL(typeof rawCheckoutUrl === "string" ? rawCheckoutUrl : "");
   } catch {
     throw new AppError(502, "mercado_pago_checkout_failed", "Mercado Pago returned an invalid checkout response");
   }
@@ -531,7 +537,10 @@ export function createMercadoPagoCheckoutClient(input: {
       }
 
       try {
-        return mapPreferenceResponse(await response.json() as RawPreferenceResponse);
+        return mapPreferenceResponse(
+          await response.json() as RawPreferenceResponse,
+          preference.environment,
+        );
       } catch (error) {
         if (error instanceof AppError) throw error;
         throw new AppError(502, "mercado_pago_checkout_failed", "Mercado Pago returned an invalid checkout response");

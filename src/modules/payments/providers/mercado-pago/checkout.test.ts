@@ -104,7 +104,7 @@ test("Mercado Pago client creates a hosted preference from server-owned payment 
   assert.equal(result.preferenceId, "preference-123");
   assert.equal(
     result.checkoutUrl.toString(),
-    "https://www.mercadopago.com.br/checkout/v1/redirect?pref_id=preference-123",
+    "https://sandbox.mercadopago.com.br/checkout/v1/redirect?pref_id=preference-123",
   );
   assert.deepEqual(result.diagnostics, {
     collectorId: "3595396809",
@@ -112,7 +112,7 @@ test("Mercado Pago client creates a hosted preference from server-owned payment 
     marketplace: "MP-MKT-883582241802094",
     siteId: "MLB",
     operationType: "regular_payment",
-    checkoutHost: "www.mercadopago.com.br",
+    checkoutHost: "sandbox.mercadopago.com.br",
     sandboxCheckoutHost: "sandbox.mercadopago.com.br",
   });
 });
@@ -128,11 +128,12 @@ test("Mercado Pago client omits the default zero marketplace fee in production",
       return new Response(JSON.stringify({
         id: "preference-production",
         init_point: "https://www.mercadopago.com.br/checkout/v1/redirect?pref_id=preference-production",
+        sandbox_init_point: "https://sandbox.mercadopago.com.br/checkout/v1/redirect?pref_id=preference-production",
       }), { status: 201, headers: { "content-type": "application/json" } });
     },
   });
 
-  await client.createPreference({
+  const result = await client.createPreference({
     accessToken: "APP_USR-production-access-token",
     environment: "production",
     transactionId: "transaction-production",
@@ -150,6 +151,10 @@ test("Mercado Pago client omits the default zero marketplace fee in production",
 
   const capturedBody = requestBody as unknown as Record<string, unknown>;
   assert.equal("marketplace_fee" in capturedBody, false);
+  assert.equal(
+    result.checkoutUrl.toString(),
+    "https://www.mercadopago.com.br/checkout/v1/redirect?pref_id=preference-production",
+  );
 });
 
 test("Mercado Pago client reads safe persisted preference diagnostics", async () => {
