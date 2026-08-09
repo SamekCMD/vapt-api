@@ -257,6 +257,29 @@ test("Mercado Pago client reports only the safe provider code when preference lo
   );
 });
 
+test("Mercado Pago client normalizes a safe provider message when error code is absent", async () => {
+  const clientModule = await import("./client.js") as unknown as {
+    createMercadoPagoCheckoutClient?: (input: { fetchImpl: typeof fetch }) => CheckoutClient;
+  };
+  const client = clientModule.createMercadoPagoCheckoutClient!({
+    fetchImpl: async () => new Response(JSON.stringify({
+      message: "Access denied",
+    }), { status: 403, headers: { "content-type": "application/json" } }),
+  });
+
+  await assert.rejects(
+    client.getPreference({ accessToken: "TEST-private-token", preferenceId: "preference-123" }),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal(
+        error.message,
+        "Mercado Pago preference request failed (status 403: access_denied)",
+      );
+      return true;
+    },
+  );
+});
+
 test("Mercado Pago application token resolver uses the client credentials flow", async () => {
   const clientModule = await import("./client.js") as unknown as {
     createMercadoPagoApplicationAccessTokenResolver?: (input: {

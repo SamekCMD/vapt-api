@@ -105,6 +105,7 @@ type RawApplicationTokenResponse = {
 
 type RawOAuthError = {
   error?: unknown;
+  message?: unknown;
 };
 
 type RawPreferenceResponse = {
@@ -136,6 +137,19 @@ async function readSafeProviderError(response: Response): Promise<string | null>
       /^[a-z0-9_]{1,64}$/i.test(payload.error)
     ) {
       return payload.error;
+    }
+
+    if (
+      typeof payload.message === "string" &&
+      payload.message.length <= 80 &&
+      /^[a-z0-9 ._-]+$/i.test(payload.message)
+    ) {
+      const normalized = payload.message
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "_")
+        .replace(/^_+|_+$/g, "");
+      return /^[a-z0-9_]{1,64}$/.test(normalized) ? normalized : null;
     }
   } catch {
     // Provider responses are untrusted; omit malformed details.

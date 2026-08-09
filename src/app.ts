@@ -98,6 +98,8 @@ export async function buildApp(config: AppConfig) {
         ),
         paymentService: paymentModule.service,
         resolveAccessToken: (input) => mercadoPagoOAuth.resolveAccessToken(input),
+        resolveProviderAccountDiagnostics: (input) =>
+          mercadoPagoOAuth.getSafeAccountDiagnostics(input),
         paymentClient: mercadoPagoPaymentClient,
         checkoutClient: mercadoPagoCheckoutClient!,
       }),

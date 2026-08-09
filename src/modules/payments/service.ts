@@ -93,6 +93,12 @@ export type MercadoPagoPaymentDiagnostics = {
   transactionId: string;
   transactionStatus: PaymentStatus;
   found: boolean;
+  providerAccount?: {
+    externalAccountId: string | null;
+    environment: PaymentEnvironment;
+    scope: string | null;
+    liveMode: boolean | null;
+  };
   preference: MercadoPagoPersistedPreferenceDiagnostics | null;
   attempt: {
     paymentId: string;
@@ -128,6 +134,15 @@ type MercadoPagoPaymentDiagnosticsDependencies = {
     providerAccountId: string;
     restaurantId: string;
   }): Promise<string>;
+  resolveProviderAccountDiagnostics?(input: {
+    providerAccountId: string;
+    restaurantId: string;
+  }): Promise<{
+    externalAccountId: string | null;
+    environment: PaymentEnvironment;
+    scope: string | null;
+    liveMode: boolean | null;
+  } | null>;
   paymentClient: Pick<MercadoPagoPaymentClient, "searchPayments">;
   checkoutClient: Pick<MercadoPagoCheckoutClient, "getPreference">;
 };
@@ -153,6 +168,11 @@ function extractProviderStatusCode(message: string): number | null {
 
   const statusCode = Number(match[1]);
   return statusCode >= 400 && statusCode <= 599 ? statusCode : null;
+}
+
+function extractProviderReason(message: string): string | null {
+  const match = message.match(/\bstatus \d{3}: ([a-z0-9_]{1,64})\b/i);
+  return match?.[1]?.toLowerCase() ?? null;
 }
 
 function optionalDiagnosticString(value: unknown): string | null {
@@ -407,6 +427,7 @@ export function createMercadoPagoPaymentDiagnosticsService({
   orderService,
   paymentService,
   resolveAccessToken,
+  resolveProviderAccountDiagnostics,
   paymentClient,
   checkoutClient,
 }: MercadoPagoPaymentDiagnosticsDependencies): MercadoPagoPaymentDiagnosticsService {
@@ -428,6 +449,10 @@ export function createMercadoPagoPaymentDiagnosticsService({
         providerAccountId: transaction.providerAccountId,
         restaurantId: transaction.restaurantId,
       });
+      const providerAccount = await resolveProviderAccountDiagnostics?.({
+        providerAccountId: transaction.providerAccountId,
+        restaurantId: transaction.restaurantId,
+      }) ?? null;
       const payments = await paymentClient.searchPayments({
         accessToken,
         externalReference: transaction.id,
@@ -448,6 +473,7 @@ export function createMercadoPagoPaymentDiagnosticsService({
         code: string;
         statusCode: number;
         providerStatusCode?: number;
+        providerReason?: string;
       } | null = null;
       if (preferenceId) {
         try {
@@ -461,10 +487,12 @@ export function createMercadoPagoPaymentDiagnosticsService({
           preferenceLookup = "unavailable";
           if (error instanceof AppError) {
             const providerStatusCode = extractProviderStatusCode(error.message);
+            const providerReason = extractProviderReason(error.message);
             preferenceLookupError = {
               code: error.code,
               statusCode: error.statusCode,
               ...(providerStatusCode ? { providerStatusCode } : {}),
+              ...(providerReason ? { providerReason } : {}),
             };
           }
         }
@@ -474,6 +502,7 @@ export function createMercadoPagoPaymentDiagnosticsService({
         transactionId: transaction.id,
         transactionStatus: transaction.status,
         found: attempt !== null,
+        ...(providerAccount ? { providerAccount } : {}),
         createdPreference,
         preference,
         ...(preferenceLookup === "unavailable" ? { preferenceLookup } : {}),

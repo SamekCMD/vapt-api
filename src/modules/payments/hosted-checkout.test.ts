@@ -407,6 +407,12 @@ test("payment diagnostics load the latest Mercado Pago attempt without exposing 
       tokenResolution = input;
       return "TEST-private-token";
     },
+    resolveProviderAccountDiagnostics: async () => ({
+      externalAccountId: "seller-123",
+      environment: "sandbox",
+      scope: "read write offline_access",
+      liveMode: false,
+    }),
     paymentClient: {
       async searchPayments(input: unknown) {
         searchInput = input;
@@ -457,6 +463,12 @@ test("payment diagnostics load the latest Mercado Pago attempt without exposing 
     transactionId: pendingTransaction().id,
     transactionStatus: "pending",
     found: true,
+    providerAccount: {
+      externalAccountId: "seller-123",
+      environment: "sandbox",
+      scope: "read write offline_access",
+      liveMode: false,
+    },
     createdPreference: {
       preferenceId: "preference-123",
       collectorId: "seller-123",
@@ -559,7 +571,7 @@ test("payment diagnostics preserve the payment attempt when preference lookup fa
     },
     checkoutClient: {
       async getPreference() {
-        throw new AppError(424, "mercado_pago_checkout_failed", "Mercado Pago preference request failed (status 403)");
+        throw new AppError(424, "mercado_pago_checkout_failed", "Mercado Pago preference request failed (status 403: access_denied)");
       },
     },
   });
@@ -590,6 +602,7 @@ test("payment diagnostics preserve the payment attempt when preference lookup fa
       code: "mercado_pago_checkout_failed",
       statusCode: 424,
       providerStatusCode: 403,
+      providerReason: "access_denied",
     },
     attempt: {
       paymentId: "987654321",

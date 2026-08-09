@@ -539,6 +539,29 @@ export function createMercadoPagoOAuthService(input: {
       );
     },
 
+    async getSafeAccountDiagnostics(diagnosticsInput: {
+      providerAccountId: string;
+      restaurantId: string;
+    }) {
+      const account = await input.repository.findProviderAccountById(
+        diagnosticsInput.providerAccountId,
+      );
+      if (!account || account.restaurantId !== diagnosticsInput.restaurantId) {
+        return null;
+      }
+
+      return {
+        externalAccountId: account.externalAccountId,
+        environment: account.environment,
+        scope: typeof account.capabilities.scope === "string"
+          ? account.capabilities.scope
+          : null,
+        liveMode: typeof account.capabilities.liveMode === "boolean"
+          ? account.capabilities.liveMode
+          : null,
+      };
+    },
+
     async getStatus(statusInput: {
       restaurantId: string;
       userId: string;

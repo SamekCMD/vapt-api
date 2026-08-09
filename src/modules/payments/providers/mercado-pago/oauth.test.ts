@@ -457,6 +457,31 @@ test("status and disconnect never expose credentials", async () => {
   assert.equal(fixture.memory.account?.refreshTokenEncrypted, null);
 });
 
+test("safe account diagnostics expose OAuth scope without credentials", async () => {
+  const fixture = createService();
+  const connection = await fixture.service.beginConnection({
+    restaurantId: RESTAURANT_ID,
+    userId: "owner-1",
+    environment: "production",
+  });
+  const state = new URL(connection.authorizationUrl).searchParams.get("state")!;
+  await fixture.service.handleCallback({ state, code: "authorization-code" });
+
+  const diagnostics = await fixture.service.getSafeAccountDiagnostics({
+    providerAccountId: "account-1",
+    restaurantId: RESTAURANT_ID,
+  });
+
+  assert.deepEqual(diagnostics, {
+    externalAccountId: "seller-123",
+    environment: "production",
+    scope: "read write offline_access",
+    liveMode: true,
+  });
+  assert.equal(JSON.stringify(diagnostics).includes("APP_USR"), false);
+  assert.equal(JSON.stringify(diagnostics).includes("TG-refresh"), false);
+});
+
 test("Mercado Pago client sends authorization code and refresh grants only to the token endpoint", async () => {
   const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
   const client = createMercadoPagoOAuthClient({
