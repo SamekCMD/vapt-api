@@ -407,6 +407,7 @@ export function createMercadoPagoPaymentDiagnosticsService({
         : null;
       let preference = null;
       let preferenceLookup: "available" | "unavailable" | null = null;
+      let preferenceLookupError: { code: string; statusCode: number } | null = null;
       if (preferenceId) {
         try {
           preference = await checkoutClient.getPreference({
@@ -414,10 +415,15 @@ export function createMercadoPagoPaymentDiagnosticsService({
             preferenceId,
           });
           preferenceLookup = "available";
-        } catch {
-          // A consulta da preferência usa credenciais da aplicação e não pode ocultar
-          // o diagnóstico da tentativa, que usa o token OAuth do vendedor.
+        } catch (error) {
+          // A falha da preferência não deve ocultar a tentativa de pagamento.
           preferenceLookup = "unavailable";
+          if (error instanceof AppError) {
+            preferenceLookupError = {
+              code: error.code,
+              statusCode: error.statusCode,
+            };
+          }
         }
       }
 
@@ -427,6 +433,7 @@ export function createMercadoPagoPaymentDiagnosticsService({
         found: attempt !== null,
         preference,
         ...(preferenceLookup === "unavailable" ? { preferenceLookup } : {}),
+        ...(preferenceLookupError ? { preferenceLookupError } : {}),
         attempt: attempt
           ? {
               paymentId: attempt.id,

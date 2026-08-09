@@ -572,6 +572,10 @@ test("payment diagnostics preserve the payment attempt when preference lookup fa
     found: true,
     preference: null,
     preferenceLookup: "unavailable",
+    preferenceLookupError: {
+      code: "mercado_pago_checkout_failed",
+      statusCode: 424,
+    },
     attempt: {
       paymentId: "987654321",
       status: "rejected",
