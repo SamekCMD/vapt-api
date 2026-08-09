@@ -128,7 +128,6 @@ type MercadoPagoPaymentDiagnosticsDependencies = {
     providerAccountId: string;
     restaurantId: string;
   }): Promise<string>;
-  resolvePreferenceAccessToken(): Promise<string>;
   paymentClient: Pick<MercadoPagoPaymentClient, "searchPayments">;
   checkoutClient: Pick<MercadoPagoCheckoutClient, "getPreference">;
 };
@@ -408,7 +407,6 @@ export function createMercadoPagoPaymentDiagnosticsService({
   orderService,
   paymentService,
   resolveAccessToken,
-  resolvePreferenceAccessToken,
   paymentClient,
   checkoutClient,
 }: MercadoPagoPaymentDiagnosticsDependencies): MercadoPagoPaymentDiagnosticsService {
@@ -453,9 +451,8 @@ export function createMercadoPagoPaymentDiagnosticsService({
       } | null = null;
       if (preferenceId) {
         try {
-          const preferenceAccessToken = await resolvePreferenceAccessToken();
           preference = await checkoutClient.getPreference({
-            accessToken: preferenceAccessToken,
+            accessToken,
             preferenceId,
           });
           preferenceLookup = "available";

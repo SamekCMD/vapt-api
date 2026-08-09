@@ -10,7 +10,6 @@ import { registerHealthRoutes } from "./modules/health/routes.js";
 import type { PaymentProvider } from "./modules/payments/provider.js";
 import { createManualPaymentProvider } from "./modules/payments/providers/manual.js";
 import {
-  createMercadoPagoApplicationAccessTokenResolver,
   createMercadoPagoCheckoutClient,
 } from "./modules/payments/providers/mercado-pago/client.js";
 import { createMercadoPagoPaymentClient } from "./modules/payments/providers/mercado-pago/payment-client.js";
@@ -63,12 +62,6 @@ export async function buildApp(config: AppConfig) {
   const mercadoPagoCheckoutClient = config.mercadoPago
     ? createMercadoPagoCheckoutClient()
     : null;
-  const resolveMercadoPagoApplicationAccessToken = config.mercadoPago
-    ? createMercadoPagoApplicationAccessTokenResolver({
-        clientId: config.mercadoPago.clientId,
-        clientSecret: config.mercadoPago.clientSecret,
-      })
-    : null;
   if (config.mercadoPago && config.apiPublicUrl && mercadoPagoOAuth) {
     paymentProviders.push(createMercadoPagoPaymentProvider({
       client: mercadoPagoCheckoutClient!,
@@ -105,7 +98,6 @@ export async function buildApp(config: AppConfig) {
         ),
         paymentService: paymentModule.service,
         resolveAccessToken: (input) => mercadoPagoOAuth.resolveAccessToken(input),
-        resolvePreferenceAccessToken: resolveMercadoPagoApplicationAccessToken!,
         paymentClient: mercadoPagoPaymentClient,
         checkoutClient: mercadoPagoCheckoutClient!,
       }),
