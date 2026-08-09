@@ -374,7 +374,6 @@ export function createMercadoPagoPaymentDiagnosticsService({
   orderService,
   paymentService,
   resolveAccessToken,
-  resolvePreferenceAccessToken,
   paymentClient,
   checkoutClient,
 }: MercadoPagoPaymentDiagnosticsDependencies): MercadoPagoPaymentDiagnosticsService {
@@ -410,9 +409,8 @@ export function createMercadoPagoPaymentDiagnosticsService({
       let preferenceLookup: "available" | "unavailable" | null = null;
       if (preferenceId) {
         try {
-          const preferenceAccessToken = await resolvePreferenceAccessToken();
           preference = await checkoutClient.getPreference({
-            accessToken: preferenceAccessToken,
+            accessToken,
             preferenceId,
           });
           preferenceLookup = "available";

@@ -427,7 +427,7 @@ test("payment diagnostics load the latest Mercado Pago attempt without exposing 
     checkoutClient: {
       async getPreference(input: unknown) {
         assert.deepEqual(input, {
-          accessToken: "APP_USR-application-token",
+          accessToken: "TEST-private-token",
           preferenceId: "preference-123",
         });
         return {
