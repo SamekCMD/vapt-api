@@ -463,7 +463,6 @@ function mapPersistedPreference(value: RawPreferenceResponse): MercadoPagoPersis
 
 function mapPreferenceResponse(
   value: RawPreferenceResponse,
-  environment: "sandbox" | "production",
 ): MercadoPagoPreferenceResult {
   if (typeof value.id !== "string" || value.id.length === 0) {
     throw new AppError(502, "mercado_pago_checkout_failed", "Mercado Pago returned an invalid checkout response");
@@ -471,9 +470,10 @@ function mapPreferenceResponse(
 
   let checkoutUrl: URL;
   try {
-    const rawCheckoutUrl = environment === "sandbox"
-      ? value.sandbox_init_point
-      : value.init_point;
+    // OAuth test sellers use production-shaped APP_USR credentials. Mercado Pago
+    // documents init_point as the redirect URL for the created preference; forcing
+    // sandbox_init_point from a global flag can mix two different account contexts.
+    const rawCheckoutUrl = value.init_point;
     checkoutUrl = new URL(typeof rawCheckoutUrl === "string" ? rawCheckoutUrl : "");
   } catch {
     throw new AppError(502, "mercado_pago_checkout_failed", "Mercado Pago returned an invalid checkout response");
@@ -554,7 +554,6 @@ export function createMercadoPagoCheckoutClient(input: {
       try {
         return mapPreferenceResponse(
           await response.json() as RawPreferenceResponse,
-          preference.environment,
         );
       } catch (error) {
         if (error instanceof AppError) throw error;

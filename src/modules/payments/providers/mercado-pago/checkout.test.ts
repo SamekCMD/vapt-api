@@ -31,7 +31,7 @@ type CheckoutClient = {
   }): Promise<Record<string, unknown>>;
 };
 
-test("Mercado Pago client creates a hosted preference from server-owned payment data", async () => {
+test("Mercado Pago client redirects OAuth test accounts through the preference init point", async () => {
   const clientModule = await import("./client.js") as unknown as {
     createMercadoPagoCheckoutClient?: (input: { fetchImpl: typeof fetch }) => CheckoutClient;
   };
@@ -104,7 +104,7 @@ test("Mercado Pago client creates a hosted preference from server-owned payment 
   assert.equal(result.preferenceId, "preference-123");
   assert.equal(
     result.checkoutUrl.toString(),
-    "https://sandbox.mercadopago.com.br/checkout/v1/redirect?pref_id=preference-123",
+    "https://www.mercadopago.com.br/checkout/v1/redirect?pref_id=preference-123",
   );
   assert.deepEqual(result.diagnostics, {
     collectorId: "3595396809",
@@ -112,7 +112,7 @@ test("Mercado Pago client creates a hosted preference from server-owned payment 
     marketplace: "MP-MKT-883582241802094",
     siteId: "MLB",
     operationType: "regular_payment",
-    checkoutHost: "sandbox.mercadopago.com.br",
+    checkoutHost: "www.mercadopago.com.br",
     sandboxCheckoutHost: "sandbox.mercadopago.com.br",
   });
 });
