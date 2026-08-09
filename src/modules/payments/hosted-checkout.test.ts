@@ -458,6 +458,16 @@ test("payment diagnostics load the latest Mercado Pago attempt without exposing 
     transactionId: pendingTransaction().id,
     transactionStatus: "pending",
     found: true,
+    createdPreference: {
+      preferenceId: "preference-123",
+      collectorId: "seller-123",
+      clientId: "client-id",
+      marketplace: "MP-MKT-client-id",
+      siteId: "MLB",
+      operationType: "regular_payment",
+      checkoutHost: "www.mercadopago.com.br",
+      sandboxCheckoutHost: "sandbox.mercadopago.com.br",
+    },
     preference: {
       preferenceId: "preference-123",
       collectorId: "seller-123",
@@ -570,6 +580,16 @@ test("payment diagnostics preserve the payment attempt when preference lookup fa
     transactionId: pendingTransaction().id,
     transactionStatus: "pending",
     found: true,
+    createdPreference: {
+      preferenceId: "preference-123",
+      collectorId: "seller-123",
+      clientId: "client-id",
+      marketplace: "MP-MKT-client-id",
+      siteId: "MLB",
+      operationType: "regular_payment",
+      checkoutHost: "www.mercadopago.com.br",
+      sandboxCheckoutHost: "sandbox.mercadopago.com.br",
+    },
     preference: null,
     preferenceLookup: "unavailable",
     preferenceLookupError: {

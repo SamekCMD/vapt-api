@@ -156,6 +156,32 @@ function extractProviderStatusCode(message: string): number | null {
   return statusCode >= 400 && statusCode <= 599 ? statusCode : null;
 }
 
+function optionalDiagnosticString(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function readCreatedPreferenceDiagnostics(
+  providerPayload: Record<string, unknown>,
+  preferenceId: string | null,
+) {
+  const rawDiagnostics = providerPayload.checkoutDiagnostics;
+  if (!preferenceId || !rawDiagnostics || typeof rawDiagnostics !== "object" || Array.isArray(rawDiagnostics)) {
+    return null;
+  }
+
+  const diagnostics = rawDiagnostics as Record<string, unknown>;
+  return {
+    preferenceId,
+    collectorId: optionalDiagnosticString(diagnostics.collectorId),
+    clientId: optionalDiagnosticString(diagnostics.clientId),
+    marketplace: optionalDiagnosticString(diagnostics.marketplace),
+    siteId: optionalDiagnosticString(diagnostics.siteId),
+    operationType: optionalDiagnosticString(diagnostics.operationType),
+    checkoutHost: optionalDiagnosticString(diagnostics.checkoutHost),
+    sandboxCheckoutHost: optionalDiagnosticString(diagnostics.sandboxCheckoutHost),
+  };
+}
+
 export type PaymentModule = {
   registry: PaymentProviderRegistry;
   repository: PaymentRepository;
@@ -414,6 +440,10 @@ export function createMercadoPagoPaymentDiagnosticsService({
       const preferenceId = typeof transaction.providerPayload.preferenceId === "string"
         ? transaction.providerPayload.preferenceId
         : null;
+      const createdPreference = readCreatedPreferenceDiagnostics(
+        transaction.providerPayload,
+        preferenceId,
+      );
       let preference = null;
       let preferenceLookup: "available" | "unavailable" | null = null;
       let preferenceLookupError: {
@@ -447,6 +477,7 @@ export function createMercadoPagoPaymentDiagnosticsService({
         transactionId: transaction.id,
         transactionStatus: transaction.status,
         found: attempt !== null,
+        createdPreference,
         preference,
         ...(preferenceLookup === "unavailable" ? { preferenceLookup } : {}),
         ...(preferenceLookupError ? { preferenceLookupError } : {}),
