@@ -575,6 +575,7 @@ test("payment diagnostics preserve the payment attempt when preference lookup fa
     preferenceLookupError: {
       code: "mercado_pago_checkout_failed",
       statusCode: 424,
+      providerStatusCode: 403,
     },
     attempt: {
       paymentId: "987654321",

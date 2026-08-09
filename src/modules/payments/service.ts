@@ -148,6 +148,14 @@ const PAID_ORDER_STATUSES = new Set([
   "payment_received",
 ]);
 
+function extractProviderStatusCode(message: string): number | null {
+  const match = message.match(/\bstatus (\d{3})\b/i);
+  if (!match) return null;
+
+  const statusCode = Number(match[1]);
+  return statusCode >= 400 && statusCode <= 599 ? statusCode : null;
+}
+
 export type PaymentModule = {
   registry: PaymentProviderRegistry;
   repository: PaymentRepository;
@@ -407,7 +415,11 @@ export function createMercadoPagoPaymentDiagnosticsService({
         : null;
       let preference = null;
       let preferenceLookup: "available" | "unavailable" | null = null;
-      let preferenceLookupError: { code: string; statusCode: number } | null = null;
+      let preferenceLookupError: {
+        code: string;
+        statusCode: number;
+        providerStatusCode?: number;
+      } | null = null;
       if (preferenceId) {
         try {
           preference = await checkoutClient.getPreference({
@@ -419,9 +431,11 @@ export function createMercadoPagoPaymentDiagnosticsService({
           // A falha da preferência não deve ocultar a tentativa de pagamento.
           preferenceLookup = "unavailable";
           if (error instanceof AppError) {
+            const providerStatusCode = extractProviderStatusCode(error.message);
             preferenceLookupError = {
               code: error.code,
               statusCode: error.statusCode,
+              ...(providerStatusCode ? { providerStatusCode } : {}),
             };
           }
         }
