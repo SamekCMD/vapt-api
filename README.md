@@ -46,6 +46,9 @@ Mercado Pago order payments are enabled only when the complete configuration is 
 - `MERCADO_PAGO_REDIRECT_URI`
 - `MERCADO_PAGO_WEBHOOK_SECRET`
 - `MERCADO_PAGO_ENVIRONMENT`, which defaults to `sandbox`
+- `MERCADO_PAGO_TEST_ACCESS_TOKEN` is optional and sandbox-only. Set it to the
+  Access Token shown under the application's **Test credentials**. Production
+  rejects this variable and continues to use each restaurant's OAuth token.
 
 The server fails at startup if any required sensitive value is missing or invalid.
 
@@ -89,6 +92,7 @@ docker run --rm -p 3000:3000 --env-file .env vapt-api
 - Set `API_PUBLIC_URL` to the externally reachable API origin.
 - Set `STRIPE_WEBHOOK_SIGNING_SECRET` before enabling the Stripe webhook route.
 - Set `MERCADO_PAGO_WEBHOOK_SECRET` to the secret generated for the Mercado Pago Payments webhook.
+- For sandbox validation, set `MERCADO_PAGO_TEST_ACCESS_TOKEN` to the application's test Access Token. Never expose it in the frontend or configure it when `MERCADO_PAGO_ENVIRONMENT=production`.
 - Optionally override `PORT`, `HOST`, `NODE_ENV`, and `LOG_LEVEL` if you need custom infrastructure behavior.
 - Expose container port `3000`.
 - After deploy, verify:

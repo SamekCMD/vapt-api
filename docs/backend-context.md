@@ -209,6 +209,9 @@ Useful optional/defaulted env vars:
 - `HOST=0.0.0.0`
 - `LOG_LEVEL=info`
 - `STRIPE_WEBHOOK_TOLERANCE_SECONDS=300`
+- `MERCADO_PAGO_TEST_ACCESS_TOKEN` somente no ambiente `sandbox`; deve receber
+  o Access Token de **Credenciais de teste** da aplicacao. Em producao, a API
+  rejeita essa variavel e resolve a credencial pelo OAuth de cada restaurante.
 
 ## Recommended Next Work
 

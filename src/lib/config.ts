@@ -45,6 +45,7 @@ export type AppConfig = {
     tokenEncryptionKey: Buffer;
     credentialKeyId: string;
     environment: PaymentEnvironment;
+    testAccessToken?: string;
   };
   webhooks: {
     stripe: {
@@ -169,6 +170,15 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
     "API_PUBLIC_URL",
   ] as const;
   const mercadoPagoEnabled = mercadoPagoKeys.some((key) => Boolean(env[key]?.trim()));
+  const mercadoPagoEnvironment = parsePaymentEnvironment(
+    getValueOrDefault(env, "MERCADO_PAGO_ENVIRONMENT", "sandbox"),
+  );
+  const mercadoPagoTestAccessToken = env.MERCADO_PAGO_TEST_ACCESS_TOKEN?.trim() || undefined;
+  if (mercadoPagoTestAccessToken && mercadoPagoEnvironment !== "sandbox") {
+    throw new ConfigError(
+      "MERCADO_PAGO_TEST_ACCESS_TOKEN can only be used in sandbox",
+    );
+  }
   const mercadoPago = mercadoPagoEnabled
     ? {
         clientId: requireValue(env, "MERCADO_PAGO_CLIENT_ID"),
@@ -182,9 +192,8 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
           requireValue(env, "PAYMENT_TOKEN_ENCRYPTION_KEY"),
         ),
         credentialKeyId: "env-v1",
-        environment: parsePaymentEnvironment(
-          getValueOrDefault(env, "MERCADO_PAGO_ENVIRONMENT", "sandbox"),
-        ),
+        environment: mercadoPagoEnvironment,
+        testAccessToken: mercadoPagoTestAccessToken,
       }
     : undefined;
   const frontendUrl = mercadoPagoEnabled

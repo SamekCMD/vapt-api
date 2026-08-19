@@ -448,3 +448,74 @@ test("Mercado Pago provider resolves credentials internally and returns a pendin
     },
   });
 });
+
+test("Mercado Pago sandbox resolver uses the application test token instead of seller OAuth", async () => {
+  const paymentModule = await import("./payment.js") as unknown as {
+    createMercadoPagoEnvironmentAccessTokenResolver?: (input: {
+      environment: "sandbox" | "production";
+      sandboxAccessToken?: string;
+      oauthResolver: (input: { providerAccountId: string; restaurantId: string }) => Promise<string>;
+    }) => (input: { providerAccountId: string; restaurantId: string }) => Promise<string>;
+  };
+  assert.equal(typeof paymentModule.createMercadoPagoEnvironmentAccessTokenResolver, "function");
+
+  let oauthCalls = 0;
+  const resolveAccessToken = paymentModule.createMercadoPagoEnvironmentAccessTokenResolver!({
+    environment: "sandbox",
+    sandboxAccessToken: "APP_USR-application-test-token",
+    oauthResolver: async () => {
+      oauthCalls += 1;
+      return "APP_USR-seller-oauth-token";
+    },
+  });
+
+  assert.equal(await resolveAccessToken({
+    providerAccountId: "account-1",
+    restaurantId: "restaurant-1",
+  }), "APP_USR-application-test-token");
+  assert.equal(oauthCalls, 0);
+});
+
+test("Mercado Pago resolver keeps seller OAuth in production", async () => {
+  const paymentModule = await import("./payment.js") as unknown as {
+    createMercadoPagoEnvironmentAccessTokenResolver?: (input: {
+      environment: "sandbox" | "production";
+      sandboxAccessToken?: string;
+      oauthResolver: (input: { providerAccountId: string; restaurantId: string }) => Promise<string>;
+    }) => (input: { providerAccountId: string; restaurantId: string }) => Promise<string>;
+  };
+
+  let oauthInput: unknown = null;
+  const resolveAccessToken = paymentModule.createMercadoPagoEnvironmentAccessTokenResolver!({
+    environment: "production",
+    sandboxAccessToken: "APP_USR-application-test-token",
+    oauthResolver: async (input) => {
+      oauthInput = input;
+      return "APP_USR-seller-oauth-token";
+    },
+  });
+  const input = { providerAccountId: "account-1", restaurantId: "restaurant-1" };
+
+  assert.equal(await resolveAccessToken(input), "APP_USR-seller-oauth-token");
+  assert.deepEqual(oauthInput, input);
+});
+
+test("Mercado Pago sandbox resolver falls back to seller OAuth without a test token", async () => {
+  const paymentModule = await import("./payment.js") as unknown as {
+    createMercadoPagoEnvironmentAccessTokenResolver?: (input: {
+      environment: "sandbox" | "production";
+      sandboxAccessToken?: string;
+      oauthResolver: (input: { providerAccountId: string; restaurantId: string }) => Promise<string>;
+    }) => (input: { providerAccountId: string; restaurantId: string }) => Promise<string>;
+  };
+
+  const resolveAccessToken = paymentModule.createMercadoPagoEnvironmentAccessTokenResolver!({
+    environment: "sandbox",
+    oauthResolver: async () => "APP_USR-seller-oauth-token",
+  });
+
+  assert.equal(await resolveAccessToken({
+    providerAccountId: "account-1",
+    restaurantId: "restaurant-1",
+  }), "APP_USR-seller-oauth-token");
+});

@@ -13,7 +13,10 @@ import {
   createMercadoPagoCheckoutClient,
 } from "./modules/payments/providers/mercado-pago/client.js";
 import { createMercadoPagoPaymentClient } from "./modules/payments/providers/mercado-pago/payment-client.js";
-import { createMercadoPagoPaymentProvider } from "./modules/payments/providers/mercado-pago/payment.js";
+import {
+  createMercadoPagoEnvironmentAccessTokenResolver,
+  createMercadoPagoPaymentProvider,
+} from "./modules/payments/providers/mercado-pago/payment.js";
 import {
   createMercadoPagoOAuthServiceFromConfig,
   registerMercadoPagoOAuthRoutes,
@@ -62,10 +65,17 @@ export async function buildApp(config: AppConfig) {
   const mercadoPagoCheckoutClient = config.mercadoPago
     ? createMercadoPagoCheckoutClient()
     : null;
-  if (config.mercadoPago && config.apiPublicUrl && mercadoPagoOAuth) {
+  const mercadoPagoAccessTokenResolver = config.mercadoPago && mercadoPagoOAuth
+    ? createMercadoPagoEnvironmentAccessTokenResolver({
+        environment: config.mercadoPago.environment,
+        sandboxAccessToken: config.mercadoPago.testAccessToken,
+        oauthResolver: (input) => mercadoPagoOAuth.resolveAccessToken(input),
+      })
+    : null;
+  if (config.mercadoPago && config.apiPublicUrl && mercadoPagoAccessTokenResolver) {
     paymentProviders.push(createMercadoPagoPaymentProvider({
       client: mercadoPagoCheckoutClient!,
-      resolveAccessToken: (input) => mercadoPagoOAuth.resolveAccessToken(input),
+      resolveAccessToken: mercadoPagoAccessTokenResolver,
       notificationUrl: new URL("/webhooks/payments/mercado-pago", config.apiPublicUrl),
     }));
   }
@@ -83,6 +93,7 @@ export async function buildApp(config: AppConfig) {
     config.frontendUrl &&
     config.apiPublicUrl &&
     mercadoPagoOAuth &&
+    mercadoPagoAccessTokenResolver &&
     mercadoPagoPaymentClient
   ) {
     await registerMercadoPagoOAuthRoutes(app, config, mercadoPagoOAuth);
@@ -97,7 +108,7 @@ export async function buildApp(config: AppConfig) {
           config.supabase.jwtSecret,
         ),
         paymentService: paymentModule.service,
-        resolveAccessToken: (input) => mercadoPagoOAuth.resolveAccessToken(input),
+        resolveAccessToken: mercadoPagoAccessTokenResolver,
         resolveProviderAccountDiagnostics: (input) =>
           mercadoPagoOAuth.getSafeAccountDiagnostics(input),
         paymentClient: mercadoPagoPaymentClient,
@@ -109,7 +120,7 @@ export async function buildApp(config: AppConfig) {
       createMercadoPagoWebhookService({
         webhookSecret: config.mercadoPago.webhookSecret,
         repository: paymentModule.repository,
-        resolveAccessToken: (input) => mercadoPagoOAuth.resolveAccessToken(input),
+        resolveAccessToken: mercadoPagoAccessTokenResolver,
         client: mercadoPagoPaymentClient,
       }),
     );

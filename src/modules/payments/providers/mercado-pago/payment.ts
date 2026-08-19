@@ -1,11 +1,24 @@
 import { AppError } from "../../../../lib/errors.js";
 import type { PaymentProvider } from "../../provider.js";
+import type { PaymentEnvironment } from "../../types.js";
 import type { MercadoPagoCheckoutClient } from "./client.js";
 
 export type MercadoPagoAccessTokenResolver = (input: {
   providerAccountId: string;
   restaurantId: string;
 }) => Promise<string>;
+
+export function createMercadoPagoEnvironmentAccessTokenResolver(input: {
+  environment: PaymentEnvironment;
+  sandboxAccessToken?: string;
+  oauthResolver: MercadoPagoAccessTokenResolver;
+}): MercadoPagoAccessTokenResolver {
+  if (input.environment === "sandbox" && input.sandboxAccessToken) {
+    return async () => input.sandboxAccessToken!;
+  }
+
+  return input.oauthResolver;
+}
 
 export function createMercadoPagoPaymentProvider(input: {
   client: MercadoPagoCheckoutClient;
