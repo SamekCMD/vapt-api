@@ -163,7 +163,10 @@ type MercadoPagoReturnReconciliationDependencies = {
   resolveProviderAccountDiagnostics(input: {
     providerAccountId: string;
     restaurantId: string;
-  }): Promise<{ externalAccountId: string | null } | null>;
+  }): Promise<{
+    externalAccountId: string | null;
+    environment: PaymentEnvironment;
+  } | null>;
   client: Pick<MercadoPagoPaymentClient, "getPayment">;
   now?: () => string;
 };
@@ -534,8 +537,21 @@ export function createMercadoPagoReturnReconciliationService({
       if (payment.externalReference !== transaction.id) {
         throw mercadoPagoReturnMismatch("external_reference");
       }
-      if (payment.collectorId !== providerAccount.externalAccountId) {
+      const preferenceId = optionalDiagnosticString(transaction.providerPayload.preferenceId);
+      const createdPreference = readCreatedPreferenceDiagnostics(
+        transaction.providerPayload as Record<string, unknown>,
+        preferenceId,
+      );
+      const expectedCollectorId = createdPreference?.collectorId ?? providerAccount.externalAccountId;
+      if (payment.collectorId !== expectedCollectorId) {
         throw mercadoPagoReturnMismatch("collector_id");
+      }
+      // Em producao, o recebedor da preferencia tambem precisa ser a conta OAuth do restaurante.
+      if (
+        providerAccount.environment !== "sandbox" &&
+        payment.collectorId !== providerAccount.externalAccountId
+      ) {
+        throw mercadoPagoReturnMismatch("provider_account_collector_id");
       }
       if (payment.currency !== transaction.amount.currency) {
         throw mercadoPagoReturnMismatch("currency");

@@ -776,7 +776,10 @@ test("Mercado Pago return reconciliation applies an approved payment once with t
       },
     },
     resolveAccessToken: async () => "TEST-access-token",
-    resolveProviderAccountDiagnostics: async () => ({ externalAccountId: "seller-123" }),
+    resolveProviderAccountDiagnostics: async () => ({
+      externalAccountId: "seller-123",
+      environment: "production",
+    }),
     client: {
       async getPayment() {
         return {
@@ -805,6 +808,56 @@ test("Mercado Pago return reconciliation applies an approved payment once with t
   assert.equal(transitions[0]?.externalPaymentId, "payment-123");
 });
 
+test("sandbox return validates the collector recorded when the preference was created", async () => {
+  const serviceModule = await import("./service.js") as unknown as {
+    createMercadoPagoReturnReconciliationService?: (input: Record<string, unknown>) => {
+      reconcile(input: { transactionId: string; paymentId: string }): Promise<PaymentTransactionRecord>;
+    };
+  };
+
+  const transitions: Array<Record<string, unknown>> = [];
+  const transaction = pendingTransaction();
+  const service = serviceModule.createMercadoPagoReturnReconciliationService!({
+    repository: {
+      async findTransactionById() {
+        return transaction;
+      },
+      async applyPaymentTransition(input: Record<string, unknown>) {
+        transitions.push(input);
+        return { ...transaction, status: input.newStatus, version: transaction.version + 1 };
+      },
+    },
+    resolveAccessToken: async () => "TEST-application-access-token",
+    resolveProviderAccountDiagnostics: async () => ({
+      externalAccountId: "oauth-seller-3595396809",
+      environment: "sandbox",
+    }),
+    client: {
+      async getPayment() {
+        return {
+          id: "payment-123",
+          status: "approved",
+          statusDetail: "accredited",
+          transactionAmount: "42.50",
+          currency: "BRL",
+          externalReference: transaction.id,
+          collectorId: "seller-123",
+          dateLastUpdated: "2026-08-19T18:42:04.000Z",
+          paymentMethodId: "account_money",
+        };
+      },
+    },
+  });
+
+  const result = await service.reconcile({
+    transactionId: transaction.id,
+    paymentId: "payment-123",
+  });
+
+  assert.equal(result.status, "paid");
+  assert.equal(transitions.length, 1);
+});
+
 test("Mercado Pago return reconciliation is idempotent after the webhook already paid", async () => {
   const serviceModule = await import("./service.js") as unknown as {
     createMercadoPagoReturnReconciliationService?: (input: Record<string, unknown>) => {
@@ -831,7 +884,10 @@ test("Mercado Pago return reconciliation is idempotent after the webhook already
       },
     },
     resolveAccessToken: async () => "TEST-access-token",
-    resolveProviderAccountDiagnostics: async () => ({ externalAccountId: "seller-123" }),
+    resolveProviderAccountDiagnostics: async () => ({
+      externalAccountId: "seller-123",
+      environment: "production",
+    }),
     client: {
       async getPayment() {
         providerCalls += 1;
