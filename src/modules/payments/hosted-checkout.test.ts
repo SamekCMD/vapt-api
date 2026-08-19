@@ -720,3 +720,132 @@ test("Mercado Pago return relay redirects to the fixed frontend and preserves on
 
   await app.close();
 });
+
+test("Mercado Pago return relay reconciles the official payment before redirecting", async () => {
+  const routesModule = await import("./routes.js") as unknown as {
+    registerMercadoPagoReturnRoutes?: (
+      app: ReturnType<typeof Fastify>,
+      config: AppConfig,
+      service: {
+        reconcile(input: { transactionId: string; paymentId: string }): Promise<{ status: string }>;
+      },
+    ) => Promise<void>;
+  };
+
+  assert.equal(typeof routesModule.registerMercadoPagoReturnRoutes, "function");
+  const reconciliations: Array<{ transactionId: string; paymentId: string }> = [];
+  const app = Fastify({ logger: false });
+  await routesModule.registerMercadoPagoReturnRoutes!(app, validConfig, {
+    async reconcile(input) {
+      reconciliations.push(input);
+      return { status: "paid" };
+    },
+  });
+
+  const response = await app.inject({
+    method: "GET",
+    url: "/payments/mercado-pago/return?result=success&payment_id=123&status=approved&external_reference=transaction-456",
+  });
+
+  assert.equal(response.statusCode, 302);
+  assert.deepEqual(reconciliations, [{ transactionId: "transaction-456", paymentId: "123" }]);
+  const location = new URL(response.headers.location!);
+  assert.equal(location.searchParams.get("result"), "success");
+
+  await app.close();
+});
+
+test("Mercado Pago return reconciliation applies an approved payment once with the kitchen effect", async () => {
+  const serviceModule = await import("./service.js") as unknown as {
+    createMercadoPagoReturnReconciliationService?: (input: Record<string, unknown>) => {
+      reconcile(input: { transactionId: string; paymentId: string }): Promise<PaymentTransactionRecord>;
+    };
+  };
+
+  assert.equal(typeof serviceModule.createMercadoPagoReturnReconciliationService, "function");
+  const transitions: Array<Record<string, unknown>> = [];
+  const transaction = pendingTransaction();
+  const service = serviceModule.createMercadoPagoReturnReconciliationService!({
+    repository: {
+      async findTransactionById() {
+        return transaction;
+      },
+      async applyPaymentTransition(input: Record<string, unknown>) {
+        transitions.push(input);
+        return { ...transaction, status: input.newStatus, version: transaction.version + 1 };
+      },
+    },
+    resolveAccessToken: async () => "TEST-access-token",
+    resolveProviderAccountDiagnostics: async () => ({ externalAccountId: "seller-123" }),
+    client: {
+      async getPayment() {
+        return {
+          id: "payment-123",
+          status: "approved",
+          statusDetail: "accredited",
+          transactionAmount: "42.50",
+          currency: "BRL",
+          externalReference: transaction.id,
+          collectorId: "seller-123",
+          dateLastUpdated: "2026-08-19T18:42:04.000Z",
+          paymentMethodId: "pix",
+        };
+      },
+    },
+  });
+
+  const result = await service.reconcile({
+    transactionId: transaction.id,
+    paymentId: "payment-123",
+  });
+
+  assert.equal(result.status, "paid");
+  assert.equal(transitions.length, 1);
+  assert.deepEqual(transitions[0]?.effectTypes, ["release_order_to_kitchen"]);
+  assert.equal(transitions[0]?.externalPaymentId, "payment-123");
+});
+
+test("Mercado Pago return reconciliation is idempotent after the webhook already paid", async () => {
+  const serviceModule = await import("./service.js") as unknown as {
+    createMercadoPagoReturnReconciliationService?: (input: Record<string, unknown>) => {
+      reconcile(input: { transactionId: string; paymentId: string }): Promise<PaymentTransactionRecord>;
+    };
+  };
+
+  assert.equal(typeof serviceModule.createMercadoPagoReturnReconciliationService, "function");
+  let providerCalls = 0;
+  let transitionCalls = 0;
+  const transaction = {
+    ...pendingTransaction(),
+    status: "paid" as const,
+    externalPaymentId: "payment-123",
+  };
+  const service = serviceModule.createMercadoPagoReturnReconciliationService!({
+    repository: {
+      async findTransactionById() {
+        return transaction;
+      },
+      async applyPaymentTransition() {
+        transitionCalls += 1;
+        return transaction;
+      },
+    },
+    resolveAccessToken: async () => "TEST-access-token",
+    resolveProviderAccountDiagnostics: async () => ({ externalAccountId: "seller-123" }),
+    client: {
+      async getPayment() {
+        providerCalls += 1;
+        throw new Error("must not fetch an already reconciled payment");
+      },
+    },
+  });
+
+  const result = await service.reconcile({
+    transactionId: transaction.id,
+    paymentId: "payment-123",
+  });
+
+  assert.equal(result.status, "paid");
+  assert.equal(providerCalls, 0);
+  assert.equal(transitionCalls, 0);
+});

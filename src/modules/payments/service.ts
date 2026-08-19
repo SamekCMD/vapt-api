@@ -30,7 +30,7 @@ import {
   PaymentProviderNotFoundError,
   type PaymentProviderRegistry,
 } from "./registry.js";
-import { assertPaymentTransition } from "./state-machine.js";
+import { assertPaymentTransition, isPaymentTransitionAllowed } from "./state-machine.js";
 import type {
   CreatePaymentResult,
   NormalizedPayment,
@@ -120,6 +120,13 @@ export interface MercadoPagoPaymentDiagnosticsService {
   }): Promise<MercadoPagoPaymentDiagnostics>;
 }
 
+export interface MercadoPagoReturnReconciliationService {
+  reconcile(input: {
+    transactionId: string;
+    paymentId: string;
+  }): Promise<PaymentTransactionRecord>;
+}
+
 type HostedCheckoutServiceDependencies = {
   orderService: Pick<OrderService, "getPublicOrder">;
   paymentService: PaymentService;
@@ -147,6 +154,20 @@ type MercadoPagoPaymentDiagnosticsDependencies = {
   checkoutClient: Pick<MercadoPagoCheckoutClient, "getPreference">;
 };
 
+type MercadoPagoReturnReconciliationDependencies = {
+  repository: Pick<PaymentRepository, "findTransactionById" | "applyPaymentTransition">;
+  resolveAccessToken(input: {
+    providerAccountId: string;
+    restaurantId: string;
+  }): Promise<string>;
+  resolveProviderAccountDiagnostics(input: {
+    providerAccountId: string;
+    restaurantId: string;
+  }): Promise<{ externalAccountId: string | null } | null>;
+  client: Pick<MercadoPagoPaymentClient, "getPayment">;
+  now?: () => string;
+};
+
 type ManualPaymentServiceDependencies = {
   repository: Pick<PaymentRepository, "findOrderForManualPayment">;
   paymentService: PaymentService;
@@ -161,6 +182,42 @@ const PAID_ORDER_STATUSES = new Set([
   "payment_confirmed",
   "payment_received",
 ]);
+
+function mapMercadoPagoPaymentStatus(status: string): PaymentStatus | null {
+  switch (status) {
+    case "approved":
+      return "paid";
+    case "pending":
+      return "pending";
+    case "authorized":
+    case "in_process":
+    case "in_mediation":
+      return "processing";
+    case "rejected":
+      return "failed";
+    case "cancelled":
+      return "cancelled";
+    case "refunded":
+      return "refunded";
+    default:
+      return null;
+  }
+}
+
+function paymentMinorUnits(value: string): number | null {
+  if (!/^\d+(?:\.\d{1,2})?$/.test(value)) return null;
+  const parsed = Number(value);
+  const minorUnits = Math.round(parsed * 100);
+  return Number.isSafeInteger(minorUnits) ? minorUnits : null;
+}
+
+function mercadoPagoReturnMismatch(field: string): AppError {
+  return new AppError(
+    409,
+    "provider_response_mismatch",
+    `Mercado Pago payment does not match transaction: ${field}`,
+  );
+}
 
 function extractProviderStatusCode(message: string): number | null {
   const match = message.match(/\bstatus (\d{3})\b/i);
@@ -426,6 +483,98 @@ export function createHostedCheckoutService({
         throw new AppError(502, "checkout_unavailable", "Checkout is not available");
       }
       return transaction;
+    },
+  };
+}
+
+export function createMercadoPagoReturnReconciliationService({
+  repository,
+  resolveAccessToken,
+  resolveProviderAccountDiagnostics,
+  client,
+  now = () => new Date().toISOString(),
+}: MercadoPagoReturnReconciliationDependencies): MercadoPagoReturnReconciliationService {
+  return {
+    async reconcile(input) {
+      const transaction = await repository.findTransactionById(input.transactionId);
+      if (
+        !transaction ||
+        transaction.provider !== "mercado_pago" ||
+        !transaction.providerAccountId
+      ) {
+        throw new AppError(404, "payment_transaction_not_found", "Payment transaction not found");
+      }
+
+      if (transaction.status === "paid" && transaction.externalPaymentId === input.paymentId) {
+        return transaction;
+      }
+      if (transaction.externalPaymentId && transaction.externalPaymentId !== input.paymentId) {
+        throw mercadoPagoReturnMismatch("external_payment_id");
+      }
+
+      const providerAccount = await resolveProviderAccountDiagnostics({
+        providerAccountId: transaction.providerAccountId,
+        restaurantId: transaction.restaurantId,
+      });
+      if (!providerAccount?.externalAccountId) {
+        throw mercadoPagoReturnMismatch("provider_account_id");
+      }
+
+      const accessToken = await resolveAccessToken({
+        providerAccountId: transaction.providerAccountId,
+        restaurantId: transaction.restaurantId,
+      });
+      const payment = await client.getPayment({
+        accessToken,
+        paymentId: input.paymentId,
+      });
+
+      // O retorno oficial do provedor, e nunca a URL do navegador, confirma o pagamento.
+      if (payment.id !== input.paymentId) throw mercadoPagoReturnMismatch("payment_id");
+      if (payment.externalReference !== transaction.id) {
+        throw mercadoPagoReturnMismatch("external_reference");
+      }
+      if (payment.collectorId !== providerAccount.externalAccountId) {
+        throw mercadoPagoReturnMismatch("collector_id");
+      }
+      if (payment.currency !== transaction.amount.currency) {
+        throw mercadoPagoReturnMismatch("currency");
+      }
+      if (
+        paymentMinorUnits(payment.transactionAmount) !==
+        paymentMinorUnits(transaction.amount.amount)
+      ) {
+        throw mercadoPagoReturnMismatch("amount");
+      }
+
+      const nextStatus = mapMercadoPagoPaymentStatus(payment.status);
+      if (!nextStatus || !isPaymentTransitionAllowed(transaction.status, nextStatus)) {
+        throw new AppError(
+          409,
+          "payment_status_not_reconcilable",
+          "Mercado Pago payment status cannot be reconciled",
+        );
+      }
+      if (nextStatus === transaction.status) return transaction;
+
+      return repository.applyPaymentTransition({
+        transactionId: transaction.id,
+        expectedVersion: transaction.version,
+        newStatus: nextStatus,
+        providerStatus: payment.statusDetail || payment.status,
+        externalPaymentId: payment.id,
+        transitionedAt: payment.dateLastUpdated || now(),
+        checkoutUrl: transaction.checkoutUrl,
+        expiresAt: transaction.expiresAt,
+        providerPayload: {
+          ...transaction.providerPayload,
+          paymentId: payment.id,
+          paymentMethodId: payment.paymentMethodId,
+          providerStatus: payment.status,
+          reconciliationSource: "browser_return",
+        },
+        effectTypes: nextStatus === "paid" ? ["release_order_to_kitchen"] : null,
+      });
     },
   };
 }

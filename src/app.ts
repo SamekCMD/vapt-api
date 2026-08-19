@@ -32,6 +32,7 @@ import {
 } from "./modules/payments/routes.js";
 import {
   createMercadoPagoPaymentDiagnosticsService,
+  createMercadoPagoReturnReconciliationService,
   registerPaymentModule,
 } from "./modules/payments/service.js";
 import { createOrderRepository } from "./modules/orders/repository.js";
@@ -97,7 +98,17 @@ export async function buildApp(config: AppConfig) {
     mercadoPagoPaymentClient
   ) {
     await registerMercadoPagoOAuthRoutes(app, config, mercadoPagoOAuth);
-    await registerMercadoPagoReturnRoutes(app, config);
+    await registerMercadoPagoReturnRoutes(
+      app,
+      config,
+      createMercadoPagoReturnReconciliationService({
+        repository: paymentModule.repository,
+        resolveAccessToken: mercadoPagoAccessTokenResolver,
+        resolveProviderAccountDiagnostics: (input) =>
+          mercadoPagoOAuth.getSafeAccountDiagnostics(input),
+        client: mercadoPagoPaymentClient,
+      }),
+    );
     await registerHostedCheckoutRoutes(app, config);
     await registerMercadoPagoDiagnosticsRoutes(
       app,

@@ -26,6 +26,7 @@ import {
   createManualPaymentService,
   type HostedCheckoutService,
   type ManualPaymentService,
+  type MercadoPagoReturnReconciliationService,
 } from "./service.js";
 
 export type MercadoPagoPaymentDiagnosticsService = {
@@ -69,6 +70,7 @@ export function createMercadoPagoReturnUrls(config: AppConfig) {
 export async function registerMercadoPagoReturnRoutes(
   app: FastifyInstance,
   config: AppConfig,
+  reconciliationService?: MercadoPagoReturnReconciliationService,
 ) {
   if (!config.frontendUrl) {
     throw new AppError(503, "mercado_pago_not_configured", "Mercado Pago frontend return is not configured");
@@ -79,9 +81,35 @@ export async function registerMercadoPagoReturnRoutes(
     async (request, reply: FastifyReply) => {
       const query = request.query as Record<string, unknown>;
       const requestedResult = queryStringValue(query.result);
-      const result = requestedResult === "success" || requestedResult === "pending"
+      let result = requestedResult === "success" || requestedResult === "pending"
         ? requestedResult
         : "failure";
+      const paymentId = queryStringValue(query.payment_id);
+      const externalReference = queryStringValue(query.external_reference);
+
+      if (reconciliationService && paymentId && externalReference) {
+        try {
+          const transaction = await reconciliationService.reconcile({
+            transactionId: externalReference,
+            paymentId,
+          });
+          result = transaction.status === "paid"
+            ? "success"
+            : transaction.status === "pending" || transaction.status === "processing"
+              ? "pending"
+              : "failure";
+          request.log.info({
+            transactionId: transaction.id,
+            transactionStatus: transaction.status,
+            paymentId,
+          }, "Mercado Pago browser return reconciled");
+        } catch (error) {
+          result = "pending";
+          request.log.error({ err: error, paymentId, externalReference },
+            "Mercado Pago browser return reconciliation failed");
+        }
+      }
+
       const destination = new URL("/payment/return", config.frontendUrl);
       destination.searchParams.set("result", result);
 
