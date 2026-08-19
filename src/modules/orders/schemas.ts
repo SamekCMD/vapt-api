@@ -13,6 +13,7 @@ const deliverySchema = z.object({
   street: z.string().trim().min(2).max(180),
   number: z.string().trim().min(1).max(30),
   neighborhood: z.string().trim().min(2).max(120),
+  paymentMode: z.enum(["online", "on_delivery"]),
 }).strict();
 
 export const createOrderBodySchema = z.object({

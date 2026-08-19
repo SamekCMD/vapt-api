@@ -395,6 +395,13 @@ export function createHostedCheckoutService({
       ) {
         throw new AppError(409, "order_already_paid", "Order is already paid");
       }
+      if (order.status !== "waiting_payment") {
+        throw new AppError(
+          409,
+          "order_not_waiting_payment",
+          "Order is not waiting for online payment",
+        );
+      }
 
       const amount = Number(order.totalPrice);
       if (!Number.isFinite(amount) || amount <= 0) {

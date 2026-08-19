@@ -197,6 +197,51 @@ test("hosted checkout rejects an order already marked as paid", async () => {
   assert.equal(paymentCalls, 0);
 });
 
+test("hosted checkout rejects orders that are not waiting for payment", async () => {
+  const serviceModule = await import("./service.js") as unknown as {
+    createHostedCheckoutService?: (input: Record<string, unknown>) => {
+      start(input: Record<string, string>): Promise<Record<string, unknown>>;
+    };
+  };
+  assert.equal(typeof serviceModule.createHostedCheckoutService, "function");
+  let paymentCalls = 0;
+  const service = serviceModule.createHostedCheckoutService!({
+    orderService: {
+      async getPublicOrder() {
+        return publicOrder({ status: "pending" });
+      },
+    },
+    paymentService: {
+      async startPayment() {
+        paymentCalls += 1;
+        return pendingTransaction();
+      },
+      async getTransaction() {
+        return null;
+      },
+    },
+    environment: "sandbox",
+    returnUrls: {
+      success: new URL("https://vapt.example.com/payment/return"),
+      pending: new URL("https://vapt.example.com/payment/return"),
+      failure: new URL("https://vapt.example.com/payment/return"),
+    },
+  });
+
+  await assert.rejects(
+    service.start({
+      orderId: ORDER_ID,
+      publicOrderToken: "public-order-token-12345678901234567890",
+      idempotencyKey: "checkout-order-1",
+    }),
+    (error: unknown) =>
+      error instanceof AppError &&
+      error.statusCode === 409 &&
+      error.code === "order_not_waiting_payment",
+  );
+  assert.equal(paymentCalls, 0);
+});
+
 test("public hosted checkout route rejects browser-controlled amounts", async () => {
   const routesModule = await import("./routes.js") as unknown as {
     registerHostedCheckoutRoutes?: (

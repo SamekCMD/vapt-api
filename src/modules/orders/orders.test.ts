@@ -7,6 +7,7 @@ import {
   createOrderHeadersSchema,
 } from "./schemas.js";
 import {
+  createOrderRepository,
   OrderRepositoryError,
   type CreatePublicOrderRecord,
   type OrderRepository,
@@ -30,6 +31,7 @@ const validBody = {
     street: "Rua Um",
     number: "42",
     neighborhood: "Centro",
+    paymentMode: "online" as const,
   },
 };
 
@@ -126,6 +128,18 @@ test("create order schema rejects unavailable shapes before persistence", () => 
   );
 });
 
+test("delivery order schema accepts only explicit online or on-delivery payment modes", () => {
+  assert.equal(createOrderBodySchema.safeParse(validBody).success, true);
+  assert.equal(createOrderBodySchema.safeParse({
+    ...validBody,
+    delivery: { ...validBody.delivery, paymentMode: "on_delivery" },
+  }).success, true);
+  assert.equal(createOrderBodySchema.safeParse({
+    ...validBody,
+    delivery: { ...validBody.delivery, paymentMode: "provider_guess" },
+  }).success, false);
+});
+
 test("idempotency header is mandatory and bounded", () => {
   assert.equal(createOrderHeadersSchema.safeParse({}).success, false);
   assert.equal(
@@ -144,12 +158,53 @@ test("order service sends only product references and server security metadata",
   assert.deepEqual(repository.lastCreateInput?.items, validBody.items);
   assert.equal(repository.lastCreateInput?.restaurantSlug, validBody.restaurantSlug);
   assert.equal(repository.lastCreateInput?.channel, "delivery");
+  assert.equal(repository.lastCreateInput?.delivery?.paymentMode, "online");
   assert.equal(typeof repository.lastCreateInput?.requestFingerprint, "string");
   assert.equal(typeof repository.lastCreateInput?.publicTokenHash, "string");
   assert.equal("totalPrice" in (repository.lastCreateInput ?? {}), false);
   assert.equal("restaurantId" in (repository.lastCreateInput ?? {}), false);
   assert.equal(result.totalPrice, "51.80");
   assert.ok(result.publicToken.length >= 32);
+});
+
+test("order repository uses the additive v3 RPC for explicit delivery payment mode", async () => {
+  const rpcCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const client = {
+    rpc(name: string, args: Record<string, unknown>) {
+      rpcCalls.push({ name, args });
+      return {
+        async single() {
+          return {
+            data: {
+              order_id: createdOrder.orderId,
+              display_id: createdOrder.displayId,
+              restaurant_id: createdOrder.restaurantId,
+              table_session_id: null,
+              total_price: createdOrder.totalPrice,
+              status: "waiting_payment",
+              payment_status: null,
+              idempotent_replay: false,
+            },
+            error: null,
+          };
+        },
+      };
+    },
+  };
+
+  const repository = createOrderRepository(client as never);
+  await repository.createPublicOrder({
+    ...validBody,
+    idempotencyKey: "order-attempt-0001",
+    requestFingerprint: "request-fingerprint",
+    publicTokenHash: "public-token-hash",
+  });
+
+  assert.equal(rpcCalls[0]?.name, "create_public_order_v3");
+  assert.deepEqual(
+    (rpcCalls[0]?.args.p_delivery as Record<string, unknown>).paymentMode,
+    "online",
+  );
 });
 
 test("repeated idempotency key produces the same opaque public token", async () => {

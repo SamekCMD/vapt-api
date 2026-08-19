@@ -121,7 +121,7 @@ function mapRepositoryError(error: { message?: string | null }): never {
 export function createOrderRepository(client: SupabaseClient): OrderRepository {
   return {
     async createPublicOrder(input) {
-      const result = await client.rpc("create_public_order_v2", {
+      const result = await client.rpc("create_public_order_v3", {
         p_restaurant_slug: input.restaurantSlug,
         p_channel: input.channel,
         p_table_number: input.tableNumber ?? null,
