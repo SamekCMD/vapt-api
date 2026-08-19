@@ -110,12 +110,29 @@ function mapCreateOrder(row: RawCreateOrder): CreatePublicOrderRecord {
   };
 }
 
-function mapRepositoryError(error: { message?: string | null }): never {
+type PostgrestFailure = {
+  code?: string | null;
+  message?: string | null;
+  details?: string | null;
+  hint?: string | null;
+};
+
+function diagnosticText(value: string | null | undefined): string | null {
+  return value?.trim().slice(0, 2_000) || null;
+}
+
+function mapRepositoryError(error: PostgrestFailure): never {
   const message = error.message?.trim() ?? "";
   if (ORDER_ERROR_CODES.has(message as OrderRepositoryErrorCode)) {
     throw new OrderRepositoryError(message as OrderRepositoryErrorCode);
   }
-  throw new AppError(500, "order_storage_error", "Failed to persist order");
+  throw new AppError(500, "order_storage_error", "Failed to persist order", {
+    provider: "postgrest",
+    code: diagnosticText(error.code),
+    message: diagnosticText(error.message),
+    details: diagnosticText(error.details),
+    hint: diagnosticText(error.hint),
+  });
 }
 
 export function createOrderRepository(client: SupabaseClient): OrderRepository {

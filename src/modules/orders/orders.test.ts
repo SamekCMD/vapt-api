@@ -207,6 +207,49 @@ test("order repository uses the additive v3 RPC for explicit delivery payment mo
   );
 });
 
+test("unexpected order storage failures retain safe PostgREST diagnostics", async () => {
+  const client = {
+    rpc() {
+      return {
+        async single() {
+          return {
+            data: null,
+            error: {
+              code: "42804",
+              message: "column status has an incompatible type",
+              details: "Returned type does not match the function result",
+              hint: "Add an explicit cast",
+            },
+          };
+        },
+      };
+    },
+  };
+
+  const repository = createOrderRepository(client as never);
+
+  await assert.rejects(
+    repository.createPublicOrder({
+      ...validBody,
+      idempotencyKey: "order-attempt-0001",
+      requestFingerprint: "request-fingerprint",
+      publicTokenHash: "public-token-hash",
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof AppError);
+      assert.equal(error.code, "order_storage_error");
+      assert.deepEqual(error.diagnostics, {
+        provider: "postgrest",
+        code: "42804",
+        message: "column status has an incompatible type",
+        details: "Returned type does not match the function result",
+        hint: "Add an explicit cast",
+      });
+      return true;
+    },
+  );
+});
+
 test("repeated idempotency key produces the same opaque public token", async () => {
   const repository = new InMemoryOrderRepository();
   const service = createOrderService(repository, "test-token-secret");
