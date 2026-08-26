@@ -188,3 +188,23 @@ test("buildApp registers Mercado Pago OAuth routes only when configured", async 
   assert.equal(response.statusCode, 401);
   await app.close();
 });
+
+test("legacy Asaas billing routes remain disabled", async () => {
+  const app = await buildApp(validConfig);
+
+  const setupResponse = await app.inject({
+    method: "POST",
+    url: "/billing/asaas/setup",
+    payload: {},
+  });
+  const pixResponse = await app.inject({
+    method: "POST",
+    url: "/billing/asaas/pix/public",
+    payload: {},
+  });
+
+  assert.equal(setupResponse.statusCode, 404);
+  assert.equal(pixResponse.statusCode, 404);
+
+  await app.close();
+});

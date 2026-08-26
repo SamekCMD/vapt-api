@@ -2,7 +2,6 @@ import Fastify from "fastify";
 
 import type { AppConfig } from "./lib/config.js";
 import { createSupabaseAdminClient } from "./lib/supabase.js";
-import { registerAsaasBillingRoutes } from "./modules/billing/asaas/routes.js";
 import { registerStripeBillingRoutes } from "./modules/billing/stripe/routes.js";
 import { registerAuthRoutes } from "./modules/auth/routes.js";
 import { registerIngestRoutes } from "./modules/ingest/routes.js";
@@ -86,7 +85,6 @@ export async function buildApp(config: AppConfig) {
   await registerHealthRoutes(app);
   await registerAuthRoutes(app, config);
   await registerStripeBillingRoutes(app, config);
-  await registerAsaasBillingRoutes(app, config);
   await registerOrderRoutes(app, config);
   await createManualPaymentRoutes(app, config);
   if (
