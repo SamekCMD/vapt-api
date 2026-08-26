@@ -20,7 +20,7 @@ const validConfig = {
   n8n: {
     baseUrl: new URL("https://n8n.example.com"),
     timeoutMs: 5000,
-    secrets: { app: "app", webhookSetup: "setup", admin: "admin" },
+    secrets: { app: "app", admin: "admin" },
   },
   frontendUrl: new URL("https://vapt.example.com"),
   apiPublicUrl: new URL("https://api.vapt.example.com"),

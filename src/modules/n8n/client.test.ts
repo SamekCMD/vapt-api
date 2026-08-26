@@ -19,7 +19,6 @@ const baseConfig: AppConfig = {
     timeoutMs: 100,
     secrets: {
       app: "app-secret",
-      webhookSetup: "setup-secret",
       admin: "admin-secret",
     },
   },

@@ -10,7 +10,6 @@ test("createConfig rejects an unsupported Mercado Pago environment", () => {
       N8N_BASE_URL: "https://n8n.example.com",
       N8N_TIMEOUT_MS: "5000",
       VAPT_APP_ENDPOINT_SECRET: "app-secret",
-      VAPT_WEBHOOK_SETUP_SECRET: "setup-secret",
       VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
       STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
       SUPABASE_URL: "https://supabase.example.com",

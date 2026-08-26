@@ -24,7 +24,6 @@ export type AppConfig = {
     timeoutMs: number;
     secrets: {
       app: string;
-      webhookSetup: string;
       admin: string;
     };
   };
@@ -144,7 +143,6 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
   const n8nBaseUrl = requireValue(env, "N8N_BASE_URL");
   const n8nTimeoutMs = requireValue(env, "N8N_TIMEOUT_MS");
   const appSecret = requireValue(env, "VAPT_APP_ENDPOINT_SECRET");
-  const webhookSetupSecret = requireValue(env, "VAPT_WEBHOOK_SETUP_SECRET");
   const adminSecret = requireValue(env, "VAPT_ADMIN_ENDPOINT_SECRET");
   const paymentEffectsPollIntervalMs = getValueOrDefault(env, "PAYMENT_EFFECTS_POLL_INTERVAL_MS", "5000");
   const paymentEffectsBatchSize = getValueOrDefault(env, "PAYMENT_EFFECTS_BATCH_SIZE", "25");
@@ -231,7 +229,6 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
       timeoutMs: parsePositiveInteger(n8nTimeoutMs, "N8N_TIMEOUT_MS"),
       secrets: {
         app: appSecret,
-        webhookSetup: webhookSetupSecret,
         admin: adminSecret,
       },
     },

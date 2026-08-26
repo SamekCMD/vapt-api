@@ -15,8 +15,7 @@ The frontend must not call n8n directly anymore.
 n8n is still the internal execution engine for:
 
 - Stripe billing flows
-- Asaas billing flows
-- webhook processing flows
+- legacy Stripe and Asaas webhook forwarding
 - ingest/automation flows already modeled in the existing project
 
 `vapt-api` is responsible for:
@@ -39,7 +38,7 @@ Implemented phases:
 - Phase 2: internal n8n client
 - Phase 3: local Supabase JWT validation and initial restaurant authorization adapter
 - Phase 4 Stripe: public billing routes backed by n8n
-- Phase 4 Asaas: public billing routes backed by n8n
+- Phase 4 Asaas: public billing routes backed by n8n (retired; webhook compatibility remains)
 - Phase 5: provider webhooks in `vapt-api` with signature validation and persisted idempotency
 - Phase 6: request validation with Zod and grouped rate limits
 - Payment providers v2: manual payment and hosted Mercado Pago checkout for restaurant orders
@@ -64,13 +63,6 @@ Stripe billing:
 - `POST /billing/stripe/subscription/change`
 - `POST /billing/stripe/subscription/cancel`
 - `GET /billing/stripe/subscription`
-
-Asaas billing:
-
-- `POST /billing/asaas/setup`
-- `GET /billing/asaas/setup/status`
-- `POST /billing/asaas/pix`
-- `POST /billing/asaas/pix/public`
 
 Ingest:
 
@@ -121,7 +113,6 @@ The app trusts proxy headers and uses `x-forwarded-for` when available.
 The internal n8n client contains explicit contracts for:
 
 - Stripe billing operations
-- Asaas billing operations
 - ingest operations
 - Stripe webhook forward
 - Asaas webhook forward
@@ -162,8 +153,8 @@ Mercado Pago order payments use the provider v2 flow instead of n8n:
 7. enqueue `release_order_to_kitchen` only when the payment becomes paid
 8. acknowledge duplicates without repeating provider calls or effects
 
-Failed events remain retryable. Processed events cannot be reopened. Stripe and Asaas
-billing integrations remain unchanged during the compatibility period.
+Failed events remain retryable. Processed events cannot be reopened. Stripe billing and
+the legacy Asaas webhook remain available during the compatibility period.
 
 ## Authorization Model
 
@@ -187,7 +178,6 @@ Important env vars currently required:
 - `N8N_BASE_URL`
 - `N8N_TIMEOUT_MS`
 - `VAPT_APP_ENDPOINT_SECRET`
-- `VAPT_WEBHOOK_SETUP_SECRET`
 - `VAPT_ADMIN_ENDPOINT_SECRET`
 - `STRIPE_WEBHOOK_SIGNING_SECRET`
 - `SUPABASE_URL`

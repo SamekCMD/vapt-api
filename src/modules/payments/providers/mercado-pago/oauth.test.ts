@@ -622,7 +622,7 @@ const routeConfig: AppConfig = {
   n8n: {
     baseUrl: new URL("https://n8n.example.com"),
     timeoutMs: 5000,
-    secrets: { app: "app", webhookSetup: "setup", admin: "admin" },
+    secrets: { app: "app", admin: "admin" },
   },
   webhooks: {
     stripe: { signingSecret: "whsec_test", toleranceSeconds: 300 },

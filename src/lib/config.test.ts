@@ -13,7 +13,6 @@ test("createConfig parses valid environment values", () => {
     N8N_BASE_URL: "https://n8n.example.com",
     N8N_TIMEOUT_MS: "5000",
     VAPT_APP_ENDPOINT_SECRET: "app-secret",
-    VAPT_WEBHOOK_SETUP_SECRET: "setup-secret",
     VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
     STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
     SUPABASE_URL: "https://supabase.example.com",
@@ -50,7 +49,6 @@ test("createConfig falls back to safe infrastructure defaults", () => {
     N8N_BASE_URL: "https://n8n.example.com",
     N8N_TIMEOUT_MS: "5000",
     VAPT_APP_ENDPOINT_SECRET: "app-secret",
-    VAPT_WEBHOOK_SETUP_SECRET: "setup-secret",
     VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
     STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
     SUPABASE_URL: "https://supabase.example.com",
@@ -62,6 +60,23 @@ test("createConfig falls back to safe infrastructure defaults", () => {
   assert.equal(config.port, 3000);
   assert.equal(config.host, "0.0.0.0");
   assert.equal(config.logLevel, "info");
+});
+
+test("createConfig does not require the retired Asaas setup secret", () => {
+  const config = createConfig({
+    CORS_ORIGINS: "http://localhost:5173",
+    N8N_BASE_URL: "https://n8n.example.com",
+    N8N_TIMEOUT_MS: "5000",
+    VAPT_APP_ENDPOINT_SECRET: "app-secret",
+    VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
+    STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
+    SUPABASE_URL: "https://supabase.example.com",
+    SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
+    SUPABASE_JWT_SECRET: "jwt-secret",
+  });
+
+  assert.equal(config.n8n.secrets.app, "app-secret");
+  assert.equal(config.n8n.secrets.admin, "admin-secret");
 });
 
 test("createConfig throws when a required env is missing", () => {
@@ -96,7 +111,6 @@ test("createConfig throws when port is invalid", () => {
         N8N_BASE_URL: "https://n8n.example.com",
         N8N_TIMEOUT_MS: "5000",
         VAPT_APP_ENDPOINT_SECRET: "app-secret",
-        VAPT_WEBHOOK_SETUP_SECRET: "setup-secret",
         VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
         STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
         SUPABASE_URL: "https://supabase.example.com",
@@ -119,7 +133,6 @@ test("createConfig throws when cors origins is empty", () => {
         N8N_BASE_URL: "https://n8n.example.com",
         N8N_TIMEOUT_MS: "5000",
         VAPT_APP_ENDPOINT_SECRET: "app-secret",
-        VAPT_WEBHOOK_SETUP_SECRET: "setup-secret",
         VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
         STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
         SUPABASE_URL: "https://supabase.example.com",
@@ -138,7 +151,6 @@ test("createConfig throws when n8n base url is invalid", () => {
         N8N_BASE_URL: "not-a-url",
         N8N_TIMEOUT_MS: "5000",
         VAPT_APP_ENDPOINT_SECRET: "app-secret",
-        VAPT_WEBHOOK_SETUP_SECRET: "setup-secret",
         VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
         STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
         SUPABASE_URL: "https://supabase.example.com",
@@ -157,7 +169,6 @@ test("createConfig throws when n8n timeout is invalid", () => {
         N8N_BASE_URL: "https://n8n.example.com",
         N8N_TIMEOUT_MS: "0",
         VAPT_APP_ENDPOINT_SECRET: "app-secret",
-        VAPT_WEBHOOK_SETUP_SECRET: "setup-secret",
         VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
         STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
         SUPABASE_URL: "https://supabase.example.com",
@@ -176,7 +187,6 @@ test("createConfig throws when supabase jwt secret is missing", () => {
         N8N_BASE_URL: "https://n8n.example.com",
         N8N_TIMEOUT_MS: "5000",
         VAPT_APP_ENDPOINT_SECRET: "app-secret",
-        VAPT_WEBHOOK_SETUP_SECRET: "setup-secret",
         VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
         STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
         SUPABASE_URL: "https://supabase.example.com",
@@ -193,7 +203,6 @@ test("createConfig enables Mercado Pago only with a complete secure configuratio
     N8N_BASE_URL: "https://n8n.example.com",
     N8N_TIMEOUT_MS: "5000",
     VAPT_APP_ENDPOINT_SECRET: "app-secret",
-    VAPT_WEBHOOK_SETUP_SECRET: "setup-secret",
     VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
     STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
     SUPABASE_URL: "https://supabase.example.com",
@@ -228,7 +237,6 @@ test("createConfig rejects partial Mercado Pago configuration", () => {
       N8N_BASE_URL: "https://n8n.example.com",
       N8N_TIMEOUT_MS: "5000",
       VAPT_APP_ENDPOINT_SECRET: "app-secret",
-      VAPT_WEBHOOK_SETUP_SECRET: "setup-secret",
       VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
       STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
       SUPABASE_URL: "https://supabase.example.com",
@@ -246,7 +254,6 @@ test("createConfig rejects a Mercado Pago redirect outside API_PUBLIC_URL", () =
       N8N_BASE_URL: "https://n8n.example.com",
       N8N_TIMEOUT_MS: "5000",
       VAPT_APP_ENDPOINT_SECRET: "app-secret",
-      VAPT_WEBHOOK_SETUP_SECRET: "setup-secret",
       VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
       STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
       SUPABASE_URL: "https://supabase.example.com",
@@ -270,7 +277,6 @@ test("createConfig reads the Mercado Pago test access token only in sandbox", ()
     N8N_BASE_URL: "https://n8n.example.com",
     N8N_TIMEOUT_MS: "5000",
     VAPT_APP_ENDPOINT_SECRET: "app-secret",
-    VAPT_WEBHOOK_SETUP_SECRET: "setup-secret",
     VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
     STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
     SUPABASE_URL: "https://supabase.example.com",
@@ -297,7 +303,6 @@ test("createConfig rejects the Mercado Pago test access token in production", ()
       N8N_BASE_URL: "https://n8n.example.com",
       N8N_TIMEOUT_MS: "5000",
       VAPT_APP_ENDPOINT_SECRET: "app-secret",
-      VAPT_WEBHOOK_SETUP_SECRET: "setup-secret",
       VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
       STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
       SUPABASE_URL: "https://supabase.example.com",

@@ -26,10 +26,6 @@ function getAuthHeader(config: AppConfig, auth: N8nAuthStrategy): [string, strin
     return ["x-vapt-app-key", config.n8n.secrets.app];
   }
 
-  if (auth === "webhookSetup") {
-    return ["x-vapt-webhook-key", config.n8n.secrets.webhookSetup];
-  }
-
   return ["x-vapt-admin-key", config.n8n.secrets.admin];
 }
 

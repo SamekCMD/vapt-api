@@ -1,4 +1,4 @@
-export type N8nAuthStrategy = "app" | "webhookSetup" | "admin" | "none";
+export type N8nAuthStrategy = "app" | "admin" | "none";
 export type N8nMethod = "GET" | "POST";
 
 export const n8nContracts = {
