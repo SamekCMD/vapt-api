@@ -288,12 +288,17 @@ test("successful callback exchanges PKCE code and stores only encrypted rotating
     restaurantId: RESTAURANT_ID,
     userId: "owner-1",
     environment: "sandbox",
+    returnOrigin: "https://preview.vapt.test",
   });
   const state = new URL(connection.authorizationUrl).searchParams.get("state")!;
 
   const result = await fixture.service.handleCallback({ state, code: "authorization-code" });
 
-  assert.deepEqual(result, { restaurantId: RESTAURANT_ID, status: "connected" });
+  assert.deepEqual(result, {
+    restaurantId: RESTAURANT_ID,
+    status: "connected",
+    returnOrigin: "https://preview.vapt.test",
+  });
   const capturedExchangeInput = exchangeInput as unknown as {
     code: string;
     testToken: boolean;
@@ -609,7 +614,10 @@ const routeConfig: AppConfig = {
   nodeEnv: "test",
   port: 3000,
   host: "127.0.0.1",
-  corsOrigins: ["https://app.vapt.test"],
+  corsOrigins: [
+    "https://app.vapt.test",
+    "https://vaptmesaflow-*-contatoupboost-2301s-projects.vercel.app",
+  ],
   logLevel: "silent",
   n8n: {
     baseUrl: new URL("https://n8n.example.com"),
@@ -700,10 +708,52 @@ test("connect route requires authentication and forwards only the tenant context
     restaurantId: RESTAURANT_ID,
     userId: "user-1",
     environment: "sandbox",
+    returnOrigin: "https://app.vapt.test",
   });
   assert.deepEqual(response.json(), {
     authorizationUrl: "https://auth.mercadopago.com/authorization?state=safe-state-1234567890",
   });
+  await app.close();
+});
+
+test("connect route accepts only a trusted frontend return origin", async () => {
+  const previewOrigin =
+    "https://vaptmesaflow-m9w5rado2-contatoupboost-2301s-projects.vercel.app";
+  let received: unknown = null;
+  const service = fakeRouteService();
+  service.beginConnection = async (input) => {
+    received = input;
+    return {
+      authorizationUrl: "https://auth.mercadopago.com/authorization?state=safe-state-1234567890",
+    };
+  };
+  const app = Fastify({ logger: false });
+  registerAuthDecorator(app);
+  registerErrorHandler(app);
+  await registerMercadoPagoOAuthRoutes(app, routeConfig, service);
+  const headers = { authorization: `Bearer ${routeToken()}` };
+
+  const trusted = await app.inject({
+    method: "POST",
+    url: `/restaurants/${RESTAURANT_ID}/payments/mercado-pago/connect`,
+    headers,
+    payload: { environment: "sandbox", returnOrigin: previewOrigin },
+  });
+  assert.equal(trusted.statusCode, 200);
+  assert.deepEqual(received, {
+    restaurantId: RESTAURANT_ID,
+    userId: "user-1",
+    environment: "sandbox",
+    returnOrigin: previewOrigin,
+  });
+
+  const untrusted = await app.inject({
+    method: "POST",
+    url: `/restaurants/${RESTAURANT_ID}/payments/mercado-pago/connect`,
+    headers,
+    payload: { environment: "sandbox", returnOrigin: "https://evil.example.com" },
+  });
+  assert.equal(untrusted.statusCode, 400);
   await app.close();
 });
 
@@ -729,6 +779,33 @@ test("OAuth callback validates state and redirects without returning credentials
     "https://app.vapt.test/dashboard/settings?payment_provider=mercado_pago&connection=connected",
   );
   assert.equal(connected.body.includes("token"), false);
+  await app.close();
+});
+
+test("OAuth callback returns to the trusted preview that initiated the connection", async () => {
+  const previewOrigin =
+    "https://vaptmesaflow-m9w5rado2-contatoupboost-2301s-projects.vercel.app";
+  const service = fakeRouteService();
+  service.handleCallback = async () => ({
+    restaurantId: RESTAURANT_ID,
+    status: "connected",
+    returnOrigin: previewOrigin,
+  });
+  const app = Fastify({ logger: false });
+  registerAuthDecorator(app);
+  registerErrorHandler(app);
+  await registerMercadoPagoOAuthRoutes(app, routeConfig, service);
+
+  const response = await app.inject({
+    method: "GET",
+    url: "/payments/mercado-pago/oauth/callback?state=safe-state-1234567890&code=authorization-code",
+  });
+
+  assert.equal(response.statusCode, 302);
+  assert.equal(
+    response.headers.location,
+    `${previewOrigin}/dashboard/settings?payment_provider=mercado_pago&connection=connected`,
+  );
   await app.close();
 });
 

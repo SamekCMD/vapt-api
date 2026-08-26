@@ -15,6 +15,29 @@ import type {
 } from "./client.js";
 
 const AUTHORIZATION_ENDPOINT = "https://auth.mercadopago.com/authorization";
+const STATE_RETURN_ORIGIN_SEPARATOR = ".";
+
+function createOAuthState(returnOrigin?: string): string {
+  const nonce = randomBytes(32).toString("base64url");
+  if (!returnOrigin) return nonce;
+
+  const encodedOrigin = Buffer.from(returnOrigin, "utf8").toString("base64url");
+  return `${nonce}${STATE_RETURN_ORIGIN_SEPARATOR}${encodedOrigin}`;
+}
+
+function readReturnOriginFromState(state: string): string | undefined {
+  const separatorIndex = state.indexOf(STATE_RETURN_ORIGIN_SEPARATOR);
+  if (separatorIndex === -1) return undefined;
+
+  try {
+    const encodedOrigin = state.slice(separatorIndex + 1);
+    const decodedOrigin = Buffer.from(encodedOrigin, "base64url").toString("utf8");
+    const url = new URL(decodedOrigin);
+    return url.origin === decodedOrigin ? decodedOrigin : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 export type OAuthStateRecord = {
   id: string;
@@ -394,13 +417,14 @@ export function createMercadoPagoOAuthService(input: {
       restaurantId: string;
       userId: string;
       environment: PaymentEnvironment;
+      returnOrigin?: string;
     }) {
       await assertRestaurantAccess({
         userId: connectionInput.userId,
         restaurantId: connectionInput.restaurantId,
       });
 
-      const state = randomBytes(32).toString("base64url");
+      const state = createOAuthState(connectionInput.returnOrigin);
       const stateHash = hash(state);
       const codeVerifier = randomBytes(64).toString("base64url");
       const codeChallenge = createHash("sha256")
@@ -448,8 +472,14 @@ export function createMercadoPagoOAuthService(input: {
         throw new AppError(400, "oauth_state_invalid", "OAuth state is invalid or expired");
       }
 
+      const returnOrigin = readReturnOriginFromState(callbackInput.state);
+
       if (callbackInput.error) {
-        return { restaurantId: state.restaurantId, status: "denied" as const };
+        return {
+          restaurantId: state.restaurantId,
+          status: "denied" as const,
+          ...(returnOrigin ? { returnOrigin } : {}),
+        };
       }
       if (!callbackInput.code) {
         throw new AppError(400, "oauth_code_missing", "OAuth authorization code is missing");
@@ -467,7 +497,11 @@ export function createMercadoPagoOAuthService(input: {
       });
       await persistTokens(state, token);
 
-      return { restaurantId: state.restaurantId, status: "connected" as const };
+      return {
+        restaurantId: state.restaurantId,
+        status: "connected" as const,
+        ...(returnOrigin ? { returnOrigin } : {}),
+      };
     },
 
     async refreshConnection(refreshInput: {

@@ -59,7 +59,7 @@ function matchesConfiguredVercelPreview(origin: string, pattern: string): boolea
   return /^[a-z0-9]+(?:-[a-z0-9]+)*$/i.test(wildcardValue);
 }
 
-function isAllowedOrigin(origin: string, allowedOrigins: string[]): boolean {
+export function isAllowedOrigin(origin: string, allowedOrigins: string[]): boolean {
   return allowedOrigins.some(
     (allowedOrigin) =>
       allowedOrigin === origin || matchesConfiguredVercelPreview(origin, allowedOrigin),

@@ -11,6 +11,7 @@ import {
 import { createSupabaseAdminClient } from "../../../../lib/supabase.js";
 import { validateWithSchema } from "../../../../lib/validation.js";
 import { requireAuth } from "../../../../plugins/auth.js";
+import { isAllowedOrigin } from "../../../../plugins/cors.js";
 import { createMercadoPagoOAuthClient } from "./client.js";
 import {
   createMercadoPagoOAuthRepository,
@@ -26,6 +27,7 @@ const environmentSchema = z.enum(["sandbox", "production"]);
 
 const connectBodySchema = z.object({
   environment: environmentSchema,
+  returnOrigin: z.string().trim().min(1).max(255).optional(),
 }).strict();
 
 const environmentQuerySchema = z.object({
@@ -43,6 +45,26 @@ export type MercadoPagoOAuthRouteService = Pick<
   MercadoPagoOAuthService,
   "beginConnection" | "handleCallback" | "getStatus" | "disconnect"
 >;
+
+function resolveReturnOrigin(value: string | undefined, config: AppConfig): string {
+  const fallbackOrigin = config.frontendUrl!.origin;
+  if (!value) return fallbackOrigin;
+
+  let origin: string;
+  try {
+    const parsed = new URL(value);
+    origin = parsed.origin;
+    if (value !== origin) throw new Error("origin_only");
+  } catch {
+    throw new AppError(400, "oauth_return_origin_invalid", "OAuth return origin is invalid");
+  }
+
+  if (origin !== fallbackOrigin && !isAllowedOrigin(origin, config.corsOrigins)) {
+    throw new AppError(400, "oauth_return_origin_invalid", "OAuth return origin is not allowed");
+  }
+
+  return origin;
+}
 
 export function createMercadoPagoOAuthServiceFromConfig(config: AppConfig): MercadoPagoOAuthService {
   if (!config.mercadoPago || !config.frontendUrl) {
@@ -97,10 +119,12 @@ export async function registerMercadoPagoOAuthRoutes(
     async (request) => {
       const params = validateWithSchema(restaurantParamsSchema, request.params);
       const body = validateWithSchema(connectBodySchema, request.body);
+      const returnOrigin = resolveReturnOrigin(body.returnOrigin, config);
       return resolvedService.beginConnection({
         restaurantId: params.restaurantId,
         userId: request.auth!.userId,
         environment: body.environment,
+        returnOrigin,
       });
     },
   );
@@ -116,7 +140,10 @@ export async function registerMercadoPagoOAuthRoutes(
         error: query.error,
         errorDescription: query.error_description,
       });
-      const redirect = new URL("/dashboard/settings", config.frontendUrl);
+      const redirect = new URL(
+        "/dashboard/settings",
+        result.returnOrigin ?? config.frontendUrl,
+      );
       redirect.searchParams.set("payment_provider", "mercado_pago");
       redirect.searchParams.set("connection", result.status);
       return reply.redirect(redirect.toString());
