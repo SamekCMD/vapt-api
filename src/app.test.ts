@@ -108,6 +108,38 @@ test("allowed CORS origin is echoed back", async () => {
   await app.close();
 });
 
+test("only Vercel previews from a configured project are allowed", async () => {
+  const app = await buildApp({
+    ...validConfig,
+    corsOrigins: [
+      "https://vaptmesaflow-*-contatoupboost-2301s-projects.vercel.app",
+    ],
+  });
+  const previewOrigin =
+    "https://vaptmesaflow-m9w5rado2-contatoupboost-2301s-projects.vercel.app";
+
+  const allowedResponse = await app.inject({
+    method: "GET",
+    url: "/health",
+    headers: { origin: previewOrigin },
+  });
+
+  assert.equal(allowedResponse.statusCode, 200);
+  assert.equal(allowedResponse.headers["access-control-allow-origin"], previewOrigin);
+
+  const blockedResponse = await app.inject({
+    method: "GET",
+    url: "/health",
+    headers: {
+      origin: "https://another-project-m9w5rado2-example-team.vercel.app",
+    },
+  });
+
+  assert.equal(blockedResponse.statusCode, 500);
+
+  await app.close();
+});
+
 test("blocked CORS origin is rejected", async () => {
   const app = await buildApp(validConfig);
 

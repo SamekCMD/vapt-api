@@ -61,6 +61,10 @@ npm run dev
 The service listens on `0.0.0.0` and uses `PORT`, defaulting to `3000`.
 
 `CORS_ORIGINS` must contain a comma-separated allowlist of approved browser origins.
+Vercel previews can use one explicit wildcard in the deployment segment, while keeping
+the project and team fixed, for example
+`https://vaptmesaflow-*-contatoupboost-2301s-projects.vercel.app`. Wildcards are not
+accepted for other domains.
 
 `N8N_BASE_URL` should point at the n8n webhook base, for example `https://your-n8n-host/webhook`.
 
