@@ -47,7 +47,6 @@ function getPort(server: ReturnType<typeof createServer>): number {
 
 test("n8n route catalog covers all approved operations", () => {
   assert.deepEqual(Object.keys(n8nContracts).sort(), [
-    "asaas.webhookForward",
     "ingest.orderFeedback",
     "ingest.pushSubscription",
     "stripe.health",

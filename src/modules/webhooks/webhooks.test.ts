@@ -39,14 +39,6 @@ const validConfig: AppConfig = {
 
 class InMemoryWebhookRepository {
   readonly billingEvents = new Map<string, { status: string; error: string | null }>();
-  readonly paymentEvents = new Map<string, { status: string; error: string | null }>();
-  readonly asaasContexts = new Map<string, { orderId: string; restaurantId: string; webhookToken: string | null }>([
-    ["order-1", { orderId: "order-1", restaurantId: "rest-1", webhookToken: "asaas-token" }],
-  ]);
-
-  async findAsaasWebhookContext(orderId: string) {
-    return this.asaasContexts.get(orderId) ?? null;
-  }
 
   async reserveBillingEvent(input: { providerEventId: string }) {
     if (this.billingEvents.has(input.providerEventId)) {
@@ -54,15 +46,6 @@ class InMemoryWebhookRepository {
     }
 
     this.billingEvents.set(input.providerEventId, { status: "received", error: null });
-    return { duplicate: false };
-  }
-
-  async reservePaymentEvent(input: { providerEventId: string }) {
-    if (this.paymentEvents.has(input.providerEventId)) {
-      return { duplicate: true };
-    }
-
-    this.paymentEvents.set(input.providerEventId, { status: "received", error: null });
     return { duplicate: false };
   }
 
@@ -77,16 +60,6 @@ class InMemoryWebhookRepository {
     });
   }
 
-  async markPaymentEventProcessed(input: { providerEventId: string }) {
-    this.paymentEvents.set(input.providerEventId, { status: "processed", error: null });
-  }
-
-  async markPaymentEventFailed(input: { providerEventId: string }, errorMessage: string) {
-    this.paymentEvents.set(input.providerEventId, {
-      status: "pending_retry",
-      error: errorMessage,
-    });
-  }
 }
 
 function createStripeSignature(rawBody: string, secret: string, timestamp = Math.floor(Date.now() / 1000)) {
@@ -101,15 +74,11 @@ async function buildWebhookTestApp(options?: {
   repository?: InMemoryWebhookRepository;
   n8nClient?: {
     stripe: { forwardWebhook: (input: { rawBody: string; signatureHeader: string }) => Promise<unknown> };
-    asaas: { forwardWebhook: (input: { rawBody: string; accessToken: string }) => Promise<unknown> };
   };
 }) {
   const repository = options?.repository ?? new InMemoryWebhookRepository();
   const n8nClient = options?.n8nClient ?? {
     stripe: {
-      forwardWebhook: async () => undefined,
-    },
-    asaas: {
       forwardWebhook: async () => undefined,
     },
   };
@@ -159,9 +128,6 @@ test("stripe webhook forwards new events and marks them processed", async () => 
           forwarded.push(input);
         },
       },
-      asaas: {
-        forwardWebhook: async () => undefined,
-      },
     },
   });
   const rawBody = JSON.stringify({
@@ -210,9 +176,6 @@ test("stripe webhook does not forward duplicates", async () => {
           forwardCount += 1;
         },
       },
-      asaas: {
-        forwardWebhook: async () => undefined,
-      },
     },
   });
   const rawBody = JSON.stringify({
@@ -252,9 +215,6 @@ test("stripe webhook keeps failed forwards pending retry", async () => {
           throw new Error("upstream_down");
         },
       },
-      asaas: {
-        forwardWebhook: async () => undefined,
-      },
     },
   });
   const rawBody = JSON.stringify({
@@ -279,66 +239,16 @@ test("stripe webhook keeps failed forwards pending retry", async () => {
   await app.close();
 });
 
-test("asaas webhook validates token and forwards new events", async () => {
-  const forwarded: Array<{ rawBody: string; accessToken: string }> = [];
-  const repository = new InMemoryWebhookRepository();
-  const { app } = await buildWebhookTestApp({
-    repository,
-    n8nClient: {
-      stripe: {
-        forwardWebhook: async () => undefined,
-      },
-      asaas: {
-        forwardWebhook: async (input) => {
-          forwarded.push(input);
-        },
-      },
-    },
-  });
-  const rawBody = JSON.stringify({
-    event: "PAYMENT_RECEIVED",
-    payment: {
-      externalReference: "order-1",
-    },
-  });
-
-  const response = await app.inject({
-    method: "POST",
-    url: "/webhooks/asaas",
-    headers: {
-      "content-type": "application/json",
-      "asaas-access-token": "asaas-token",
-    },
-    payload: rawBody,
-  });
-
-  assert.equal(response.statusCode, 200);
-  assert.equal(forwarded.length, 1);
-  assert.equal(repository.paymentEvents.get("asaas:order-1:PAYMENT_RECEIVED")?.status, "processed");
-
-  await app.close();
-});
-
-test("asaas webhook rejects invalid stored token", async () => {
+test("asaas webhook route remains retired after the compatibility window", async () => {
   const { app } = await buildWebhookTestApp();
-  const rawBody = JSON.stringify({
-    event: "PAYMENT_RECEIVED",
-    payment: {
-      externalReference: "order-1",
-    },
-  });
 
   const response = await app.inject({
     method: "POST",
     url: "/webhooks/asaas",
-    headers: {
-      "content-type": "application/json",
-      "asaas-access-token": "wrong-token",
-    },
-    payload: rawBody,
+    payload: {},
   });
 
-  assert.equal(response.statusCode, 401);
+  assert.equal(response.statusCode, 404);
 
   await app.close();
 });

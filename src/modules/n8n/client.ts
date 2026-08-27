@@ -218,19 +218,5 @@ export function createN8nClient(config: AppConfig, fetchImpl: FetchLike = fetch)
           },
         }),
     },
-    asaas: {
-      forwardWebhook: (input: {
-        rawBody: string;
-        accessToken: string;
-        contentType?: string;
-      }) =>
-        call<unknown>("asaas.webhookForward", {
-          rawBody: input.rawBody,
-          headers: {
-            "asaas-access-token": input.accessToken,
-            "content-type": input.contentType ?? "application/json",
-          },
-        }),
-    },
   };
 }

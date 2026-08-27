@@ -15,7 +15,7 @@ The frontend must not call n8n directly anymore.
 n8n is still the internal execution engine for:
 
 - Stripe billing flows
-- legacy Stripe and Asaas webhook forwarding
+- Stripe webhook forwarding
 - ingest/automation flows already modeled in the existing project
 
 `vapt-api` is responsible for:
@@ -38,7 +38,7 @@ Implemented phases:
 - Phase 2: internal n8n client
 - Phase 3: local Supabase JWT validation and initial restaurant authorization adapter
 - Phase 4 Stripe: public billing routes backed by n8n
-- Phase 4 Asaas: public billing routes backed by n8n (retired; webhook compatibility remains)
+- Phase 4 Asaas: public billing routes and webhook forwarding retired
 - Phase 5: provider webhooks in `vapt-api` with signature validation and persisted idempotency
 - Phase 6: request validation with Zod and grouped rate limits
 - Payment providers v2: manual payment and hosted Mercado Pago checkout for restaurant orders
@@ -81,7 +81,6 @@ Order payments:
 Webhooks:
 
 - `POST /webhooks/stripe`
-- `POST /webhooks/asaas`
 - `POST /webhooks/payments/mercado-pago`
 - `POST /payments/mercado-pago/webhook` remains as a temporary compatibility alias
 
@@ -115,7 +114,6 @@ The internal n8n client contains explicit contracts for:
 - Stripe billing operations
 - ingest operations
 - Stripe webhook forward
-- Asaas webhook forward
 
 The backend forwards webhook payloads to n8n in raw form to preserve compatibility with the current workflows.
 
@@ -129,7 +127,7 @@ The backend reuses existing Supabase tables:
 Gateway-level webhook idempotency is stored with distinct providers:
 
 - `stripe_gateway`
-- `asaas_gateway`
+- `asaas_gateway` (historico, somente leitura)
 
 This avoids colliding with the idempotency already used inside legacy n8n workflows.
 
@@ -153,8 +151,20 @@ Mercado Pago order payments use the provider v2 flow instead of n8n:
 7. enqueue `release_order_to_kitchen` only when the payment becomes paid
 8. acknowledge duplicates without repeating provider calls or effects
 
-Failed events remain retryable. Processed events cannot be reopened. Stripe billing and
-the legacy Asaas webhook remain available during the compatibility period.
+Failed events remain retryable. Processed events cannot be reopened. Stripe billing
+continues disponivel; o receptor legado Asaas foi retirado apos a janela de compatibilidade.
+
+## Retirada do Asaas
+
+Em 27 de agosto de 2026, o inventario de producao confirmou ausencia de transacoes,
+webhooks, efeitos e eventos Asaas pendentes. Os seis pedidos com estado financeiro
+incompleto eram fixtures de teste, sem clientes ou pagamentos reais, e foram aceitos
+como excecao operacional.
+
+Este corte remove apenas `POST /webhooks/asaas` e o contrato de encaminhamento ao n8n.
+O provider `asaas_legacy`, eventos, colunas e demais dados historicos permanecem
+preservados para auditoria e rollback. A limpeza fisica desses dados exige uma entrega
+posterior e independente.
 
 ## Authorization Model
 
