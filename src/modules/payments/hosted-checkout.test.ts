@@ -15,7 +15,7 @@ const validConfig = {
   nodeEnv: "test",
   port: 3000,
   host: "127.0.0.1",
-  corsOrigins: ["http://localhost:5173"],
+  corsOrigins: ["http://localhost:5173", "https://vapt-preview.vercel.app"],
   logLevel: "silent",
   n8n: {
     baseUrl: new URL("https://n8n.example.com"),
@@ -664,9 +664,9 @@ test("payment diagnostics preserve the payment attempt when preference lookup fa
   assert.equal(JSON.stringify(result).includes("APP_USR-application-token"), false);
 });
 
-test("Mercado Pago return URLs use the API relay instead of pointing directly to the frontend", async () => {
+test("Mercado Pago return URLs use the API relay and preserve an allowed frontend origin", async () => {
   const routesModule = await import("./routes.js") as unknown as {
-    createMercadoPagoReturnUrls?: (config: AppConfig) => {
+    createMercadoPagoReturnUrls?: (config: AppConfig, requestedOrigin?: string) => {
       success: URL;
       pending: URL;
       failure: URL;
@@ -674,23 +674,26 @@ test("Mercado Pago return URLs use the API relay instead of pointing directly to
   };
 
   assert.equal(typeof routesModule.createMercadoPagoReturnUrls, "function");
-  const urls = routesModule.createMercadoPagoReturnUrls!(validConfig);
+  const urls = routesModule.createMercadoPagoReturnUrls!(
+    validConfig,
+    "https://vapt-preview.vercel.app",
+  );
 
   assert.equal(
     urls.success.toString(),
-    "https://api.vapt.example.com/payments/mercado-pago/return?result=success",
+    "https://api.vapt.example.com/payments/mercado-pago/return?result=success&return_origin=https%3A%2F%2Fvapt-preview.vercel.app",
   );
   assert.equal(
     urls.pending.toString(),
-    "https://api.vapt.example.com/payments/mercado-pago/return?result=pending",
+    "https://api.vapt.example.com/payments/mercado-pago/return?result=pending&return_origin=https%3A%2F%2Fvapt-preview.vercel.app",
   );
   assert.equal(
     urls.failure.toString(),
-    "https://api.vapt.example.com/payments/mercado-pago/return?result=failure",
+    "https://api.vapt.example.com/payments/mercado-pago/return?result=failure&return_origin=https%3A%2F%2Fvapt-preview.vercel.app",
   );
 });
 
-test("Mercado Pago return relay redirects to the fixed frontend and preserves only safe parameters", async () => {
+test("Mercado Pago return relay redirects to the allowed checkout origin and preserves only safe parameters", async () => {
   const routesModule = await import("./routes.js") as unknown as {
     registerMercadoPagoReturnRoutes?: (
       app: ReturnType<typeof Fastify>,
@@ -704,12 +707,12 @@ test("Mercado Pago return relay redirects to the fixed frontend and preserves on
 
   const response = await app.inject({
     method: "GET",
-    url: "/payments/mercado-pago/return?result=success&payment_id=123&status=approved&external_reference=transaction-456&preference_id=preference-789&unsafe_secret=hidden",
+    url: "/payments/mercado-pago/return?result=success&return_origin=https%3A%2F%2Fvapt-preview.vercel.app&payment_id=123&status=approved&external_reference=transaction-456&preference_id=preference-789&unsafe_secret=hidden",
   });
 
   assert.equal(response.statusCode, 302);
   const location = new URL(response.headers.location!);
-  assert.equal(location.origin, "https://vapt.example.com");
+  assert.equal(location.origin, "https://vapt-preview.vercel.app");
   assert.equal(location.pathname, "/payment/return");
   assert.equal(location.searchParams.get("result"), "success");
   assert.equal(location.searchParams.get("payment_id"), "123");
@@ -718,6 +721,27 @@ test("Mercado Pago return relay redirects to the fixed frontend and preserves on
   assert.equal(location.searchParams.get("preference_id"), "preference-789");
   assert.equal(location.searchParams.has("unsafe_secret"), false);
 
+  await app.close();
+});
+
+test("Mercado Pago return relay never redirects to an untrusted origin", async () => {
+  const routesModule = await import("./routes.js") as unknown as {
+    registerMercadoPagoReturnRoutes?: (
+      app: ReturnType<typeof Fastify>,
+      config: AppConfig,
+    ) => Promise<void>;
+  };
+
+  const app = Fastify({ logger: false });
+  await routesModule.registerMercadoPagoReturnRoutes!(app, validConfig);
+
+  const response = await app.inject({
+    method: "GET",
+    url: "/payments/mercado-pago/return?result=pending&return_origin=https%3A%2F%2Fevil.example.com",
+  });
+
+  assert.equal(response.statusCode, 302);
+  assert.equal(new URL(response.headers.location!).origin, "https://vapt.example.com");
   await app.close();
 });
 

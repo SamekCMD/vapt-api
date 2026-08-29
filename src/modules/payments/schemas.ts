@@ -21,7 +21,9 @@ export const manualPaymentHeadersSchema = z.object({
   "idempotency-key": z.string().trim().min(8).max(128),
 }).passthrough();
 
-export const hostedCheckoutBodySchema = z.object({}).strict();
+export const hostedCheckoutBodySchema = z.object({
+  returnOrigin: z.string().url().max(255).optional(),
+}).strict();
 
 export const hostedCheckoutParamsSchema = z.object({
   orderId: z.string().uuid(),
