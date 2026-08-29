@@ -107,6 +107,28 @@ test("allowed CORS origin is echoed back", async () => {
   await app.close();
 });
 
+test("CORS preflight allows authenticated DELETE requests", async () => {
+  const app = await buildApp(validConfig);
+
+  const response = await app.inject({
+    method: "OPTIONS",
+    url: "/restaurants/10000000-0000-4000-8000-000000000001/payments/mercado-pago/connection",
+    headers: {
+      origin: "http://localhost:5173",
+      "access-control-request-method": "DELETE",
+      "access-control-request-headers": "authorization",
+    },
+  });
+
+  assert.equal(response.statusCode, 204);
+  assert.match(
+    String(response.headers["access-control-allow-methods"]),
+    /(?:^|,\s*)DELETE(?:,|$)/,
+  );
+
+  await app.close();
+});
+
 test("only Vercel previews from a configured project are allowed", async () => {
   const app = await buildApp({
     ...validConfig,

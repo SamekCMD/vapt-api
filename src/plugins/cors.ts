@@ -68,6 +68,7 @@ export function isAllowedOrigin(origin: string, allowedOrigins: string[]): boole
 
 export async function registerCors(app: FastifyInstance, config: AppConfig) {
   await app.register(cors, {
+    methods: ["GET", "HEAD", "POST", "DELETE", "OPTIONS"],
     origin(origin, callback) {
       if (!origin) {
         callback(null, true);
