@@ -15,7 +15,6 @@ const validConfig: AppConfig = {
     timeoutMs: 5000,
     secrets: {
       app: "app-secret",
-      webhookSetup: "setup-secret",
       admin: "admin-secret",
     },
   },
@@ -46,6 +45,16 @@ test("GET /health returns ok", async () => {
   await app.close();
 });
 
+test("payment module registers the manual provider", async () => {
+  const app = await buildApp(validConfig);
+
+  assert.equal(app.hasDecorator("payments"), true);
+  assert.deepEqual(app.payments.registry.codes(), ["manual"]);
+  assert.equal(typeof app.payments.reconciliation.runOnce, "function");
+
+  await app.close();
+});
+
 test("GET /health/ready returns ready", async () => {
   const app = await buildApp(validConfig);
 
@@ -55,7 +64,10 @@ test("GET /health/ready returns ready", async () => {
   });
 
   assert.equal(response.statusCode, 200);
-  assert.deepEqual(response.json(), { status: "ready" });
+  assert.deepEqual(response.json(), {
+    status: "ready",
+    paymentEffects: { pending: null, lastRunAt: null, lastError: null },
+  });
 
   await app.close();
 });
@@ -95,6 +107,60 @@ test("allowed CORS origin is echoed back", async () => {
   await app.close();
 });
 
+test("CORS preflight allows authenticated DELETE requests", async () => {
+  const app = await buildApp(validConfig);
+
+  const response = await app.inject({
+    method: "OPTIONS",
+    url: "/restaurants/10000000-0000-4000-8000-000000000001/payments/mercado-pago/connection",
+    headers: {
+      origin: "http://localhost:5173",
+      "access-control-request-method": "DELETE",
+      "access-control-request-headers": "authorization",
+    },
+  });
+
+  assert.equal(response.statusCode, 204);
+  assert.match(
+    String(response.headers["access-control-allow-methods"]),
+    /(?:^|,\s*)DELETE(?:,|$)/,
+  );
+
+  await app.close();
+});
+
+test("only Vercel previews from a configured project are allowed", async () => {
+  const app = await buildApp({
+    ...validConfig,
+    corsOrigins: [
+      "https://vaptmesaflow-*-contatoupboost-2301s-projects.vercel.app",
+    ],
+  });
+  const previewOrigin =
+    "https://vaptmesaflow-m9w5rado2-contatoupboost-2301s-projects.vercel.app";
+
+  const allowedResponse = await app.inject({
+    method: "GET",
+    url: "/health",
+    headers: { origin: previewOrigin },
+  });
+
+  assert.equal(allowedResponse.statusCode, 200);
+  assert.equal(allowedResponse.headers["access-control-allow-origin"], previewOrigin);
+
+  const blockedResponse = await app.inject({
+    method: "GET",
+    url: "/health",
+    headers: {
+      origin: "https://another-project-m9w5rado2-example-team.vercel.app",
+    },
+  });
+
+  assert.equal(blockedResponse.statusCode, 500);
+
+  await app.close();
+});
+
 test("blocked CORS origin is rejected", async () => {
   const app = await buildApp(validConfig);
 
@@ -113,6 +179,53 @@ test("blocked CORS origin is rejected", async () => {
       message: "Internal server error",
     },
   });
+
+  await app.close();
+});
+
+test("buildApp registers Mercado Pago OAuth routes only when configured", async () => {
+  const app = await buildApp({
+    ...validConfig,
+    frontendUrl: new URL("https://app.vapt.test"),
+    apiPublicUrl: new URL("https://api.vapt.test"),
+    mercadoPago: {
+      clientId: "app-123",
+      clientSecret: "client-secret",
+      redirectUri: new URL("https://api.vapt.test/payments/mercado-pago/oauth/callback"),
+      webhookSecret: "webhook-secret",
+      tokenEncryptionKey: Buffer.alloc(32, 5),
+      credentialKeyId: "env-v1",
+      environment: "sandbox",
+    },
+  });
+  assert.deepEqual(app.payments.registry.codes(), ["manual", "mercado_pago"]);
+
+  const response = await app.inject({
+    method: "POST",
+    url: "/restaurants/10000000-0000-4000-8000-000000000001/payments/mercado-pago/connect",
+    payload: { environment: "sandbox" },
+  });
+
+  assert.equal(response.statusCode, 401);
+  await app.close();
+});
+
+test("legacy Asaas billing routes remain disabled", async () => {
+  const app = await buildApp(validConfig);
+
+  const setupResponse = await app.inject({
+    method: "POST",
+    url: "/billing/asaas/setup",
+    payload: {},
+  });
+  const pixResponse = await app.inject({
+    method: "POST",
+    url: "/billing/asaas/pix/public",
+    payload: {},
+  });
+
+  assert.equal(setupResponse.statusCode, 404);
+  assert.equal(pixResponse.statusCode, 404);
 
   await app.close();
 });

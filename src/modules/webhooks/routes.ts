@@ -5,7 +5,7 @@ import { validateWithSchema } from "../../lib/validation.js";
 import { createSupabaseAdminClient } from "../../lib/supabase.js";
 import { createN8nClient } from "../n8n/client.js";
 import { createWebhookRepository } from "./repository.js";
-import { asaasWebhookHeadersSchema, stripeWebhookHeadersSchema } from "./schemas.js";
+import { stripeWebhookHeadersSchema } from "./schemas.js";
 import { createWebhookService } from "./service.js";
 
 type WebhookRouteDeps = {
@@ -41,26 +41,6 @@ export async function registerWebhookRoutes(
       const response = await service.handleStripeWebhook({
         rawBody: request.rawBody ?? JSON.stringify(request.body ?? {}),
         signatureHeader: headers["stripe-signature"],
-        contentType: headers["content-type"],
-      });
-
-      reply.status(200).send(response);
-    },
-  );
-
-  app.post(
-    "/webhooks/asaas",
-    {
-      config: {
-        rawBody: true,
-        rateLimitGroup: "webhooks",
-      },
-    },
-    async (request, reply) => {
-      const headers = validateWithSchema(asaasWebhookHeadersSchema, request.headers);
-      const response = await service.handleAsaasWebhook({
-        rawBody: request.rawBody ?? JSON.stringify(request.body ?? {}),
-        accessToken: headers["asaas-access-token"],
         contentType: headers["content-type"],
       });
 

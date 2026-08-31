@@ -1,0 +1,585 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
+
+import { AppError } from "../../lib/errors.js";
+import type {
+  ClaimPaymentEffectsInput,
+  CompletePaymentEffectInput,
+  FailPaymentEffectInput,
+} from "./effects.js";
+import type {
+  Money,
+  PaymentEnvironment,
+  PaymentMethod,
+  PaymentProcessingMode,
+  PaymentProviderCode,
+  PaymentStatus,
+} from "./types.js";
+
+export type PaymentProviderAccountRecord = {
+  id: string;
+  restaurantId: string;
+  provider: PaymentProviderCode;
+  environment: PaymentEnvironment;
+  status: "disconnected" | "connecting" | "active" | "error";
+  externalAccountId: string | null;
+  capabilities: Readonly<Record<string, unknown>>;
+  version: number;
+};
+
+export type PaymentTransactionRecord = {
+  id: string;
+  restaurantId: string;
+  orderId: string;
+  providerAccountId: string | null;
+  provider: PaymentProviderCode;
+  externalPaymentId: string | null;
+  idempotencyKey: string;
+  requestFingerprint: string;
+  amount: Money;
+  status: PaymentStatus;
+  providerStatus: string | null;
+  paymentMethod: PaymentMethod | null;
+  processingMode: PaymentProcessingMode;
+  providerPayload: Readonly<Record<string, unknown>>;
+  manuallyConfirmedBy: string | null;
+  checkoutUrl: string | null;
+  expiresAt: string | null;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CreatePaymentTransactionInput = {
+  restaurantId: string;
+  orderId: string;
+  providerAccountId: string | null;
+  provider: PaymentProviderCode;
+  idempotencyKey: string;
+  requestFingerprint: string;
+  amount: Money;
+  paymentMethod: PaymentMethod | null;
+  processingMode: PaymentProcessingMode;
+  manuallyConfirmedBy?: string | null;
+};
+
+export type ManualPaymentOrderRecord = {
+  id: string;
+  restaurantId: string;
+  displayId: number | null;
+  totalPrice: string;
+  status: string;
+  paymentStatus: string | null;
+  paymentConfirmedAt: string | null;
+};
+
+export type ApplyPaymentTransitionInput = {
+  transactionId: string;
+  expectedVersion: number;
+  newStatus: PaymentStatus;
+  providerStatus: string | null;
+  externalPaymentId: string | null;
+  transitionedAt: string;
+  checkoutUrl: string | null;
+  expiresAt: string | null;
+  providerPayload: Readonly<Record<string, unknown>>;
+  effectTypes: string[] | null;
+};
+
+export type ReservePaymentWebhookEventInput = {
+  provider: Exclude<PaymentProviderCode, "manual">;
+  externalEventId: string;
+  eventType: string;
+  restaurantId: string | null;
+  providerAccountId: string | null;
+  paymentTransactionId: string | null;
+  signatureValid: boolean | null;
+  payload: unknown;
+};
+
+export type PaymentEffectRecord = {
+  id: string;
+  restaurantId: string;
+  paymentTransactionId: string;
+  effectType: string;
+  status: "pending" | "processing" | "completed" | "failed" | "dead_letter";
+  payload: Readonly<Record<string, unknown>>;
+  attempts: number;
+  availableAt: string;
+  lockedUntil: string | null;
+};
+
+export interface PaymentRepository {
+  findActiveProviderAccount(
+    restaurantId: string,
+    provider: PaymentProviderCode,
+    environment: PaymentEnvironment,
+  ): Promise<PaymentProviderAccountRecord | null>;
+  findActiveProviderAccountByExternalAccountId(
+    provider: PaymentProviderCode,
+    externalAccountId: string,
+    environment: PaymentEnvironment,
+  ): Promise<PaymentProviderAccountRecord | null>;
+  findOrderForManualPayment(orderId: string): Promise<ManualPaymentOrderRecord | null>;
+  findTransactionById(transactionId: string): Promise<PaymentTransactionRecord | null>;
+  findTransactionByIdempotencyKey(
+    restaurantId: string,
+    idempotencyKey: string,
+  ): Promise<PaymentTransactionRecord | null>;
+  createTransaction(input: CreatePaymentTransactionInput): Promise<PaymentTransactionRecord>;
+  applyPaymentTransition(input: ApplyPaymentTransitionInput): Promise<PaymentTransactionRecord>;
+  reserveWebhookEvent(input: ReservePaymentWebhookEventInput): Promise<{ duplicate: boolean }>;
+  markWebhookEvent(
+    provider: Exclude<PaymentProviderCode, "manual">,
+    externalEventId: string,
+    status: "processed" | "ignored" | "failed",
+    lastError: string | null,
+  ): Promise<void>;
+  claimEffects(input: ClaimPaymentEffectsInput): Promise<PaymentEffectRecord[]>;
+  completeEffect(input: CompletePaymentEffectInput): Promise<void>;
+  failEffect(input: FailPaymentEffectInput): Promise<void>;
+  releaseOrderToProduction(input: {
+    paymentTransactionId: string;
+    restaurantId: string;
+  }): Promise<void>;
+  countPendingEffects(): Promise<number>;
+}
+
+export class PaymentTransactionConflictError extends Error {
+  constructor() {
+    super("Payment transaction idempotency conflict");
+    this.name = "PaymentTransactionConflictError";
+  }
+}
+
+type RawProviderAccount = {
+  id: string;
+  restaurant_id: string;
+  provider: PaymentProviderCode;
+  environment: PaymentEnvironment;
+  status: PaymentProviderAccountRecord["status"];
+  external_account_id: string | null;
+  capabilities: Record<string, unknown> | null;
+  version: number;
+};
+
+type RawPaymentTransaction = {
+  id: string;
+  restaurant_id: string;
+  order_id: string;
+  provider_account_id: string | null;
+  provider: PaymentProviderCode;
+  external_payment_id: string | null;
+  idempotency_key: string;
+  request_fingerprint: string;
+  amount: string | number;
+  currency: string;
+  status: PaymentStatus;
+  provider_status: string | null;
+  payment_method: PaymentMethod | null;
+  processing_mode: PaymentProcessingMode;
+  manually_confirmed_by: string | null;
+  provider_payload: Record<string, unknown> | null;
+  checkout_url: string | null;
+  expires_at: string | null;
+  version: number;
+  created_at: string;
+  updated_at: string;
+};
+
+type RawManualPaymentOrder = {
+  id: string;
+  restaurant_id: string;
+  display_id: number | null;
+  total_price: string | number;
+  status: string;
+  payment_status: string | null;
+  payment_confirmed_at: string | null;
+};
+
+type RawPaymentEffect = {
+  id: string;
+  restaurant_id: string;
+  payment_transaction_id: string;
+  effect_type: string;
+  status: PaymentEffectRecord["status"];
+  payload: Record<string, unknown> | null;
+  attempts: number;
+  available_at: string;
+  locked_until: string | null;
+};
+
+const TRANSACTION_COLUMNS = [
+  "id",
+  "restaurant_id",
+  "order_id",
+  "provider_account_id",
+  "provider",
+  "external_payment_id",
+  "idempotency_key",
+  "request_fingerprint",
+  "amount",
+  "currency",
+  "status",
+  "provider_status",
+  "payment_method",
+  "processing_mode",
+  "manually_confirmed_by",
+  "provider_payload",
+  "checkout_url",
+  "expires_at",
+  "version",
+  "created_at",
+  "updated_at",
+].join(", ");
+
+function storageFailure(message: string): never {
+  throw new AppError(500, "payment_storage_error", message);
+}
+
+function isDuplicateError(error: { code?: string | null; message?: string | null }): boolean {
+  return error.code === "23505" || error.message?.toLowerCase().includes("duplicate key") === true;
+}
+
+function mapTransaction(row: RawPaymentTransaction): PaymentTransactionRecord {
+  return {
+    id: row.id,
+    restaurantId: row.restaurant_id,
+    orderId: row.order_id,
+    providerAccountId: row.provider_account_id,
+    provider: row.provider,
+    externalPaymentId: row.external_payment_id,
+    idempotencyKey: row.idempotency_key,
+    requestFingerprint: row.request_fingerprint,
+    amount: {
+      amount: String(row.amount),
+      currency: row.currency,
+    },
+    status: row.status,
+    providerStatus: row.provider_status,
+    paymentMethod: row.payment_method,
+    processingMode: row.processing_mode,
+    providerPayload: row.provider_payload ?? {},
+    manuallyConfirmedBy: row.manually_confirmed_by,
+    checkoutUrl: row.checkout_url,
+    expiresAt: row.expires_at,
+    version: row.version,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export function createPaymentRepository(client: SupabaseClient): PaymentRepository {
+  return {
+    async findOrderForManualPayment(orderId) {
+      const result = await client
+        .from("orders")
+        .select("id, restaurant_id, display_id, total_price, status, payment_status, payment_confirmed_at")
+        .eq("id", orderId)
+        .maybeSingle<RawManualPaymentOrder>();
+
+      if (result.error) {
+        storageFailure("Failed to load order for manual payment");
+      }
+      if (!result.data) return null;
+
+      return {
+        id: result.data.id,
+        restaurantId: result.data.restaurant_id,
+        displayId: result.data.display_id,
+        totalPrice: Number(result.data.total_price).toFixed(2),
+        status: result.data.status,
+        paymentStatus: result.data.payment_status,
+        paymentConfirmedAt: result.data.payment_confirmed_at,
+      };
+    },
+
+    async findActiveProviderAccount(restaurantId, provider, environment) {
+      const result = await client
+        .from("payment_provider_accounts")
+        .select("id, restaurant_id, provider, environment, status, external_account_id, capabilities, version")
+        .eq("restaurant_id", restaurantId)
+        .eq("provider", provider)
+        .eq("status", "active")
+        .eq("environment", environment)
+        .maybeSingle<RawProviderAccount>();
+
+      if (result.error) {
+        storageFailure("Failed to load payment provider account");
+      }
+
+      if (!result.data) {
+        return null;
+      }
+
+      return {
+        id: result.data.id,
+        restaurantId: result.data.restaurant_id,
+        provider: result.data.provider,
+        environment: result.data.environment,
+        status: result.data.status,
+        externalAccountId: result.data.external_account_id,
+        capabilities: result.data.capabilities ?? {},
+        version: result.data.version,
+      };
+    },
+
+    async findActiveProviderAccountByExternalAccountId(provider, externalAccountId, environment) {
+      const result = await client
+        .from("payment_provider_accounts")
+        .select("id, restaurant_id, provider, environment, status, external_account_id, capabilities, version")
+        .eq("provider", provider)
+        .eq("external_account_id", externalAccountId)
+        .eq("status", "active")
+        .eq("environment", environment)
+        .maybeSingle<RawProviderAccount>();
+
+      if (result.error) {
+        storageFailure("Failed to load payment provider account");
+      }
+
+      if (!result.data) {
+        return null;
+      }
+
+      return {
+        id: result.data.id,
+        restaurantId: result.data.restaurant_id,
+        provider: result.data.provider,
+        environment: result.data.environment,
+        status: result.data.status,
+        externalAccountId: result.data.external_account_id,
+        capabilities: result.data.capabilities ?? {},
+        version: result.data.version,
+      };
+    },
+
+    async findTransactionById(transactionId) {
+      const result = await client
+        .from("payment_transactions")
+        .select(TRANSACTION_COLUMNS)
+        .eq("id", transactionId)
+        .maybeSingle<RawPaymentTransaction>();
+
+      if (result.error) {
+        storageFailure("Failed to load payment transaction");
+      }
+
+      return result.data ? mapTransaction(result.data) : null;
+    },
+
+    async findTransactionByIdempotencyKey(restaurantId, idempotencyKey) {
+      const result = await client
+        .from("payment_transactions")
+        .select(TRANSACTION_COLUMNS)
+        .eq("restaurant_id", restaurantId)
+        .eq("idempotency_key", idempotencyKey)
+        .maybeSingle<RawPaymentTransaction>();
+
+      if (result.error) {
+        storageFailure("Failed to load idempotent payment transaction");
+      }
+
+      return result.data ? mapTransaction(result.data) : null;
+    },
+
+    async createTransaction(input) {
+      const result = await client
+        .from("payment_transactions")
+        .insert({
+          restaurant_id: input.restaurantId,
+          order_id: input.orderId,
+          provider_account_id: input.providerAccountId,
+          provider: input.provider,
+          idempotency_key: input.idempotencyKey,
+          request_fingerprint: input.requestFingerprint,
+          amount: input.amount.amount,
+          currency: input.amount.currency,
+          payment_method: input.paymentMethod,
+          processing_mode: input.processingMode,
+          manually_confirmed_by: input.manuallyConfirmedBy ?? null,
+        })
+        .select(TRANSACTION_COLUMNS)
+        .single<RawPaymentTransaction>();
+
+      if (result.error) {
+        if (isDuplicateError(result.error)) {
+          throw new PaymentTransactionConflictError();
+        }
+        storageFailure("Failed to create payment transaction");
+      }
+
+      return mapTransaction(result.data);
+    },
+
+    async applyPaymentTransition(input) {
+      const result = await client
+        .rpc("apply_payment_transition_v2", {
+          p_transaction_id: input.transactionId,
+          p_expected_version: input.expectedVersion,
+          p_new_status: input.newStatus,
+          p_provider_status: input.providerStatus,
+          p_external_payment_id: input.externalPaymentId,
+          p_transitioned_at: input.transitionedAt,
+          p_checkout_url: input.checkoutUrl,
+          p_expires_at: input.expiresAt,
+          p_provider_payload: input.providerPayload,
+          p_effect_types: input.effectTypes,
+        })
+        .single<RawPaymentTransaction>();
+
+      if (result.error) {
+        storageFailure("Failed to apply payment transition");
+      }
+
+      return mapTransaction(result.data);
+    },
+
+    async reserveWebhookEvent(input) {
+      const result = await client.from("payment_webhook_events").insert({
+        provider: input.provider,
+        external_event_id: input.externalEventId,
+        event_type: input.eventType,
+        restaurant_id: input.restaurantId,
+        provider_account_id: input.providerAccountId,
+        payment_transaction_id: input.paymentTransactionId,
+        signature_valid: input.signatureValid,
+        payload: input.payload,
+        attempts: 1,
+      });
+
+      if (!result.error) {
+        return { duplicate: false };
+      }
+
+      if (!isDuplicateError(result.error)) {
+        storageFailure("Failed to reserve payment webhook event");
+      }
+
+      const existing = await client
+        .from("payment_webhook_events")
+        .select("status, attempts")
+        .eq("provider", input.provider)
+        .eq("external_event_id", input.externalEventId)
+        .maybeSingle<{ status: string; attempts: number }>();
+      if (existing.error) {
+        storageFailure("Failed to inspect duplicate payment webhook event");
+      }
+      if (existing.data?.status !== "failed") {
+        return { duplicate: true };
+      }
+
+      const retry = await client
+        .from("payment_webhook_events")
+        .update({
+          status: "received",
+          attempts: existing.data.attempts + 1,
+          last_error: null,
+          processed_at: null,
+        })
+        .eq("provider", input.provider)
+        .eq("external_event_id", input.externalEventId)
+        .eq("status", "failed")
+        .eq("attempts", existing.data.attempts)
+        .select("id")
+        .maybeSingle<{ id: string }>();
+      if (retry.error) {
+        storageFailure("Failed to retry payment webhook event");
+      }
+
+      return { duplicate: !retry.data };
+    },
+
+    async markWebhookEvent(provider, externalEventId, status, lastError) {
+      const result = await client
+        .from("payment_webhook_events")
+        .update({
+          status,
+          last_error: lastError,
+          processed_at: status === "processed" || status === "ignored"
+            ? new Date().toISOString()
+            : null,
+        })
+        .eq("provider", provider)
+        .eq("external_event_id", externalEventId);
+
+      if (result.error) {
+        storageFailure("Failed to update payment webhook event");
+      }
+    },
+
+    async claimEffects(input) {
+      const result = await client
+        .rpc("claim_payment_effects", {
+          p_worker_id: input.workerId,
+          p_limit: input.limit,
+          p_locked_at: input.lockedAt,
+          p_locked_until: input.lockedUntil,
+        });
+
+      if (result.error) {
+        storageFailure("Failed to claim payment effects");
+      }
+
+      const effects = (result.data ?? []) as unknown as RawPaymentEffect[];
+      return effects.map((effect) => ({
+        id: effect.id,
+        restaurantId: effect.restaurant_id,
+        paymentTransactionId: effect.payment_transaction_id,
+        effectType: effect.effect_type,
+        status: effect.status,
+        payload: effect.payload ?? {},
+        attempts: effect.attempts,
+        availableAt: effect.available_at,
+        lockedUntil: effect.locked_until,
+      }));
+    },
+
+    async completeEffect(input) {
+      const result = await client.rpc("complete_payment_effect", {
+        p_effect_id: input.effectId,
+        p_worker_id: input.workerId,
+        p_processed_at: input.processedAt,
+      });
+
+      if (result.error) {
+        storageFailure("Failed to complete payment effect");
+      }
+    },
+
+    async failEffect(input) {
+      const result = await client.rpc("fail_payment_effect", {
+        p_effect_id: input.effectId,
+        p_worker_id: input.workerId,
+        p_status: input.status,
+        p_attempts: input.attempts,
+        p_available_at: input.availableAt,
+        p_last_error: input.lastError,
+      });
+
+      if (result.error) {
+        storageFailure("Failed to schedule payment effect retry");
+      }
+    },
+
+    async releaseOrderToProduction(input) {
+      const result = await client.rpc("release_paid_order_to_production", {
+        p_payment_transaction_id: input.paymentTransactionId,
+        p_restaurant_id: input.restaurantId,
+      });
+
+      if (result.error) {
+        storageFailure("Failed to release paid order to production");
+      }
+    },
+
+    async countPendingEffects() {
+      const result = await client.rpc("count_pending_payment_effects");
+
+      if (result.error) {
+        storageFailure("Failed to count pending payment effects");
+      }
+
+      return Number(result.data ?? 0);
+    },
+  };
+}

@@ -1,18 +1,8 @@
 import { AppError } from "../../lib/errors.js";
 import { N8nClientError } from "../n8n/errors.js";
-import {
-  extractAsaasEventType,
-  extractAsaasExternalReference,
-  parseAsaasWebhookPayload,
-  verifyStripeWebhookSignature,
-} from "./signature.js";
+import { verifyStripeWebhookSignature } from "./signature.js";
 
 type WebhookRepository = {
-  findAsaasWebhookContext: (orderId: string) => Promise<{
-    orderId: string;
-    restaurantId: string;
-    webhookToken: string | null;
-  } | null>;
   reserveBillingEvent: (input: {
     providerEventId: string;
     eventType: string;
@@ -20,13 +10,6 @@ type WebhookRepository = {
     restaurantId?: string | null;
     stripeCustomerId?: string | null;
     stripeSubscriptionId?: string | null;
-  }) => Promise<{ duplicate: boolean }>;
-  reservePaymentEvent: (input: {
-    providerEventId: string;
-    eventType: string;
-    rawPayload: unknown;
-    restaurantId: string;
-    orderId: string;
   }) => Promise<{ duplicate: boolean }>;
   markBillingEventProcessed: (input: {
     providerEventId: string;
@@ -44,20 +27,6 @@ type WebhookRepository = {
     stripeCustomerId?: string | null;
     stripeSubscriptionId?: string | null;
   }, errorMessage: string) => Promise<void>;
-  markPaymentEventProcessed: (input: {
-    providerEventId: string;
-    eventType: string;
-    rawPayload: unknown;
-    restaurantId: string;
-    orderId: string;
-  }) => Promise<void>;
-  markPaymentEventFailed: (input: {
-    providerEventId: string;
-    eventType: string;
-    rawPayload: unknown;
-    restaurantId: string;
-    orderId: string;
-  }, errorMessage: string) => Promise<void>;
 };
 
 type WebhookN8nClient = {
@@ -65,13 +34,6 @@ type WebhookN8nClient = {
     forwardWebhook: (input: {
       rawBody: string;
       signatureHeader: string;
-      contentType?: string;
-    }) => Promise<unknown>;
-  };
-  asaas: {
-    forwardWebhook: (input: {
-      rawBody: string;
-      accessToken: string;
       contentType?: string;
     }) => Promise<unknown>;
   };
@@ -160,60 +122,6 @@ export function createWebhookService(
         };
       } catch (error) {
         await repository.markBillingEventFailed(eventRecord, getForwardingErrorMessage(error));
-        throw mapForwardingError(error);
-      }
-    },
-
-    async handleAsaasWebhook(input: {
-      rawBody: string;
-      accessToken: string | undefined;
-      contentType?: string;
-    }) {
-      const payload = parseAsaasWebhookPayload(input.rawBody);
-      const externalReference = extractAsaasExternalReference(payload);
-      const eventType = extractAsaasEventType(payload);
-      const context = await repository.findAsaasWebhookContext(externalReference);
-
-      if (!context) {
-        throw new AppError(404, "not_found", "Webhook order was not found");
-      }
-
-      if (!input.accessToken || context.webhookToken !== input.accessToken) {
-        throw new AppError(401, "unauthorized", "Invalid Asaas webhook token");
-      }
-
-      const eventRecord = {
-        providerEventId: `asaas:${externalReference}:${eventType}`,
-        eventType,
-        rawPayload: payload,
-        restaurantId: context.restaurantId,
-        orderId: context.orderId,
-      };
-      const reservation = await repository.reservePaymentEvent(eventRecord);
-
-      if (reservation.duplicate) {
-        return {
-          received: true,
-          duplicate: true,
-          providerEventId: eventRecord.providerEventId,
-        };
-      }
-
-      try {
-        await n8nClient.asaas.forwardWebhook({
-          rawBody: input.rawBody,
-          accessToken: input.accessToken,
-          contentType: input.contentType,
-        });
-        await repository.markPaymentEventProcessed(eventRecord);
-
-        return {
-          received: true,
-          duplicate: false,
-          providerEventId: eventRecord.providerEventId,
-        };
-      } catch (error) {
-        await repository.markPaymentEventFailed(eventRecord, getForwardingErrorMessage(error));
         throw mapForwardingError(error);
       }
     },

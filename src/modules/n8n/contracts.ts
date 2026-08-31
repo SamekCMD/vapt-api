@@ -1,32 +1,7 @@
-export type N8nAuthStrategy = "app" | "webhookSetup" | "admin" | "none";
+export type N8nAuthStrategy = "app" | "admin" | "none";
 export type N8nMethod = "GET" | "POST";
 
 export const n8nContracts = {
-  "asaas.setup": {
-    method: "POST",
-    path: "/asaas/setup",
-    auth: "webhookSetup",
-  },
-  "asaas.setupStatus": {
-    method: "GET",
-    path: "/asaas/setup/status",
-    auth: "admin",
-  },
-  "asaas.setupRefresh": {
-    method: "POST",
-    path: "/asaas/setup/refresh",
-    auth: "admin",
-  },
-  "asaas.pixCreate": {
-    method: "POST",
-    path: "/asaas/pix/create",
-    auth: "app",
-  },
-  "asaas.webhookForward": {
-    method: "POST",
-    path: "/asaas/webhook",
-    auth: "none",
-  },
   "stripe.subscriptionCreate": {
     method: "POST",
     path: "/stripe/subscription/create",

@@ -13,7 +13,13 @@ export function registerErrorHandler(app: FastifyInstance) {
   });
 
   app.setErrorHandler((error, request, reply) => {
-    request.log.error({ err: error }, "request failed");
+    request.log.error(
+      {
+        err: error,
+        diagnostics: error instanceof AppError ? error.diagnostics : undefined,
+      },
+      "request failed",
+    );
 
     if (error instanceof AppError) {
       reply.status(error.statusCode).send({

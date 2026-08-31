@@ -19,7 +19,6 @@ const baseConfig: AppConfig = {
     timeoutMs: 100,
     secrets: {
       app: "app-secret",
-      webhookSetup: "setup-secret",
       admin: "admin-secret",
     },
   },
@@ -48,11 +47,6 @@ function getPort(server: ReturnType<typeof createServer>): number {
 
 test("n8n route catalog covers all approved operations", () => {
   assert.deepEqual(Object.keys(n8nContracts).sort(), [
-    "asaas.pixCreate",
-    "asaas.setup",
-    "asaas.setupRefresh",
-    "asaas.setupStatus",
-    "asaas.webhookForward",
     "ingest.orderFeedback",
     "ingest.pushSubscription",
     "stripe.health",
@@ -107,38 +101,6 @@ test("client sends x-vapt-app-key for app routes", async () => {
   assert.deepEqual(JSON.parse(receivedBody), { restaurant_id: "rest_123" });
   assert.equal(result.status, 200);
   assert.deepEqual(result.data, { ok: true });
-
-  await new Promise<void>((resolve, reject) =>
-    server.close((error) => (error ? reject(error) : resolve())),
-  );
-});
-
-test("client sends x-vapt-webhook-key for asaas setup", async () => {
-  let receivedHeader = "";
-
-  const server = createServer((request, response) => {
-    receivedHeader = String(request.headers["x-vapt-webhook-key"] ?? "");
-    response.setHeader("content-type", "application/json");
-    response.end(JSON.stringify({ valid: true }));
-  });
-
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
-  const port = getPort(server);
-
-  const client = createN8nClient({
-    ...baseConfig,
-    n8n: {
-      ...baseConfig.n8n,
-      baseUrl: new URL(`http://127.0.0.1:${port}`),
-      timeoutMs: 500,
-    },
-  });
-
-  await client.call("asaas.setup", {
-    body: { restaurant_id: "rest_123", asaas_api_key: "asaas-key" },
-  });
-
-  assert.equal(receivedHeader, "setup-secret");
 
   await new Promise<void>((resolve, reject) =>
     server.close((error) => (error ? reject(error) : resolve())),

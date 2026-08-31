@@ -18,8 +18,6 @@ type StripeEvent = {
   };
 };
 
-type AsaasPayload = Record<string, unknown>;
-
 function parseJsonObject(rawBody: string, invalidMessage: string): Record<string, unknown> {
   try {
     const parsed = JSON.parse(rawBody) as unknown;
@@ -84,36 +82,4 @@ export function verifyStripeWebhookSignature(input: StripeSignatureInput): Strip
   }
 
   return parsed as StripeEvent;
-}
-
-export function parseAsaasWebhookPayload(rawBody: string): AsaasPayload {
-  return parseJsonObject(rawBody, "Unable to parse Asaas webhook payload");
-}
-
-export function extractAsaasExternalReference(payload: AsaasPayload): string {
-  const payment =
-    payload.payment && typeof payload.payment === "object" && !Array.isArray(payload.payment)
-      ? (payload.payment as Record<string, unknown>)
-      : undefined;
-  const externalReference = payment?.externalReference ?? payload.externalReference;
-
-  if (typeof externalReference !== "string" || externalReference.trim() === "") {
-    throw new AppError(
-      400,
-      "invalid_request",
-      "Webhook payload is missing externalReference",
-    );
-  }
-
-  return externalReference.trim();
-}
-
-export function extractAsaasEventType(payload: AsaasPayload): string {
-  const eventType = payload.event ?? payload.type;
-
-  if (typeof eventType !== "string" || eventType.trim() === "") {
-    return "payment";
-  }
-
-  return eventType.trim();
 }

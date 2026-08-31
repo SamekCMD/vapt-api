@@ -14,12 +14,6 @@ type StoredGatewayPayload = {
   };
 };
 
-type AsaasWebhookContext = {
-  orderId: string;
-  restaurantId: string;
-  webhookToken: string | null;
-};
-
 type BillingEventInput = {
   providerEventId: string;
   eventType: string;
@@ -27,14 +21,6 @@ type BillingEventInput = {
   restaurantId?: string | null;
   stripeCustomerId?: string | null;
   stripeSubscriptionId?: string | null;
-};
-
-type PaymentEventInput = {
-  providerEventId: string;
-  eventType: string;
-  rawPayload: unknown;
-  restaurantId: string;
-  orderId: string;
 };
 
 function createStoredPayload(
@@ -65,38 +51,6 @@ function normalizeStorageError(message: string): never {
 
 export function createWebhookRepository(client: SupabaseClient) {
   return {
-    async findAsaasWebhookContext(orderId: string): Promise<AsaasWebhookContext | null> {
-      const orderResult = await client
-        .from("orders")
-        .select("id, restaurant_id")
-        .eq("id", orderId)
-        .maybeSingle<{ id: string; restaurant_id: string }>();
-
-      if (orderResult.error) {
-        normalizeStorageError("Failed to load Asaas webhook order");
-      }
-
-      if (!orderResult.data) {
-        return null;
-      }
-
-      const restaurantResult = await client
-        .from("restaurants")
-        .select("asaas_webhook_token")
-        .eq("id", orderResult.data.restaurant_id)
-        .maybeSingle<{ asaas_webhook_token: string | null }>();
-
-      if (restaurantResult.error) {
-        normalizeStorageError("Failed to load Asaas webhook restaurant");
-      }
-
-      return {
-        orderId: orderResult.data.id,
-        restaurantId: orderResult.data.restaurant_id,
-        webhookToken: restaurantResult.data?.asaas_webhook_token ?? null,
-      };
-    },
-
     async reserveBillingEvent(input: BillingEventInput): Promise<{ duplicate: boolean }> {
       const receivedAt = new Date().toISOString();
       const result = await client.from("billing_provider_events").insert({
@@ -118,28 +72,6 @@ export function createWebhookRepository(client: SupabaseClient) {
       }
 
       normalizeStorageError("Failed to persist Stripe webhook event");
-    },
-
-    async reservePaymentEvent(input: PaymentEventInput): Promise<{ duplicate: boolean }> {
-      const receivedAt = new Date().toISOString();
-      const result = await client.from("payment_provider_events").insert({
-        provider: "asaas_gateway",
-        provider_event_id: input.providerEventId,
-        event_type: input.eventType,
-        restaurant_id: input.restaurantId,
-        order_id: input.orderId,
-        payload: createStoredPayload(input.rawPayload, "received", receivedAt),
-      });
-
-      if (!result.error) {
-        return { duplicate: false };
-      }
-
-      if (isDuplicateError(result.error)) {
-        return { duplicate: true };
-      }
-
-      normalizeStorageError("Failed to persist Asaas webhook event");
     },
 
     async markBillingEventProcessed(input: BillingEventInput) {
@@ -178,40 +110,5 @@ export function createWebhookRepository(client: SupabaseClient) {
       }
     },
 
-    async markPaymentEventProcessed(input: PaymentEventInput) {
-      const processedAt = new Date().toISOString();
-      const result = await client
-        .from("payment_provider_events")
-        .update({
-          processed_at: processedAt,
-          payload: createStoredPayload(input.rawPayload, "processed", processedAt, null, processedAt),
-        })
-        .eq("provider", "asaas_gateway")
-        .eq("provider_event_id", input.providerEventId);
-
-      if (result.error) {
-        normalizeStorageError("Failed to mark Asaas webhook as processed");
-      }
-    },
-
-    async markPaymentEventFailed(input: PaymentEventInput, errorMessage: string) {
-      const result = await client
-        .from("payment_provider_events")
-        .update({
-          payload: createStoredPayload(
-            input.rawPayload,
-            "pending_retry",
-            new Date().toISOString(),
-            errorMessage,
-            null,
-          ),
-        })
-        .eq("provider", "asaas_gateway")
-        .eq("provider_event_id", input.providerEventId);
-
-      if (result.error) {
-        normalizeStorageError("Failed to mark Asaas webhook as failed");
-      }
-    },
   };
 }

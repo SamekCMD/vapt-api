@@ -26,10 +26,6 @@ function getAuthHeader(config: AppConfig, auth: N8nAuthStrategy): [string, strin
     return ["x-vapt-app-key", config.n8n.secrets.app];
   }
 
-  if (auth === "webhookSetup") {
-    return ["x-vapt-webhook-key", config.n8n.secrets.webhookSetup];
-  }
-
   return ["x-vapt-admin-key", config.n8n.secrets.admin];
 }
 
@@ -218,74 +214,6 @@ export function createN8nClient(config: AppConfig, fetchImpl: FetchLike = fetch)
           rawBody: input.rawBody,
           headers: {
             "stripe-signature": input.signatureHeader,
-            "content-type": input.contentType ?? "application/json",
-          },
-        }),
-    },
-    asaas: {
-      setup: (input: {
-        restaurantId: string;
-        asaasApiKey: string;
-        asaasEnvironment: "production" | "sandbox";
-        asaasBillingDocument: string;
-      }) =>
-        call<{
-          valid: boolean;
-          webhook_registered: boolean;
-          webhook_id: string | null;
-          setup_status: string;
-          message: string;
-        }>("asaas.setup", {
-          body: {
-            restaurant_id: input.restaurantId,
-            asaas_api_key: input.asaasApiKey,
-            asaas_environment: input.asaasEnvironment,
-            asaas_billing_document: input.asaasBillingDocument,
-          },
-        }),
-      getSetupStatus: (restaurantId: string) =>
-        call<{
-          restaurant_id: string;
-          name: string;
-          setup_status: string | null;
-          webhook_id: string | null;
-          webhook_url: string | null;
-          last_validated_at: string | null;
-          last_error: string | null;
-          has_api_key: boolean;
-          asaas_environment: "production" | "sandbox" | null;
-        }>("asaas.setupStatus", {
-          query: {
-            restaurant_id: restaurantId,
-          },
-        }),
-      createPix: (input: {
-        restaurantId: string;
-        orderId: string;
-        totalPrice: number;
-      }) =>
-        call<{
-          payment_id: string;
-          qr_code_base64: string | null;
-          pix_payload: string | null;
-          expiration: string | null;
-          status: string;
-        }>("asaas.pixCreate", {
-          body: {
-            restaurant_id: input.restaurantId,
-            order_id: input.orderId,
-            total_price: input.totalPrice,
-          },
-        }),
-      forwardWebhook: (input: {
-        rawBody: string;
-        accessToken: string;
-        contentType?: string;
-      }) =>
-        call<unknown>("asaas.webhookForward", {
-          rawBody: input.rawBody,
-          headers: {
-            "asaas-access-token": input.accessToken,
             "content-type": input.contentType ?? "application/json",
           },
         }),
