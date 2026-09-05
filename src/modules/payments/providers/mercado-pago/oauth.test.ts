@@ -8,7 +8,7 @@ import type { AppConfig } from "../../../../lib/config.js";
 
 import { AppError } from "../../../../lib/errors.js";
 import { createSecretCipher } from "../../../../lib/crypto.js";
-import type { OwnershipLookup } from "../../../../lib/permissions.js";
+import type { MembershipLookup } from "../../../../lib/permissions.js";
 import { registerAuthDecorator } from "../../../../plugins/auth.js";
 import { registerErrorHandler } from "../../../../plugins/error-handler.js";
 import {
@@ -128,7 +128,7 @@ function createMemoryRepository() {
 
 function createService(options: {
   repository?: MercadoPagoOAuthRepository;
-  ownershipLookup?: OwnershipLookup;
+  membershipLookup?: MembershipLookup;
   exchange?: (input: {
     code: string;
     redirectUri: string;
@@ -155,7 +155,10 @@ function createService(options: {
       },
     },
     cipher,
-    ownershipLookup: options.ownershipLookup ?? (async () => true),
+    membershipLookup: options.membershipLookup ?? (async () => ({
+      organizationId: "org-1",
+      role: "owner",
+    })),
     config: {
       clientId: "app-123",
       redirectUri: new URL("https://api.vapt.test/payments/mercado-pago/oauth/callback"),
@@ -210,7 +213,7 @@ test("beginConnection creates a one-time state and S256 PKCE challenge", async (
 });
 
 test("beginConnection rejects access to another restaurant tenant", async () => {
-  const fixture = createService({ ownershipLookup: async () => false });
+  const fixture = createService({ membershipLookup: async () => null });
 
   await assert.rejects(
     fixture.service.beginConnection({
@@ -221,6 +224,38 @@ test("beginConnection rejects access to another restaurant tenant", async () => 
     (error: unknown) => error instanceof AppError && error.statusCode === 403,
   );
   assert.equal(fixture.memory.states.size, 0);
+});
+
+test("admin can connect Mercado Pago", async () => {
+  const fixture = createService({
+    membershipLookup: async () => ({ organizationId: "org-1", role: "admin" }),
+  });
+
+  await assert.doesNotReject(() => fixture.service.beginConnection({
+    restaurantId: RESTAURANT_ID,
+    userId: "admin-1",
+    environment: "sandbox",
+  }));
+});
+
+test("manager can read Mercado Pago status but cannot connect it", async () => {
+  const fixture = createService({
+    membershipLookup: async () => ({ organizationId: "org-1", role: "manager" }),
+  });
+
+  await assert.doesNotReject(() => fixture.service.getStatus({
+    restaurantId: RESTAURANT_ID,
+    userId: "manager-1",
+    environment: "sandbox",
+  }));
+  await assert.rejects(
+    () => fixture.service.beginConnection({
+      restaurantId: RESTAURANT_ID,
+      userId: "manager-1",
+      environment: "sandbox",
+    }),
+    (error: unknown) => error instanceof AppError && error.statusCode === 403,
+  );
 });
 
 test("callback rejects an absent, expired, or reused state without exchanging tokens", async () => {
@@ -315,6 +350,30 @@ test("successful callback exchanges PKCE code and stores only encrypted rotating
   assert.equal(connectedAccount.accessTokenEncrypted.includes("APP_USR-access-token"), false);
   assert.equal(connectedAccount.refreshTokenEncrypted.includes("TG-refresh-token"), false);
   assert.equal(result && "accessToken" in result, false);
+});
+
+test("callback rejects connection when the initiating member loses billing management access", async () => {
+  let active = true;
+  const fixture = createService({
+    membershipLookup: async ({ userId }) =>
+      active && userId === "owner-1"
+        ? { organizationId: "org-1", role: "owner" }
+        : null,
+  });
+  const connection = await fixture.service.beginConnection({
+    restaurantId: RESTAURANT_ID,
+    userId: "owner-1",
+    environment: "production",
+  });
+  const state = new URL(connection.authorizationUrl).searchParams.get("state")!;
+  active = false;
+
+  await assert.rejects(
+    fixture.service.handleCallback({ state, code: "authorization-code" }),
+    (error: unknown) => error instanceof AppError && error.statusCode === 403,
+  );
+  assert.equal(fixture.exchangeCalls, 0);
+  assert.equal(fixture.memory.account, null);
 });
 
 test("refreshConnection replaces both access and refresh tokens atomically", async () => {

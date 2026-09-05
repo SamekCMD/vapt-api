@@ -3,8 +3,8 @@ import type { FastifyInstance, FastifyReply } from "fastify";
 import type { AppConfig } from "../../lib/config.js";
 import { AppError } from "../../lib/errors.js";
 import {
-  createSupabaseOwnershipLookup,
-  testOwnershipLookup,
+  createSupabaseMembershipLookup,
+  testMembershipLookup,
 } from "../../lib/permissions.js";
 import { createSupabaseAdminClient } from "../../lib/supabase.js";
 import { validateWithSchema } from "../../lib/validation.js";
@@ -175,9 +175,9 @@ export async function createManualPaymentRoutes(
   const resolvedService = service ?? createManualPaymentService({
     repository: app.payments.repository,
     paymentService: app.payments.service,
-    ownershipLookup: config.nodeEnv === "test"
-      ? testOwnershipLookup
-      : createSupabaseOwnershipLookup(createSupabaseAdminClient(config) as never),
+    membershipLookup: config.nodeEnv === "test"
+      ? testMembershipLookup
+      : createSupabaseMembershipLookup(createSupabaseAdminClient(config) as never),
   });
 
   app.post(

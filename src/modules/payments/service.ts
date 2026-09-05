@@ -4,7 +4,7 @@ import type { FastifyInstance } from "fastify";
 import type { AppConfig } from "../../lib/config.js";
 import { AppError } from "../../lib/errors.js";
 import type { OrderService } from "../orders/service.js";
-import { createRestaurantAccessChecker, type OwnershipLookup } from "../../lib/permissions.js";
+import { createRestaurantAccessChecker, type MembershipLookup } from "../../lib/permissions.js";
 import { createSupabaseAdminClient } from "../../lib/supabase.js";
 import type { PaymentProvider } from "./provider.js";
 import type { MercadoPagoPaymentClient } from "./providers/mercado-pago/payment-client.js";
@@ -174,7 +174,7 @@ type MercadoPagoReturnReconciliationDependencies = {
 type ManualPaymentServiceDependencies = {
   repository: Pick<PaymentRepository, "findOrderForManualPayment">;
   paymentService: PaymentService;
-  ownershipLookup: OwnershipLookup;
+  membershipLookup: MembershipLookup;
 };
 
 const PAID_ORDER_STATUSES = new Set([
@@ -710,9 +710,9 @@ function manualFingerprint(orderId: string, paymentMethod: PaymentMethod): strin
 export function createManualPaymentService({
   repository,
   paymentService,
-  ownershipLookup,
+  membershipLookup,
 }: ManualPaymentServiceDependencies): ManualPaymentService {
-  const assertRestaurantAccess = createRestaurantAccessChecker(ownershipLookup);
+  const assertRestaurantAccess = createRestaurantAccessChecker(membershipLookup);
 
   return {
     async confirm(input) {
@@ -725,10 +725,18 @@ export function createManualPaymentService({
         throw new AppError(404, "order_not_found", "Order not found");
       }
 
-      await assertRestaurantAccess({
-        userId: input.userId,
-        restaurantId: order.restaurantId,
-      });
+      try {
+        await assertRestaurantAccess({
+          userId: input.userId,
+          restaurantId: order.restaurantId,
+          capability: "restaurant.operate",
+        });
+      } catch (error) {
+        if (error instanceof AppError && error.statusCode === 403) {
+          throw new AppError(404, "order_not_found", "Order not found");
+        }
+        throw error;
+      }
 
       if (isOrderPaid(order)) {
         throw new AppError(409, "order_already_paid", "Order is already paid");

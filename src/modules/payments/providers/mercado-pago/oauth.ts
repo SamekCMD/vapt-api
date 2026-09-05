@@ -6,7 +6,7 @@ import type { SecretCipher } from "../../../../lib/crypto.js";
 import { AppError } from "../../../../lib/errors.js";
 import {
   createRestaurantAccessChecker,
-  type OwnershipLookup,
+  type MembershipLookup,
 } from "../../../../lib/permissions.js";
 import type { PaymentEnvironment } from "../../types.js";
 import type {
@@ -17,25 +17,38 @@ import type {
 const AUTHORIZATION_ENDPOINT = "https://auth.mercadopago.com/authorization";
 const STATE_RETURN_ORIGIN_SEPARATOR = ".";
 
-function createOAuthState(returnOrigin?: string): string {
-  const nonce = randomBytes(32).toString("base64url");
-  if (!returnOrigin) return nonce;
+type OAuthStateContext = {
+  userId: string;
+  returnOrigin?: string;
+};
 
-  const encodedOrigin = Buffer.from(returnOrigin, "utf8").toString("base64url");
-  return `${nonce}${STATE_RETURN_ORIGIN_SEPARATOR}${encodedOrigin}`;
+function createOAuthState(userId: string, returnOrigin?: string): string {
+  const nonce = randomBytes(32).toString("base64url");
+  const context = Buffer.from(
+    JSON.stringify({ userId, ...(returnOrigin ? { returnOrigin } : {}) }),
+    "utf8",
+  ).toString("base64url");
+  return `${nonce}${STATE_RETURN_ORIGIN_SEPARATOR}${context}`;
 }
 
-function readReturnOriginFromState(state: string): string | undefined {
+function readOAuthStateContext(state: string): OAuthStateContext | null {
   const separatorIndex = state.indexOf(STATE_RETURN_ORIGIN_SEPARATOR);
-  if (separatorIndex === -1) return undefined;
+  if (separatorIndex === -1) return null;
 
   try {
-    const encodedOrigin = state.slice(separatorIndex + 1);
-    const decodedOrigin = Buffer.from(encodedOrigin, "base64url").toString("utf8");
-    const url = new URL(decodedOrigin);
-    return url.origin === decodedOrigin ? decodedOrigin : undefined;
+    const encodedContext = state.slice(separatorIndex + 1);
+    const parsed = JSON.parse(
+      Buffer.from(encodedContext, "base64url").toString("utf8"),
+    ) as Record<string, unknown>;
+    if (typeof parsed.userId !== "string" || parsed.userId.length === 0) return null;
+    if (parsed.returnOrigin === undefined) return { userId: parsed.userId };
+    if (typeof parsed.returnOrigin !== "string") return null;
+
+    const url = new URL(parsed.returnOrigin);
+    if (url.origin !== parsed.returnOrigin) return null;
+    return { userId: parsed.userId, returnOrigin: parsed.returnOrigin };
   } catch {
-    return undefined;
+    return null;
   }
 }
 
@@ -375,7 +388,7 @@ export function createMercadoPagoOAuthService(input: {
   repository: MercadoPagoOAuthRepository;
   client: MercadoPagoOAuthClient;
   cipher: SecretCipher;
-  ownershipLookup: OwnershipLookup;
+  membershipLookup: MembershipLookup;
   config: {
     clientId: string;
     redirectUri: URL;
@@ -386,7 +399,7 @@ export function createMercadoPagoOAuthService(input: {
   now?: () => Date;
 }) {
   const now = input.now ?? (() => new Date());
-  const assertRestaurantAccess = createRestaurantAccessChecker(input.ownershipLookup);
+  const assertRestaurantAccess = createRestaurantAccessChecker(input.membershipLookup);
 
   async function persistTokens(
     state: OAuthStateRecord,
@@ -422,9 +435,10 @@ export function createMercadoPagoOAuthService(input: {
       await assertRestaurantAccess({
         userId: connectionInput.userId,
         restaurantId: connectionInput.restaurantId,
+        capability: "billing.manage",
       });
 
-      const state = createOAuthState(connectionInput.returnOrigin);
+      const state = createOAuthState(connectionInput.userId, connectionInput.returnOrigin);
       const stateHash = hash(state);
       const codeVerifier = randomBytes(64).toString("base64url");
       const codeChallenge = createHash("sha256")
@@ -472,18 +486,27 @@ export function createMercadoPagoOAuthService(input: {
         throw new AppError(400, "oauth_state_invalid", "OAuth state is invalid or expired");
       }
 
-      const returnOrigin = readReturnOriginFromState(callbackInput.state);
+      const stateContext = readOAuthStateContext(callbackInput.state);
+      if (!stateContext) {
+        throw new AppError(400, "oauth_state_invalid", "OAuth state is invalid or expired");
+      }
 
       if (callbackInput.error) {
         return {
           restaurantId: state.restaurantId,
           status: "denied" as const,
-          ...(returnOrigin ? { returnOrigin } : {}),
+          ...(stateContext.returnOrigin ? { returnOrigin: stateContext.returnOrigin } : {}),
         };
       }
       if (!callbackInput.code) {
         throw new AppError(400, "oauth_code_missing", "OAuth authorization code is missing");
       }
+
+      await assertRestaurantAccess({
+        userId: stateContext.userId,
+        restaurantId: state.restaurantId,
+        capability: "billing.manage",
+      });
 
       const codeVerifier = input.cipher.decrypt(
         state.codeVerifierEncrypted,
@@ -500,7 +523,7 @@ export function createMercadoPagoOAuthService(input: {
       return {
         restaurantId: state.restaurantId,
         status: "connected" as const,
-        ...(returnOrigin ? { returnOrigin } : {}),
+        ...(stateContext.returnOrigin ? { returnOrigin: stateContext.returnOrigin } : {}),
       };
     },
 
@@ -604,6 +627,7 @@ export function createMercadoPagoOAuthService(input: {
       await assertRestaurantAccess({
         userId: statusInput.userId,
         restaurantId: statusInput.restaurantId,
+        capability: "billing.read",
       });
       const account = await input.repository.findProviderAccount(
         statusInput.restaurantId,
@@ -626,6 +650,7 @@ export function createMercadoPagoOAuthService(input: {
       await assertRestaurantAccess({
         userId: disconnectInput.userId,
         restaurantId: disconnectInput.restaurantId,
+        capability: "billing.manage",
       });
       await input.repository.disconnectProviderAccount({
         restaurantId: disconnectInput.restaurantId,

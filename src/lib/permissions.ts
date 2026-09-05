@@ -1,60 +1,149 @@
 import { AppError } from "./errors.js";
 
-export type OwnershipLookup = (input: {
+export type OrganizationRole = "owner" | "admin" | "manager" | "staff";
+
+export type RestaurantCapability =
+  | "restaurant.read"
+  | "restaurant.operate"
+  | "restaurant.manage"
+  | "billing.read"
+  | "billing.manage";
+
+export type RestaurantMembership = {
+  organizationId: string;
+  role: OrganizationRole;
+};
+
+export type MembershipLookup = (input: {
   userId: string;
   restaurantId: string;
-}) => Promise<boolean>;
+}) => Promise<RestaurantMembership | null>;
 
 export type RestaurantAccessChecker = (input: {
   userId: string;
   restaurantId: string;
+  capability: RestaurantCapability;
 }) => Promise<void>;
 
-export function createRestaurantAccessChecker(
-  ownershipLookup: OwnershipLookup,
-): RestaurantAccessChecker {
-  return async ({ userId, restaurantId }) => {
-    const allowed = await ownershipLookup({ userId, restaurantId });
+const organizationRoles = new Set<OrganizationRole>([
+  "owner",
+  "admin",
+  "manager",
+  "staff",
+]);
 
-    if (!allowed) {
+const capabilityRoles: Record<RestaurantCapability, ReadonlySet<OrganizationRole>> = {
+  "restaurant.read": organizationRoles,
+  "restaurant.operate": organizationRoles,
+  "restaurant.manage": new Set(["owner", "admin", "manager"]),
+  "billing.read": new Set(["owner", "admin", "manager"]),
+  "billing.manage": new Set(["owner", "admin"]),
+};
+
+function isOrganizationRole(value: unknown): value is OrganizationRole {
+  return typeof value === "string" && organizationRoles.has(value as OrganizationRole);
+}
+
+export function hasRestaurantCapability(
+  role: OrganizationRole,
+  capability: RestaurantCapability,
+): boolean {
+  return capabilityRoles[capability].has(role);
+}
+
+export function createRestaurantAccessChecker(
+  membershipLookup: MembershipLookup,
+): RestaurantAccessChecker {
+  return async ({ userId, restaurantId, capability }) => {
+    const membership = await membershipLookup({ userId, restaurantId });
+
+    if (!membership || !hasRestaurantCapability(membership.role, capability)) {
       throw new AppError(403, "forbidden", "Forbidden");
     }
   };
 }
 
-export const testOwnershipLookup: OwnershipLookup = async ({ userId, restaurantId }) =>
-  userId === "user-1" && restaurantId === "rest-1";
+export const testMembershipLookup: MembershipLookup = async ({ userId, restaurantId }) =>
+  userId === "user-1" && restaurantId === "rest-1"
+    ? { organizationId: "org-1", role: "owner" }
+    : null;
 
-type OwnershipLookupClient = {
-  from: (table: "restaurants") => {
-    select: (columns: "id") => {
-      eq: (column: "id", value: string) => {
-        eq: (column: "owner_id", value: string) => {
-          maybeSingle: () => Promise<{ data: { id: string } | null; error: { message?: string } | null }>;
-        };
+type QueryResult = {
+  data: Record<string, unknown> | null;
+  error: { message?: string } | null;
+};
+
+type RestaurantQuery = {
+  select: (columns: "organization_id") => {
+    eq: (column: "id", value: string) => {
+      maybeSingle: () => Promise<QueryResult>;
+    };
+  };
+};
+
+type MembershipQuery = {
+  select: (columns: "role,status") => {
+    eq: (column: "organization_id", value: string) => {
+      eq: (column: "user_id", value: string) => {
+        maybeSingle: () => Promise<QueryResult>;
       };
     };
   };
 };
 
-export function createSupabaseOwnershipLookup(client: OwnershipLookupClient): OwnershipLookup {
+type MembershipLookupClient = {
+  from(table: "restaurants"): RestaurantQuery;
+  from(table: "organization_members"): MembershipQuery;
+};
+
+function databaseFailure(): AppError {
+  return new AppError(
+    500,
+    "internal_error",
+    "Failed to verify restaurant access",
+  );
+}
+
+export function createSupabaseMembershipLookup(
+  client: MembershipLookupClient,
+): MembershipLookup {
   return async ({ userId, restaurantId }) => {
-    const result = await client
+    const restaurantResult = await client
       .from("restaurants")
-      .select("id")
+      .select("organization_id")
       .eq("id", restaurantId)
-      .eq("owner_id", userId)
       .maybeSingle();
 
-    if (result.error) {
-      const details = result.error.message?.trim() || "unknown supabase error";
-      throw new AppError(
-        500,
-        "internal_error",
-        `Failed to verify restaurant access: ${details}`,
-      );
+    if (restaurantResult.error) {
+      throw databaseFailure();
     }
 
-    return Boolean(result.data);
+    const organizationId = restaurantResult.data?.organization_id;
+    if (typeof organizationId !== "string" || organizationId.trim() === "") {
+      return null;
+    }
+
+    const membershipResult = await client
+      .from("organization_members")
+      .select("role,status")
+      .eq("organization_id", organizationId)
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    if (membershipResult.error) {
+      throw databaseFailure();
+    }
+
+    if (
+      membershipResult.data?.status !== "active" ||
+      !isOrganizationRole(membershipResult.data.role)
+    ) {
+      return null;
+    }
+
+    return {
+      organizationId,
+      role: membershipResult.data.role,
+    };
   };
 }

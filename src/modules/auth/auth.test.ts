@@ -139,7 +139,7 @@ test("protected restaurant route returns 403 when user cannot access restaurant"
   await app.close();
 });
 
-test("protected restaurant route returns 200 when user owns restaurant", async () => {
+test("protected restaurant route returns 200 for an active restaurant member", async () => {
   const app = await buildApp(validConfig);
 
   const response = await app.inject({

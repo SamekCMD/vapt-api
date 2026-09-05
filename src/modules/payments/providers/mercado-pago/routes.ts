@@ -5,8 +5,8 @@ import type { AppConfig } from "../../../../lib/config.js";
 import { createSecretCipher } from "../../../../lib/crypto.js";
 import { AppError } from "../../../../lib/errors.js";
 import {
-  createSupabaseOwnershipLookup,
-  testOwnershipLookup,
+  createSupabaseMembershipLookup,
+  testMembershipLookup,
 } from "../../../../lib/permissions.js";
 import { createSupabaseAdminClient } from "../../../../lib/supabase.js";
 import { validateWithSchema } from "../../../../lib/validation.js";
@@ -83,9 +83,9 @@ export function createMercadoPagoOAuthServiceFromConfig(config: AppConfig): Merc
       clientSecret: config.mercadoPago.clientSecret,
     }),
     cipher: createSecretCipher(config.mercadoPago.tokenEncryptionKey),
-    ownershipLookup: config.nodeEnv === "test"
-      ? testOwnershipLookup
-      : createSupabaseOwnershipLookup(supabase as never),
+    membershipLookup: config.nodeEnv === "test"
+      ? testMembershipLookup
+      : createSupabaseMembershipLookup(supabase as never),
     config: {
       clientId: config.mercadoPago.clientId,
       redirectUri: config.mercadoPago.redirectUri,

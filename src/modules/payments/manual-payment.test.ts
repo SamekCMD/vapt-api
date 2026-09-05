@@ -6,7 +6,7 @@ import Fastify from "fastify";
 
 import type { AppConfig } from "../../lib/config.js";
 import { AppError } from "../../lib/errors.js";
-import type { OwnershipLookup } from "../../lib/permissions.js";
+import type { MembershipLookup } from "../../lib/permissions.js";
 import { registerAuthDecorator } from "../../plugins/auth.js";
 import { registerErrorHandler } from "../../plugins/error-handler.js";
 import { PaymentTransactionConflictError, type PaymentTransactionRecord } from "./repository.js";
@@ -135,8 +135,10 @@ test("manual provider confirms an operator-recorded payment without external cap
 
 test("manual confirmation uses the order amount and records the authenticated operator", async () => {
   let startInput: Record<string, unknown> | null = null;
-  const ownershipLookup: OwnershipLookup = async ({ userId, restaurantId }) =>
-    userId === "user-1" && restaurantId === RESTAURANT_ID;
+  const membershipLookup: MembershipLookup = async ({ userId, restaurantId }) =>
+    userId === "user-1" && restaurantId === RESTAURANT_ID
+      ? { organizationId: "org-1", role: "staff" }
+      : null;
   const service = createManualPaymentService({
     repository: {
       findOrderForManualPayment: async () => order(),
@@ -151,7 +153,7 @@ test("manual confirmation uses the order amount and records the authenticated op
       },
       getTransaction: async () => null,
     },
-    ownershipLookup,
+    membershipLookup,
   });
 
   const result = await service.confirm({
@@ -190,7 +192,7 @@ test("manual confirmation rejects a token without the authenticated operator rol
       startPayment: async () => paidTransaction(),
       getTransaction: async () => null,
     },
-    ownershipLookup: async () => true,
+    membershipLookup: async () => ({ organizationId: "org-1", role: "owner" }),
   });
 
   await assert.rejects(
@@ -206,7 +208,7 @@ test("manual confirmation rejects a token without the authenticated operator rol
   assert.equal(loaded, false);
 });
 
-test("manual confirmation rejects an order owned by another tenant", async () => {
+test("manual confirmation hides orders from another organization", async () => {
   let started = false;
   const service = createManualPaymentService({
     repository: { findOrderForManualPayment: async () => order() },
@@ -217,7 +219,7 @@ test("manual confirmation rejects an order owned by another tenant", async () =>
       },
       getTransaction: async () => null,
     },
-    ownershipLookup: async () => false,
+    membershipLookup: async () => null,
   });
 
   await assert.rejects(
@@ -228,7 +230,10 @@ test("manual confirmation rejects an order owned by another tenant", async () =>
       userId: "user-2",
       authRole: "authenticated",
     }),
-    (error: unknown) => error instanceof AppError && error.statusCode === 403,
+    (error: unknown) =>
+      error instanceof AppError &&
+      error.statusCode === 404 &&
+      error.code === "order_not_found",
   );
   assert.equal(started, false);
 });
@@ -245,7 +250,7 @@ test("manual confirmation rejects an order that is already paid", async () => {
       startPayment: async () => paidTransaction(),
       getTransaction: async () => null,
     },
-    ownershipLookup: async () => true,
+    membershipLookup: async () => ({ organizationId: "org-1", role: "owner" }),
   });
 
   await assert.rejects(
@@ -272,7 +277,7 @@ test("manual confirmation maps a concurrent transaction to conflict", async () =
       },
       getTransaction: async () => null,
     },
-    ownershipLookup: async () => true,
+    membershipLookup: async () => ({ organizationId: "org-1", role: "owner" }),
   });
 
   await assert.rejects(

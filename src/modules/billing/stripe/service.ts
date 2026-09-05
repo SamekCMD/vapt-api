@@ -1,5 +1,8 @@
 import { AppError } from "../../../lib/errors.js";
-import { createRestaurantAccessChecker } from "../../../lib/permissions.js";
+import {
+  createRestaurantAccessChecker,
+  type MembershipLookup,
+} from "../../../lib/permissions.js";
 
 type StripeClient = {
   stripe: {
@@ -48,16 +51,11 @@ type StripeClient = {
   };
 };
 
-type OwnershipLookup = (input: { userId: string; restaurantId: string }) => Promise<boolean>;
-
-const defaultOwnershipLookup: OwnershipLookup = async ({ userId, restaurantId }) =>
-  userId === "user-1" && restaurantId === "rest-1";
-
 export function createStripeBillingService(
   client: StripeClient,
-  ownershipLookup: OwnershipLookup = defaultOwnershipLookup,
+  membershipLookup: MembershipLookup,
 ) {
-  const assertRestaurantAccess = createRestaurantAccessChecker(ownershipLookup);
+  const assertRestaurantAccess = createRestaurantAccessChecker(membershipLookup);
 
   return {
     async createCheckout(input: {
@@ -67,7 +65,11 @@ export function createStripeBillingService(
       planType: string;
       priceId: string;
     }) {
-      await assertRestaurantAccess({ userId: input.userId, restaurantId: input.restaurantId });
+      await assertRestaurantAccess({
+        userId: input.userId,
+        restaurantId: input.restaurantId,
+        capability: "billing.manage",
+      });
 
       const response = await client.stripe.createSubscription({
         restaurantId: input.restaurantId,
@@ -85,7 +87,11 @@ export function createStripeBillingService(
       targetPlanType: string;
       targetPriceId: string;
     }) {
-      await assertRestaurantAccess({ userId: input.userId, restaurantId: input.restaurantId });
+      await assertRestaurantAccess({
+        userId: input.userId,
+        restaurantId: input.restaurantId,
+        capability: "billing.manage",
+      });
 
       const response = await client.stripe.changeSubscription({
         restaurantId: input.restaurantId,
@@ -105,7 +111,11 @@ export function createStripeBillingService(
       userId: string;
       restaurantId: string;
     }) {
-      await assertRestaurantAccess({ userId: input.userId, restaurantId: input.restaurantId });
+      await assertRestaurantAccess({
+        userId: input.userId,
+        restaurantId: input.restaurantId,
+        capability: "billing.manage",
+      });
 
       const response = await client.stripe.cancelSubscription({
         restaurantId: input.restaurantId,
@@ -118,7 +128,11 @@ export function createStripeBillingService(
       userId: string;
       restaurantId: string;
     }) {
-      await assertRestaurantAccess({ userId: input.userId, restaurantId: input.restaurantId });
+      await assertRestaurantAccess({
+        userId: input.userId,
+        restaurantId: input.restaurantId,
+        capability: "billing.read",
+      });
 
       const response = await client.stripe.getSubscriptionStatus(input.restaurantId);
 

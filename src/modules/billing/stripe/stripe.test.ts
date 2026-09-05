@@ -5,6 +5,7 @@ import test from "node:test";
 
 import type { AppConfig } from "../../../lib/config.js";
 import { buildApp } from "../../../app.js";
+import { createStripeBillingService } from "./service.js";
 
 const validConfig: AppConfig = {
   nodeEnv: "test",
@@ -82,6 +83,84 @@ async function withN8nStub(
       ),
   };
 }
+
+function createBillingService(role: "owner" | "admin" | "manager" | "staff" | null) {
+  return createStripeBillingService(
+    {
+      stripe: {
+        createSubscription: async () => ({
+          data: {
+            clientSecret: "secret",
+            subscriptionId: "subscription",
+            customerId: "customer",
+            autoCharged: false,
+          },
+        }),
+        changeSubscription: async () => ({
+          data: {
+            subscriptionId: "subscription",
+            plan_type: "pro",
+            status: "active",
+            autoCharged: true,
+          },
+        }),
+        cancelSubscription: async () => ({
+          data: { subscriptionId: "subscription", status: "canceled" },
+        }),
+        getSubscriptionStatus: async () => ({
+          data: {
+            plan_type: "starter",
+            plan_status: "active",
+            trial_ends_at: null,
+            stripe_customer_id: "customer",
+            stripe_subscription_id: "subscription",
+          },
+        }),
+      },
+    },
+    async () => role ? { organizationId: "org-1", role } : null,
+  );
+}
+
+test("admin can manage billing", async () => {
+  const service = createBillingService("admin");
+
+  await assert.doesNotReject(() => service.createCheckout({
+    userId: "admin-1",
+    restaurantId: "rest-1",
+    email: "admin@example.com",
+    planType: "starter",
+    priceId: "price-1",
+  }));
+});
+
+test("manager can read billing but cannot mutate it", async () => {
+  const service = createBillingService("manager");
+
+  await assert.doesNotReject(() => service.getSubscriptionStatus({
+    userId: "manager-1",
+    restaurantId: "rest-1",
+  }));
+  await assert.rejects(
+    () => service.cancelSubscription({
+      userId: "manager-1",
+      restaurantId: "rest-1",
+    }),
+    (error: unknown) => error instanceof Error && "statusCode" in error && error.statusCode === 403,
+  );
+});
+
+test("staff and non-members cannot access billing", async () => {
+  for (const service of [createBillingService("staff"), createBillingService(null)]) {
+    await assert.rejects(
+      () => service.getSubscriptionStatus({
+        userId: "user-1",
+        restaurantId: "rest-1",
+      }),
+      (error: unknown) => error instanceof Error && "statusCode" in error && error.statusCode === 403,
+    );
+  }
+});
 
 test("stripe checkout rejects missing auth", async () => {
   const app = await buildApp(validConfig);
