@@ -48,6 +48,8 @@ const validOwnerToken = createToken(
     sub: "user-1",
     email: "owner@example.com",
     role: "authenticated",
+    iss: "https://supabase.example.com/auth/v1",
+    aud: "authenticated",
     exp: Math.floor(Date.now() / 1000) + 3600,
   },
   validConfig.supabase.jwtSecret,

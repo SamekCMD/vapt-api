@@ -650,6 +650,8 @@ function routeToken(): string {
   const body = Buffer.from(JSON.stringify({
     sub: "user-1",
     role: "authenticated",
+    iss: "https://supabase.example.com/auth/v1",
+    aud: "authenticated",
     exp: Math.floor(Date.now() / 1000) + 3600,
   })).toString("base64url");
   const signature = createHmac("sha256", routeConfig.supabase.jwtSecret)

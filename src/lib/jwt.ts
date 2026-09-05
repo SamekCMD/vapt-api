@@ -1,50 +1,120 @@
-import { createHmac } from "node:crypto";
+import {
+  createRemoteJWKSet,
+  decodeProtectedHeader,
+  errors,
+  jwtVerify,
+  type JWTPayload,
+} from "jose";
 
 import { AppError } from "./errors.js";
 
-type JwtPayload = {
+const asymmetricAlgorithms = ["ES256", "RS256"] as const;
+
+export type VerifiedSupabaseClaims = {
   sub: string;
   email?: string;
   role?: string;
-  exp?: number;
+  iss: string;
+  aud: string | string[];
+  exp: number;
 };
 
-function decodeBase64Url(input: string): string {
-  const normalized = input.replace(/-/g, "+").replace(/_/g, "/");
-  const padding = normalized.length % 4 === 0 ? "" : "=".repeat(4 - (normalized.length % 4));
-  return Buffer.from(`${normalized}${padding}`, "base64").toString("utf8");
+export type SupabaseJwtVerifier = (
+  token: string,
+) => Promise<VerifiedSupabaseClaims>;
+
+export type SupabaseJwtVerifierOptions = {
+  issuer: string;
+  audience: string;
+  jwksUrl: URL;
+  legacyJwtSecret: string;
+};
+
+function unauthorized(): AppError {
+  return new AppError(401, "unauthorized", "Unauthorized");
 }
 
-function sign(payload: string, secret: string): string {
-  return createHmac("sha256", secret)
-    .update(payload)
-    .digest("base64url");
+function authenticationUnavailable(): AppError {
+  return new AppError(
+    503,
+    "authentication_unavailable",
+    "Authentication service unavailable",
+  );
 }
 
-export function verifySupabaseToken(token: string, jwtSecret: string): JwtPayload {
-  const parts = token.split(".");
-
-  if (parts.length !== 3) {
-    throw new AppError(401, "unauthorized", "Unauthorized");
+function isRemoteJwksInfrastructureError(error: unknown): boolean {
+  if (error instanceof AppError) {
+    return false;
   }
 
-  const [encodedHeader, encodedPayload, encodedSignature] = parts;
-  const payloadToVerify = `${encodedHeader}.${encodedPayload}`;
-  const expectedSignature = sign(payloadToVerify, jwtSecret);
+  return (
+    error instanceof errors.JWKSTimeout ||
+    error instanceof errors.JWKSInvalid ||
+    (error instanceof errors.JOSEError && error.constructor === errors.JOSEError) ||
+    !(error instanceof errors.JOSEError)
+  );
+}
 
-  if (encodedSignature !== expectedSignature) {
-    throw new AppError(401, "unauthorized", "Unauthorized");
+function toVerifiedClaims(payload: JWTPayload): VerifiedSupabaseClaims {
+  if (
+    typeof payload.sub !== "string" ||
+    payload.sub.trim() === "" ||
+    typeof payload.iss !== "string" ||
+    (
+      typeof payload.aud !== "string" &&
+      (!Array.isArray(payload.aud) || !payload.aud.every((value) => typeof value === "string"))
+    ) ||
+    typeof payload.exp !== "number" ||
+    !Number.isFinite(payload.exp)
+  ) {
+    throw unauthorized();
   }
 
-  const payload = JSON.parse(decodeBase64Url(encodedPayload)) as JwtPayload;
+  return {
+    sub: payload.sub,
+    ...(typeof payload.email === "string" ? { email: payload.email } : {}),
+    ...(typeof payload.role === "string" ? { role: payload.role } : {}),
+    iss: payload.iss,
+    aud: payload.aud,
+    exp: payload.exp,
+  };
+}
 
-  if (!payload.sub) {
-    throw new AppError(401, "unauthorized", "Unauthorized");
-  }
+export function createSupabaseJwtVerifier(
+  options: SupabaseJwtVerifierOptions,
+): SupabaseJwtVerifier {
+  const remoteJwks = createRemoteJWKSet(options.jwksUrl);
+  const legacyKey = new TextEncoder().encode(options.legacyJwtSecret);
 
-  if (payload.exp && payload.exp * 1000 <= Date.now()) {
-    throw new AppError(401, "unauthorized", "Unauthorized");
-  }
+  return async (token) => {
+    let usedRemoteJwks = false;
 
-  return payload;
+    try {
+      const protectedHeader = decodeProtectedHeader(token);
+      const verificationOptions = {
+        issuer: options.issuer,
+        audience: options.audience,
+      };
+      const usesLegacyKey = protectedHeader.alg === "HS256";
+      usedRemoteJwks = !usesLegacyKey;
+
+      const result = usesLegacyKey
+        ? await jwtVerify(token, legacyKey, {
+            ...verificationOptions,
+            algorithms: ["HS256"],
+          })
+        : await jwtVerify(token, remoteJwks, {
+            ...verificationOptions,
+            algorithms: [...asymmetricAlgorithms],
+          });
+
+      return toVerifiedClaims(result.payload);
+    } catch (error) {
+      if (usedRemoteJwks && isRemoteJwksInfrastructureError(error)) {
+        throw authenticationUnavailable();
+      }
+
+      throw unauthorized();
+    }
+  };
 }

@@ -2,13 +2,35 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 
 import type { AppConfig } from "../lib/config.js";
 import { AppError } from "../lib/errors.js";
-import { verifySupabaseToken } from "../lib/jwt.js";
+import {
+  createSupabaseJwtVerifier,
+  type SupabaseJwtVerifier,
+} from "../lib/jwt.js";
 
 export type AuthContext = {
   userId: string;
   email: string | null;
   role: string;
 };
+
+const verifiers = new WeakMap<AppConfig, SupabaseJwtVerifier>();
+
+function getVerifier(config: AppConfig): SupabaseJwtVerifier {
+  const existing = verifiers.get(config);
+  if (existing) {
+    return existing;
+  }
+
+  const issuer = new URL("/auth/v1", config.supabase.url).toString().replace(/\/$/, "");
+  const verifier = createSupabaseJwtVerifier({
+    issuer,
+    audience: "authenticated",
+    jwksUrl: new URL("/auth/v1/.well-known/jwks.json", config.supabase.url),
+    legacyJwtSecret: config.supabase.jwtSecret,
+  });
+  verifiers.set(config, verifier);
+  return verifier;
+}
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -37,7 +59,7 @@ export async function requireAuth(
     throw new AppError(401, "unauthorized", "Unauthorized");
   }
 
-  const payload = verifySupabaseToken(token, config.supabase.jwtSecret);
+  const payload = await getVerifier(config)(token);
 
   request.auth = {
     userId: payload.sub,
