@@ -14,7 +14,7 @@ export type VerifiedSupabaseClaims = {
   sub: string;
   email?: string;
   role?: string;
-  iss: string;
+  iss?: string;
   aud: string | string[];
   exp: number;
 };
@@ -55,11 +55,11 @@ function isRemoteJwksInfrastructureError(error: unknown): boolean {
   );
 }
 
-function toVerifiedClaims(payload: JWTPayload): VerifiedSupabaseClaims {
+function toVerifiedClaims(payload: JWTPayload, allowMissingIssuer: boolean): VerifiedSupabaseClaims {
   if (
     typeof payload.sub !== "string" ||
     payload.sub.trim() === "" ||
-    typeof payload.iss !== "string" ||
+    (typeof payload.iss !== "string" && !(allowMissingIssuer && payload.iss === undefined)) ||
     (
       typeof payload.aud !== "string" &&
       (!Array.isArray(payload.aud) || !payload.aud.every((value) => typeof value === "string"))
@@ -74,7 +74,7 @@ function toVerifiedClaims(payload: JWTPayload): VerifiedSupabaseClaims {
     sub: payload.sub,
     ...(typeof payload.email === "string" ? { email: payload.email } : {}),
     ...(typeof payload.role === "string" ? { role: payload.role } : {}),
-    iss: payload.iss,
+    ...(payload.iss !== undefined ? { iss: payload.iss } : {}),
     aud: payload.aud,
     exp: payload.exp,
   };
@@ -100,7 +100,7 @@ export function createSupabaseJwtVerifier(
 
       const result = usesLegacyKey
         ? await jwtVerify(token, legacyKey, {
-            ...verificationOptions,
+            audience: options.audience,
             algorithms: ["HS256"],
           })
         : await jwtVerify(token, remoteJwks, {
@@ -108,7 +108,12 @@ export function createSupabaseJwtVerifier(
             algorithms: [...asymmetricAlgorithms],
           });
 
-      return toVerifiedClaims(result.payload);
+      // Self-hosted legacy Auth may omit iss. Check any supplied issuer after signature verification.
+      if (usesLegacyKey && result.payload.iss !== undefined && result.payload.iss !== options.issuer) {
+        throw unauthorized();
+      }
+
+      return toVerifiedClaims(result.payload, usesLegacyKey);
     } catch (error) {
       if (usedRemoteJwks && isRemoteJwksInfrastructureError(error)) {
         throw authenticationUnavailable();

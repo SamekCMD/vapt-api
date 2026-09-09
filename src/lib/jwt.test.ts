@@ -6,6 +6,7 @@ import {
   exportJWK,
   generateKeyPair,
   SignJWT,
+  type JWTPayload,
 } from "jose";
 
 import { AppError } from "./errors.js";
@@ -119,6 +120,46 @@ test("verifies a legacy HS256 token through JOSE", async () => {
 
 test("rejects an expired token", async () => {
   await expectUnauthorized(verifier(await createAsymmetricToken({ expirationTime: 0 })));
+});
+
+test("verifies a self-hosted HS256 token without an issuer", async () => {
+  const token = await new SignJWT({ sub: subject, aud: audience })
+    .setProtectedHeader({ alg: "HS256" })
+    .setExpirationTime("1h")
+    .sign(new TextEncoder().encode(legacyJwtSecret));
+  const claims = await verifier(token);
+  assert.equal(claims.sub, subject);
+  assert.equal(claims.iss, undefined);
+});
+
+for (const [name, overrides, secret] of [
+  ["wrong issuer", { iss: "https://attacker.example.com" }, legacyJwtSecret],
+  ["empty issuer", { iss: "" }, legacyJwtSecret],
+  ["null issuer", { iss: null }, legacyJwtSecret],
+  ["wrong audience", { aud: "service_role" }, legacyJwtSecret],
+  ["missing audience", { aud: undefined }, legacyJwtSecret],
+  ["expired token", { exp: 1 }, legacyJwtSecret],
+  ["missing expiration", { exp: undefined }, legacyJwtSecret],
+  ["missing subject", { sub: undefined }, legacyJwtSecret],
+  ["wrong signature", {}, "another-secret-with-enough-entropy"],
+] as const) {
+  test(`rejects legacy HS256 with ${name}`, async () => {
+    const token = await new SignJWT({
+      sub: subject, aud: audience, exp: Math.floor(Date.now() / 1000) + 3600,
+      ...overrides,
+    } as unknown as JWTPayload)
+      .setProtectedHeader({ alg: "HS256" })
+      .sign(new TextEncoder().encode(secret));
+    await expectUnauthorized(verifier(token));
+  });
+}
+
+test("rejects an asymmetric token without an issuer", async () => {
+  const token = await new SignJWT({ sub: subject, aud: audience })
+    .setProtectedHeader({ alg: "ES256", kid: "primary" })
+    .setExpirationTime("1h")
+    .sign(primaryKeys.privateKey);
+  await expectUnauthorized(verifier(token));
 });
 
 test("rejects a token from another issuer", async () => {
