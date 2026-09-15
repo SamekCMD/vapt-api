@@ -16,17 +16,18 @@ type N8nCallResult<TData = unknown> = {
 };
 
 type FetchLike = typeof fetch;
+type N8nConfig = NonNullable<AppConfig["n8n"]>;
 
-function getAuthHeader(config: AppConfig, auth: N8nAuthStrategy): [string, string] {
+function getAuthHeader(config: N8nConfig, auth: N8nAuthStrategy): [string, string] {
   if (auth === "none") {
     return ["", ""];
   }
 
   if (auth === "app") {
-    return ["x-vapt-app-key", config.n8n.secrets.app];
+    return ["x-vapt-app-key", config.secrets.app];
   }
 
-  return ["x-vapt-admin-key", config.n8n.secrets.admin];
+  return ["x-vapt-admin-key", config.secrets.admin];
 }
 
 function resolveContractUrl(baseUrl: URL, path: string): URL {
@@ -55,15 +56,20 @@ async function parseResponseBody(response: Response): Promise<unknown> {
 }
 
 export function createN8nClient(config: AppConfig, fetchImpl: FetchLike = fetch) {
+  const n8n = config.n8n;
+  if (!n8n) {
+    throw new Error("n8n is not configured");
+  }
+
   const call = async <TData = unknown>(
     operation: N8nOperation,
     options: N8nCallOptions = {},
   ): Promise<N8nCallResult<TData>> => {
     const contract = n8nContracts[operation];
-    const [headerName, headerValue] = getAuthHeader(config, contract.auth);
-    const url = resolveContractUrl(config.n8n.baseUrl, contract.path);
+    const [headerName, headerValue] = getAuthHeader(n8n, contract.auth);
+    const url = resolveContractUrl(n8n.baseUrl, contract.path);
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), config.n8n.timeoutMs);
+    const timeout = setTimeout(() => controller.abort(), n8n.timeoutMs);
 
     if (options.query) {
       for (const [key, value] of Object.entries(options.query)) {

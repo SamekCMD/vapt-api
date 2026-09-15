@@ -84,8 +84,8 @@ async function buildWebhookTestApp(options?: {
   };
   const service = createWebhookService(
     {
-      stripeSigningSecret: validConfig.webhooks.stripe.signingSecret,
-      stripeToleranceSeconds: validConfig.webhooks.stripe.toleranceSeconds,
+      stripeSigningSecret: validConfig.webhooks.stripe!.signingSecret,
+      stripeToleranceSeconds: validConfig.webhooks.stripe!.toleranceSeconds,
     },
     repository,
     n8nClient,
@@ -146,7 +146,7 @@ test("stripe webhook forwards new events and marks them processed", async () => 
     url: "/webhooks/stripe",
     headers: {
       "content-type": "application/json",
-      "stripe-signature": createStripeSignature(rawBody, validConfig.webhooks.stripe.signingSecret),
+      "stripe-signature": createStripeSignature(rawBody, validConfig.webhooks.stripe!.signingSecret),
     },
     payload: rawBody,
   });
@@ -189,7 +189,7 @@ test("stripe webhook does not forward duplicates", async () => {
     url: "/webhooks/stripe",
     headers: {
       "content-type": "application/json",
-      "stripe-signature": createStripeSignature(rawBody, validConfig.webhooks.stripe.signingSecret),
+      "stripe-signature": createStripeSignature(rawBody, validConfig.webhooks.stripe!.signingSecret),
     },
     payload: rawBody,
   });
@@ -228,7 +228,7 @@ test("stripe webhook keeps failed forwards pending retry", async () => {
     url: "/webhooks/stripe",
     headers: {
       "content-type": "application/json",
-      "stripe-signature": createStripeSignature(rawBody, validConfig.webhooks.stripe.signingSecret),
+      "stripe-signature": createStripeSignature(rawBody, validConfig.webhooks.stripe!.signingSecret),
     },
     payload: rawBody,
   });

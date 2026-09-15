@@ -31,6 +31,27 @@ const validConfig: AppConfig = {
   },
 };
 
+test("recovery runtime does not register legacy n8n or Stripe routes", async () => {
+  const app = await buildApp({
+    ...validConfig,
+    adminEndpointSecret: "admin-secret",
+    n8n: undefined,
+    webhooks: {},
+  });
+
+  const responses = await Promise.all([
+    app.inject({ method: "POST", url: "/billing/stripe/checkout", payload: {} }),
+    app.inject({ method: "POST", url: "/webhooks/stripe", payload: {} }),
+    app.inject({ method: "POST", url: "/ingest/order-feedback", payload: {} }),
+    app.inject({ method: "POST", url: "/ingest/push-subscription", payload: {} }),
+  ]);
+
+  assert.deepEqual(responses.map((response) => response.statusCode), [404, 404, 404, 404]);
+  assert.deepEqual(app.payments.registry.codes(), ["manual"]);
+
+  await app.close();
+});
+
 test("GET /health returns ok", async () => {
   const app = await buildApp(validConfig);
 

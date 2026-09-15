@@ -19,7 +19,8 @@ export type AppConfig = {
   host: string;
   corsOrigins: string[];
   logLevel: "fatal" | "error" | "warn" | "info" | "debug" | "trace" | "silent";
-  n8n: {
+  adminEndpointSecret?: string;
+  n8n?: {
     baseUrl: URL;
     timeoutMs: number;
     secrets: {
@@ -47,7 +48,7 @@ export type AppConfig = {
     testAccessToken?: string;
   };
   webhooks: {
-    stripe: {
+    stripe?: {
       signingSecret: string;
       toleranceSeconds: number;
     };
@@ -140,21 +141,37 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
   const host = getValueOrDefault(env, "HOST", "0.0.0.0");
   const corsOrigins = requireValue(env, "CORS_ORIGINS");
   const logLevel = getValueOrDefault(env, "LOG_LEVEL", "info");
-  const n8nBaseUrl = requireValue(env, "N8N_BASE_URL");
-  const n8nTimeoutMs = requireValue(env, "N8N_TIMEOUT_MS");
-  const appSecret = requireValue(env, "VAPT_APP_ENDPOINT_SECRET");
   const adminSecret = requireValue(env, "VAPT_ADMIN_ENDPOINT_SECRET");
+  const n8nKeys = ["N8N_BASE_URL", "N8N_TIMEOUT_MS", "VAPT_APP_ENDPOINT_SECRET"] as const;
+  const n8nEnabled = n8nKeys.some((key) => Boolean(env[key]?.trim()));
+  const n8n = n8nEnabled
+    ? {
+        baseUrl: parseUrl(requireValue(env, "N8N_BASE_URL"), "N8N_BASE_URL"),
+        timeoutMs: parsePositiveInteger(
+          requireValue(env, "N8N_TIMEOUT_MS"),
+          "N8N_TIMEOUT_MS",
+        ),
+        secrets: {
+          app: requireValue(env, "VAPT_APP_ENDPOINT_SECRET"),
+          admin: adminSecret,
+        },
+      }
+    : undefined;
   const paymentEffectsPollIntervalMs = getValueOrDefault(env, "PAYMENT_EFFECTS_POLL_INTERVAL_MS", "5000");
   const paymentEffectsBatchSize = getValueOrDefault(env, "PAYMENT_EFFECTS_BATCH_SIZE", "25");
   const paymentEffectsLeaseMs = getValueOrDefault(env, "PAYMENT_EFFECTS_LEASE_MS", "60000");
   const paymentEffectsMaxAttempts = getValueOrDefault(env, "PAYMENT_EFFECTS_MAX_ATTEMPTS", "5");
   const paymentEffectsRetryBaseMs = getValueOrDefault(env, "PAYMENT_EFFECTS_RETRY_BASE_MS", "30000");
-  const stripeWebhookSigningSecret = requireValue(env, "STRIPE_WEBHOOK_SIGNING_SECRET");
-  const stripeWebhookToleranceSeconds = getValueOrDefault(
-    env,
-    "STRIPE_WEBHOOK_TOLERANCE_SECONDS",
-    "300",
-  );
+  const stripeWebhookSigningSecret = env.STRIPE_WEBHOOK_SIGNING_SECRET?.trim();
+  const stripe = stripeWebhookSigningSecret
+    ? {
+        signingSecret: stripeWebhookSigningSecret,
+        toleranceSeconds: parsePositiveInteger(
+          getValueOrDefault(env, "STRIPE_WEBHOOK_TOLERANCE_SECONDS", "300"),
+          "STRIPE_WEBHOOK_TOLERANCE_SECONDS",
+        ),
+      }
+    : undefined;
   const supabaseUrl = requireValue(env, "SUPABASE_URL");
   const supabaseServiceRoleKey = requireValue(env, "SUPABASE_SERVICE_ROLE_KEY");
   const supabaseJwtSecret = requireValue(env, "SUPABASE_JWT_SECRET");
@@ -224,14 +241,8 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
     host,
     corsOrigins: parseCorsOrigins(corsOrigins),
     logLevel: logLevel as AppConfig["logLevel"],
-    n8n: {
-      baseUrl: parseUrl(n8nBaseUrl, "N8N_BASE_URL"),
-      timeoutMs: parsePositiveInteger(n8nTimeoutMs, "N8N_TIMEOUT_MS"),
-      secrets: {
-        app: appSecret,
-        admin: adminSecret,
-      },
-    },
+    adminEndpointSecret: adminSecret,
+    n8n,
     paymentEffects: {
       pollIntervalMs: parsePositiveInteger(paymentEffectsPollIntervalMs, "PAYMENT_EFFECTS_POLL_INTERVAL_MS"),
       batchSize: parsePositiveInteger(paymentEffectsBatchSize, "PAYMENT_EFFECTS_BATCH_SIZE"),
@@ -243,13 +254,7 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
     apiPublicUrl,
     mercadoPago,
     webhooks: {
-      stripe: {
-        signingSecret: stripeWebhookSigningSecret,
-        toleranceSeconds: parsePositiveInteger(
-          stripeWebhookToleranceSeconds,
-          "STRIPE_WEBHOOK_TOLERANCE_SECONDS",
-        ),
-      },
+      stripe,
     },
     supabase: {
       url: parseUrl(supabaseUrl, "SUPABASE_URL"),

@@ -17,12 +17,17 @@ export async function registerWebhookRoutes(
   config: AppConfig,
   deps: WebhookRouteDeps = {},
 ) {
+  const stripeConfig = config.webhooks.stripe;
+  if (!deps.service && !stripeConfig) {
+    throw new Error("Stripe webhook is not configured");
+  }
+
   const service =
     deps.service ??
     createWebhookService(
       {
-        stripeSigningSecret: config.webhooks.stripe.signingSecret,
-        stripeToleranceSeconds: config.webhooks.stripe.toleranceSeconds,
+        stripeSigningSecret: stripeConfig!.signingSecret,
+        stripeToleranceSeconds: stripeConfig!.toleranceSeconds,
       },
       createWebhookRepository(createSupabaseAdminClient(config)),
       createN8nClient(config),

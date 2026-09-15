@@ -85,7 +85,7 @@ test("client sends x-vapt-app-key for app routes", async () => {
   const client = createN8nClient({
     ...baseConfig,
     n8n: {
-      ...baseConfig.n8n,
+      ...baseConfig.n8n!,
       baseUrl: new URL(`http://127.0.0.1:${port}/webhook`),
       timeoutMs: 500,
     },
@@ -134,7 +134,7 @@ test("client forwards provider webhook without internal auth headers", async () 
   const client = createN8nClient({
     ...baseConfig,
     n8n: {
-      ...baseConfig.n8n,
+      ...baseConfig.n8n!,
       baseUrl: new URL(`http://127.0.0.1:${port}/webhook`),
       timeoutMs: 500,
     },
@@ -166,7 +166,7 @@ test("client times out slow upstream requests", async () => {
   const client = createN8nClient({
     ...baseConfig,
     n8n: {
-      ...baseConfig.n8n,
+      ...baseConfig.n8n!,
       baseUrl: new URL(`http://127.0.0.1:${port}`),
       timeoutMs: 50,
     },
@@ -196,7 +196,7 @@ test("client normalizes upstream non-2xx responses", async () => {
   const client = createN8nClient({
     ...baseConfig,
     n8n: {
-      ...baseConfig.n8n,
+      ...baseConfig.n8n!,
       baseUrl: new URL(`http://127.0.0.1:${port}`),
       timeoutMs: 500,
     },
@@ -228,7 +228,7 @@ test("client rejects invalid upstream json responses", async () => {
   const client = createN8nClient({
     ...baseConfig,
     n8n: {
-      ...baseConfig.n8n,
+      ...baseConfig.n8n!,
       baseUrl: new URL(`http://127.0.0.1:${port}`),
       timeoutMs: 500,
     },

@@ -3,6 +3,19 @@ import test from "node:test";
 
 import { ConfigError, createConfig } from "./config.js";
 
+test("createConfig starts the recovery runtime without n8n or Stripe", () => {
+  const config = createConfig({
+    CORS_ORIGINS: "https://dashboard.vapt.app.br",
+    VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
+    SUPABASE_URL: "https://supabase.vapt.app.br",
+    SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
+    SUPABASE_JWT_SECRET: "jwt-secret",
+  });
+
+  assert.equal(config.n8n, undefined);
+  assert.equal(config.webhooks.stripe, undefined);
+});
+
 test("createConfig parses valid environment values", () => {
   const config = createConfig({
     NODE_ENV: "development",
@@ -28,11 +41,11 @@ test("createConfig parses valid environment values", () => {
     "http://localhost:5173",
     "https://app.example.com",
   ]);
-  assert.equal(config.n8n.baseUrl.toString(), "https://n8n.example.com/");
-  assert.equal(config.n8n.timeoutMs, 5000);
-  assert.equal(config.n8n.secrets.app, "app-secret");
-  assert.equal(config.webhooks.stripe.signingSecret, "whsec_test");
-  assert.equal(config.webhooks.stripe.toleranceSeconds, 300);
+  assert.equal(config.n8n!.baseUrl.toString(), "https://n8n.example.com/");
+  assert.equal(config.n8n!.timeoutMs, 5000);
+  assert.equal(config.n8n!.secrets.app, "app-secret");
+  assert.equal(config.webhooks.stripe!.signingSecret, "whsec_test");
+  assert.equal(config.webhooks.stripe!.toleranceSeconds, 300);
   assert.equal(config.supabase.url.toString(), "https://supabase.example.com/");
   assert.deepEqual(config.paymentEffects, {
     pollIntervalMs: 5_000,
@@ -75,8 +88,8 @@ test("createConfig does not require the retired Asaas setup secret", () => {
     SUPABASE_JWT_SECRET: "jwt-secret",
   });
 
-  assert.equal(config.n8n.secrets.app, "app-secret");
-  assert.equal(config.n8n.secrets.admin, "admin-secret");
+  assert.equal(config.n8n!.secrets.app, "app-secret");
+  assert.equal(config.n8n!.secrets.admin, "admin-secret");
 });
 
 test("createConfig throws when a required env is missing", () => {

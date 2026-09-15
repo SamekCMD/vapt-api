@@ -21,7 +21,8 @@ export async function registerPaymentEffectRoutes(
     "/admin/payments/effects/reprocess",
     { config: { rateLimitGroup: "billing" } },
     async (request, reply) => {
-      if (!validAdminSecret(request.headers["x-vapt-admin-key"], config.n8n.secrets.admin)) {
+      const adminSecret = config.adminEndpointSecret ?? config.n8n?.secrets.admin;
+      if (!adminSecret || !validAdminSecret(request.headers["x-vapt-admin-key"], adminSecret)) {
         return reply.code(401).send({
           error: { code: "unauthorized", message: "Unauthorized" },
         });

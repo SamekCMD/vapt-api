@@ -84,7 +84,9 @@ export async function buildApp(config: AppConfig) {
   await registerCors(app, config);
   await registerHealthRoutes(app);
   await registerAuthRoutes(app, config);
-  await registerStripeBillingRoutes(app, config);
+  if (config.n8n) {
+    await registerStripeBillingRoutes(app, config);
+  }
   await registerOrderRoutes(app, config);
   await createManualPaymentRoutes(app, config);
   if (
@@ -135,8 +137,12 @@ export async function buildApp(config: AppConfig) {
     );
   }
   await registerPaymentEffectRoutes(app, config);
-  await registerIngestRoutes(app, config);
-  await registerWebhookRoutes(app, config);
+  if (config.n8n) {
+    await registerIngestRoutes(app, config);
+  }
+  if (config.n8n && config.webhooks.stripe) {
+    await registerWebhookRoutes(app, config);
+  }
 
   return app;
 }

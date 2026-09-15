@@ -70,7 +70,7 @@ async function withN8nStub(
   const config: AppConfig = {
     ...validConfig,
     n8n: {
-      ...validConfig.n8n,
+      ...validConfig.n8n!,
       baseUrl: new URL(`http://127.0.0.1:${address.port}`),
     },
   };
