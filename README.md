@@ -107,9 +107,9 @@ docker build -t vapt-api .
 docker run --rm -p 3000:3000 --env-file .env vapt-api
 ```
 
-## EasyPanel deploy
+## Coolify deploy
 
-- Create an app from this repository.
+- Create a service from this repository.
 - Configure build using the included `Dockerfile`.
 - Set `CORS_ORIGINS` to your allowed frontend origins.
 - Set `API_PUBLIC_URL` to the externally reachable API origin.

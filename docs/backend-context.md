@@ -219,7 +219,7 @@ The highest-value next step is frontend migration:
 
 - replace direct frontend->n8n calls with frontend->`vapt-api`
 - update the React app contracts to the backend routes above
-- validate real environment flows on EasyPanel
+- validate real environment flows on Coolify
 
 After that:
 
