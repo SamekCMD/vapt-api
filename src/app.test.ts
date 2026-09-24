@@ -129,15 +129,15 @@ test("CORS preflight allows authenticated DELETE requests", async () => {
   await app.close();
 });
 
-test("only Vercel previews from a configured project are allowed", async () => {
+test("CORS requires an exact configured preview origin", async () => {
   const app = await buildApp({
     ...validConfig,
     corsOrigins: [
-      "https://vaptmesaflow-*-contatoupboost-2301s-projects.vercel.app",
+      "https://infra-foundation-vapt-web.autoistloko.workers.dev",
+      "https://legacy-*.vercel.app",
     ],
   });
-  const previewOrigin =
-    "https://vaptmesaflow-m9w5rado2-contatoupboost-2301s-projects.vercel.app";
+  const previewOrigin = "https://infra-foundation-vapt-web.autoistloko.workers.dev";
 
   const allowedResponse = await app.inject({
     method: "GET",
@@ -152,7 +152,7 @@ test("only Vercel previews from a configured project are allowed", async () => {
     method: "GET",
     url: "/health",
     headers: {
-      origin: "https://another-project-m9w5rado2-example-team.vercel.app",
+      origin: "https://legacy-preview.vercel.app",
     },
   });
 

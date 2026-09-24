@@ -4,7 +4,7 @@ Backend service for Vapt.
 
 ## Requirements
 
-- Node.js 18 or newer
+- Node.js 24 or newer
 - npm
 - Docker
 
@@ -38,6 +38,28 @@ Required variables:
 - `API_PUBLIC_URL`
 - `PAYMENT_TOKEN_ENCRYPTION_KEY`
 
+Menu image storage routes are enabled only when the complete R2 configuration is present:
+
+- `R2_ACCOUNT_ID`
+- `R2_ACCESS_KEY_ID`
+- `R2_SECRET_ACCESS_KEY`
+- `R2_BUCKET_NAME` (`vapt-assets-preview` or `vapt-assets-production`, according to the environment)
+- `R2_PUBLIC_BASE_URL`, the stable public asset origin
+- `R2_UPLOAD_URL_TTL_SECONDS`, optional from 60 to 900 seconds (defaults to 300)
+
+R2 credentials stay on the API. The browser receives only a short-lived upload URL for one
+menu-item key; deletes are performed by the API after restaurant ownership is checked.
+
+To inventory the current `menu-images` bucket against R2 without writing objects:
+
+```bash
+npm run storage:migrate -- --report=r2-dry-run.json
+```
+
+The copy mode additionally requires `--apply` and
+`R2_MIGRATION_CONFIRM_BUCKET` equal to `R2_BUCKET_NAME`. It never deletes source or target
+objects. Keep generated reports outside Git because they contain production object keys.
+
 Mercado Pago order payments are enabled only when the complete configuration is present:
 
 - `MERCADO_PAGO_CLIENT_ID`
@@ -60,10 +82,8 @@ npm run dev
 The service listens on `0.0.0.0` and uses `PORT`, defaulting to `3000`.
 
 `CORS_ORIGINS` must contain a comma-separated allowlist of approved browser origins.
-Vercel previews can use one explicit wildcard in the deployment segment, while keeping
-the project and team fixed, for example
-`https://vaptmesaflow-*-contatoupboost-2301s-projects.vercel.app`. Wildcards are not
-accepted for other domains.
+Every origin must be explicit. Add the stable named Cloudflare preview URL when preview
+needs to call this API; wildcards are not accepted.
 
 `N8N_BASE_URL` should point at the n8n webhook base, for example `https://your-n8n-host/webhook`.
 

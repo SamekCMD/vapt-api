@@ -57,6 +57,14 @@ export type AppConfig = {
     serviceRoleKey: string;
     jwtSecret: string;
   };
+  r2?: {
+    accountId: string;
+    accessKeyId: string;
+    secretAccessKey: string;
+    bucketName: string;
+    publicBaseUrl: URL;
+    uploadUrlTtlSeconds: number;
+  };
 };
 
 export class ConfigError extends Error {
@@ -127,6 +135,29 @@ function parsePositiveInteger(value: string, key: string): number {
   return parsed;
 }
 
+function parseIntegerRange(value: string, key: string, minimum: number, maximum: number): number {
+  const parsed = Number(value);
+
+  if (!Number.isInteger(parsed) || parsed < minimum || parsed > maximum) {
+    throw new ConfigError(`${key} must be an integer between ${minimum} and ${maximum}`);
+  }
+
+  return parsed;
+}
+
+function parsePublicHttpsUrl(value: string, key: string): URL {
+  const url = parseUrl(value, key);
+
+  if (url.protocol !== "https:") {
+    throw new ConfigError(`${key} must use https`);
+  }
+  if (url.username || url.password || url.search || url.hash) {
+    throw new ConfigError(`${key} must not contain credentials, a query string, or a fragment`);
+  }
+
+  return url;
+}
+
 function parsePaymentEnvironment(value: string): PaymentEnvironment {
   if (!validPaymentEnvironments.has(value as PaymentEnvironment)) {
     throw new ConfigError("MERCADO_PAGO_ENVIRONMENT must be one of: sandbox, production");
@@ -158,6 +189,32 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
   const supabaseUrl = requireValue(env, "SUPABASE_URL");
   const supabaseServiceRoleKey = requireValue(env, "SUPABASE_SERVICE_ROLE_KEY");
   const supabaseJwtSecret = requireValue(env, "SUPABASE_JWT_SECRET");
+  const r2Keys = [
+    "R2_ACCOUNT_ID",
+    "R2_ACCESS_KEY_ID",
+    "R2_SECRET_ACCESS_KEY",
+    "R2_BUCKET_NAME",
+    "R2_PUBLIC_BASE_URL",
+  ] as const;
+  const r2Enabled = r2Keys.some((key) => Boolean(env[key]?.trim()));
+  const r2 = r2Enabled
+    ? {
+        accountId: requireValue(env, "R2_ACCOUNT_ID"),
+        accessKeyId: requireValue(env, "R2_ACCESS_KEY_ID"),
+        secretAccessKey: requireValue(env, "R2_SECRET_ACCESS_KEY"),
+        bucketName: requireValue(env, "R2_BUCKET_NAME"),
+        publicBaseUrl: parsePublicHttpsUrl(
+          requireValue(env, "R2_PUBLIC_BASE_URL"),
+          "R2_PUBLIC_BASE_URL",
+        ),
+        uploadUrlTtlSeconds: parseIntegerRange(
+          getValueOrDefault(env, "R2_UPLOAD_URL_TTL_SECONDS", "300"),
+          "R2_UPLOAD_URL_TTL_SECONDS",
+          60,
+          900,
+        ),
+      }
+    : undefined;
   const mercadoPagoKeys = [
     "MERCADO_PAGO_CLIENT_ID",
     "MERCADO_PAGO_CLIENT_SECRET",
@@ -256,6 +313,7 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
       serviceRoleKey: supabaseServiceRoleKey,
       jwtSecret: supabaseJwtSecret,
     },
+    r2,
   };
 }
 

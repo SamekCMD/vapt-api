@@ -616,7 +616,7 @@ const routeConfig: AppConfig = {
   host: "127.0.0.1",
   corsOrigins: [
     "https://app.vapt.test",
-    "https://vaptmesaflow-*-contatoupboost-2301s-projects.vercel.app",
+    "https://infra-foundation-vapt-web.autoistloko.workers.dev",
   ],
   logLevel: "silent",
   n8n: {
@@ -718,7 +718,7 @@ test("connect route requires authentication and forwards only the tenant context
 
 test("connect route accepts only a trusted frontend return origin", async () => {
   const previewOrigin =
-    "https://vaptmesaflow-m9w5rado2-contatoupboost-2301s-projects.vercel.app";
+    "https://infra-foundation-vapt-web.autoistloko.workers.dev";
   let received: unknown = null;
   const service = fakeRouteService();
   service.beginConnection = async (input) => {
@@ -784,7 +784,7 @@ test("OAuth callback validates state and redirects without returning credentials
 
 test("OAuth callback returns to the trusted preview that initiated the connection", async () => {
   const previewOrigin =
-    "https://vaptmesaflow-m9w5rado2-contatoupboost-2301s-projects.vercel.app";
+    "https://infra-foundation-vapt-web.autoistloko.workers.dev";
   const service = fakeRouteService();
   service.handleCallback = async () => ({
     restaurantId: RESTAURANT_ID,

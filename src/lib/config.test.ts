@@ -321,3 +321,95 @@ test("createConfig rejects the Mercado Pago test access token in production", ()
     /MERCADO_PAGO_TEST_ACCESS_TOKEN can only be used in sandbox/,
   );
 });
+
+test("createConfig enables R2 only with a complete configuration", () => {
+  const config = createConfig({
+    CORS_ORIGINS: "https://app.vapt.test",
+    N8N_BASE_URL: "https://n8n.example.com",
+    N8N_TIMEOUT_MS: "5000",
+    VAPT_APP_ENDPOINT_SECRET: "app-secret",
+    VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
+    STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
+    SUPABASE_URL: "https://supabase.example.com",
+    SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
+    SUPABASE_JWT_SECRET: "jwt-secret",
+    R2_ACCOUNT_ID: "account-id",
+    R2_ACCESS_KEY_ID: "access-key-id",
+    R2_SECRET_ACCESS_KEY: "secret-access-key",
+    R2_BUCKET_NAME: "vapt-assets-preview",
+    R2_PUBLIC_BASE_URL: "https://assets-preview.vapt.test",
+    R2_UPLOAD_URL_TTL_SECONDS: "240",
+  });
+
+  assert.deepEqual(config.r2, {
+    accountId: "account-id",
+    accessKeyId: "access-key-id",
+    secretAccessKey: "secret-access-key",
+    bucketName: "vapt-assets-preview",
+    publicBaseUrl: new URL("https://assets-preview.vapt.test"),
+    uploadUrlTtlSeconds: 240,
+  });
+});
+
+test("createConfig rejects partial R2 configuration", () => {
+  assert.throws(
+    () => createConfig({
+      CORS_ORIGINS: "https://app.vapt.test",
+      N8N_BASE_URL: "https://n8n.example.com",
+      N8N_TIMEOUT_MS: "5000",
+      VAPT_APP_ENDPOINT_SECRET: "app-secret",
+      VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
+      STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
+      SUPABASE_URL: "https://supabase.example.com",
+      SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
+      SUPABASE_JWT_SECRET: "jwt-secret",
+      R2_BUCKET_NAME: "vapt-assets-production",
+    }),
+    /R2_ACCOUNT_ID/,
+  );
+});
+
+test("createConfig rejects an R2 upload URL lifetime outside the safe range", () => {
+  assert.throws(
+    () => createConfig({
+      CORS_ORIGINS: "https://app.vapt.test",
+      N8N_BASE_URL: "https://n8n.example.com",
+      N8N_TIMEOUT_MS: "5000",
+      VAPT_APP_ENDPOINT_SECRET: "app-secret",
+      VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
+      STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
+      SUPABASE_URL: "https://supabase.example.com",
+      SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
+      SUPABASE_JWT_SECRET: "jwt-secret",
+      R2_ACCOUNT_ID: "account-id",
+      R2_ACCESS_KEY_ID: "access-key-id",
+      R2_SECRET_ACCESS_KEY: "secret-access-key",
+      R2_BUCKET_NAME: "vapt-assets-production",
+      R2_PUBLIC_BASE_URL: "https://assets.vapt.test",
+      R2_UPLOAD_URL_TTL_SECONDS: "3600",
+    }),
+    /R2_UPLOAD_URL_TTL_SECONDS/,
+  );
+});
+
+test("createConfig requires a credential-free HTTPS origin for public R2 assets", () => {
+  assert.throws(
+    () => createConfig({
+      CORS_ORIGINS: "https://app.vapt.test",
+      N8N_BASE_URL: "https://n8n.example.com",
+      N8N_TIMEOUT_MS: "5000",
+      VAPT_APP_ENDPOINT_SECRET: "app-secret",
+      VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
+      STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
+      SUPABASE_URL: "https://supabase.example.com",
+      SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
+      SUPABASE_JWT_SECRET: "jwt-secret",
+      R2_ACCOUNT_ID: "account-id",
+      R2_ACCESS_KEY_ID: "access-key-id",
+      R2_SECRET_ACCESS_KEY: "secret-access-key",
+      R2_BUCKET_NAME: "vapt-assets-production",
+      R2_PUBLIC_BASE_URL: "http://user:password@assets.vapt.test",
+    }),
+    /R2_PUBLIC_BASE_URL/,
+  );
+});

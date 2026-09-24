@@ -38,6 +38,11 @@ import { createOrderRepository } from "./modules/orders/repository.js";
 import { registerOrderRoutes } from "./modules/orders/routes.js";
 import { createOrderService } from "./modules/orders/service.js";
 import { registerWebhookRoutes } from "./modules/webhooks/routes.js";
+import { createRestaurantAccessChecker, createSupabaseOwnershipLookup } from "./lib/permissions.js";
+import { createSupabaseMenuItemExists } from "./modules/storage/repository.js";
+import { createR2MenuImageGateway } from "./modules/storage/r2.js";
+import { registerMenuImageRoutes } from "./modules/storage/routes.js";
+import { createMenuImageService } from "./modules/storage/service.js";
 import { registerCors } from "./plugins/cors.js";
 import { registerAuthDecorator } from "./plugins/auth.js";
 import { registerErrorHandler } from "./plugins/error-handler.js";
@@ -86,6 +91,22 @@ export async function buildApp(config: AppConfig) {
   await registerAuthRoutes(app, config);
   await registerStripeBillingRoutes(app, config);
   await registerOrderRoutes(app, config);
+  if (config.r2) {
+    const supabaseAdmin = createSupabaseAdminClient(config);
+    await registerMenuImageRoutes(
+      app,
+      config,
+      createMenuImageService({
+        assertRestaurantAccess: createRestaurantAccessChecker(
+          createSupabaseOwnershipLookup(supabaseAdmin as never),
+        ),
+        menuItemExists: createSupabaseMenuItemExists(supabaseAdmin as never),
+        gateway: createR2MenuImageGateway(config.r2),
+        publicBaseUrl: config.r2.publicBaseUrl,
+        uploadUrlTtlSeconds: config.r2.uploadUrlTtlSeconds,
+      }),
+    );
+  }
   await createManualPaymentRoutes(app, config);
   if (
     config.mercadoPago &&

@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 
 import { AppError } from "../lib/errors.js";
 
-export type RateLimitGroup = "auth" | "billing" | "orders" | "webhooks" | "health";
+export type RateLimitGroup = "auth" | "billing" | "orders" | "storage" | "webhooks" | "health";
 
 type RateLimitPolicy = {
   maxRequests: number;
@@ -28,6 +28,10 @@ const defaultPolicies: Record<RateLimitGroup, RateLimitPolicy> = {
     windowMs: 60_000,
   },
   orders: {
+    maxRequests: 30,
+    windowMs: 60_000,
+  },
+  storage: {
     maxRequests: 30,
     windowMs: 60_000,
   },
