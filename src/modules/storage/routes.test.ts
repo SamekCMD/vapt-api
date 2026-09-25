@@ -14,6 +14,7 @@ const itemId = "20000000-0000-4000-8000-000000000002";
 
 const config = {
   nodeEnv: "test",
+  security: { publicOrderTokenSecret: "public-order-token-secret" },
   supabase: { jwtSecret: "jwt-secret" },
 } as AppConfig;
 

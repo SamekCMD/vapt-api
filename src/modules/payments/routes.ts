@@ -230,7 +230,7 @@ export async function registerHostedCheckoutRoutes(
     ? null
     : createOrderService(
       createOrderRepository(supabase!),
-      config.supabase.jwtSecret,
+      config.security.publicOrderTokenSecret,
     );
 
   app.post(

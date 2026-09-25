@@ -17,7 +17,10 @@ export async function registerOrderRoutes(
   config: AppConfig,
   repository: OrderRepository = createOrderRepository(createSupabaseAdminClient(config)),
 ) {
-  const service = createOrderService(repository, config.supabase.jwtSecret);
+  const service = createOrderService(
+    repository,
+    config.security.publicOrderTokenSecret,
+  );
 
   app.post(
     "/public/orders",

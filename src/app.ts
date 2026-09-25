@@ -135,7 +135,7 @@ export async function buildApp(config: AppConfig) {
       createMercadoPagoPaymentDiagnosticsService({
         orderService: createOrderService(
           createOrderRepository(createSupabaseAdminClient(config)),
-          config.supabase.jwtSecret,
+          config.security.publicOrderTokenSecret,
         ),
         paymentService: paymentModule.service,
         resolveAccessToken: mercadoPagoAccessTokenResolver,

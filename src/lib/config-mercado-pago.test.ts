@@ -15,6 +15,7 @@ test("createConfig rejects an unsupported Mercado Pago environment", () => {
       SUPABASE_URL: "https://supabase.example.com",
       SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
       SUPABASE_JWT_SECRET: "jwt-secret",
+      PUBLIC_ORDER_TOKEN_SECRET: "public-order-token-secret",
       MERCADO_PAGO_CLIENT_ID: "app-123",
       MERCADO_PAGO_CLIENT_SECRET: "client-secret",
       MERCADO_PAGO_REDIRECT_URI: "https://api.vapt.test/payments/mercado-pago/oauth/callback",

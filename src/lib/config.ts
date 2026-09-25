@@ -52,6 +52,9 @@ export type AppConfig = {
       toleranceSeconds: number;
     };
   };
+  security: {
+    publicOrderTokenSecret: string;
+  };
   supabase: {
     url: URL;
     serviceRoleKey: string;
@@ -189,6 +192,7 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
   const supabaseUrl = requireValue(env, "SUPABASE_URL");
   const supabaseServiceRoleKey = requireValue(env, "SUPABASE_SERVICE_ROLE_KEY");
   const supabaseJwtSecret = requireValue(env, "SUPABASE_JWT_SECRET");
+  const publicOrderTokenSecret = requireValue(env, "PUBLIC_ORDER_TOKEN_SECRET");
   const r2Keys = [
     "R2_ACCOUNT_ID",
     "R2_ACCESS_KEY_ID",
@@ -307,6 +311,9 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
           "STRIPE_WEBHOOK_TOLERANCE_SECONDS",
         ),
       },
+    },
+    security: {
+      publicOrderTokenSecret,
     },
     supabase: {
       url: parseUrl(supabaseUrl, "SUPABASE_URL"),

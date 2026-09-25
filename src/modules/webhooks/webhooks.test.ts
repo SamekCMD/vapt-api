@@ -30,6 +30,7 @@ const validConfig: AppConfig = {
       toleranceSeconds: 300,
     },
   },
+  security: { publicOrderTokenSecret: "public-order-token-secret" },
   supabase: {
     url: new URL("https://supabase.example.com"),
     serviceRoleKey: "service-role-key",
