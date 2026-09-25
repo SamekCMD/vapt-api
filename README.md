@@ -35,6 +35,15 @@ Required variables:
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `SUPABASE_JWT_SECRET`
 - `PUBLIC_ORDER_TOKEN_SECRET`, a dedicated HMAC secret for public order tokens; do not reuse an authentication secret
+- `BETTER_AUTH_SECRET`, at least 32 characters and unique per environment
+- `BETTER_AUTH_URL`, the absolute public API origin
+- `BETTER_AUTH_TRUSTED_ORIGINS`, a comma-separated exact frontend-origin allowlist
+- `DATABASE_URL`, the direct PostgreSQL connection used by Better Auth
+- `TURNSTILE_SECRET_KEY`
+- `RESEND_API_KEY`
+- `RESEND_TEMPLATE_VERIFY_ACCOUNT`
+- `RESEND_TEMPLATE_RESET_PASSWORD`
+- `EMAIL_FROM`
 - `FRONTEND_URL`
 - `API_PUBLIC_URL`
 - `PAYMENT_TOKEN_ENCRYPTION_KEY`

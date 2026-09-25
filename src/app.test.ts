@@ -25,6 +25,19 @@ const validConfig: AppConfig = {
     },
   },
   security: { publicOrderTokenSecret: "public-order-token-secret" },
+  betterAuth: {
+    secret: "better-auth-secret-at-least-32-characters",
+    url: new URL("https://api.vapt.test"),
+    trustedOrigins: ["https://app.vapt.test"],
+    databaseUrl: "postgresql://vapt:password@db.vapt.test/vapt",
+    turnstileSecretKey: "turnstile-secret-key",
+    email: {
+      resendApiKey: "re_test_key",
+      from: "Vapt <noreply@vapt.test>",
+      verifyAccountTemplate: "verify-account-template",
+      resetPasswordTemplate: "reset-password-template",
+    },
+  },
   supabase: {
     url: new URL("https://supabase.example.com"),
     serviceRoleKey: "service-role-key",

@@ -13,6 +13,20 @@ const validLogLevels = new Set([
   "silent",
 ]);
 
+export type BetterAuthConfig = {
+  secret: string;
+  url: URL;
+  trustedOrigins: string[];
+  databaseUrl: string;
+  turnstileSecretKey: string;
+  email: {
+    resendApiKey: string;
+    from: string;
+    verifyAccountTemplate: string;
+    resetPasswordTemplate: string;
+  };
+};
+
 export type AppConfig = {
   nodeEnv: "development" | "test" | "production";
   port: number;
@@ -55,6 +69,7 @@ export type AppConfig = {
   security: {
     publicOrderTokenSecret: string;
   };
+  betterAuth: BetterAuthConfig;
   supabase: {
     url: URL;
     serviceRoleKey: string;
@@ -115,6 +130,39 @@ function parseCorsOrigins(value: string): string[] {
 
   if (origins.length === 0) {
     throw new ConfigError("CORS_ORIGINS must contain at least one allowed origin");
+  }
+
+  return origins;
+}
+
+function parseTrustedOrigins(value: string): string[] {
+  const entries = value
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+
+  if (entries.length === 0) {
+    throw new ConfigError(
+      "BETTER_AUTH_TRUSTED_ORIGINS must contain at least one allowed origin",
+    );
+  }
+
+  const origins = entries.map((entry) => {
+    const url = parseUrl(entry, "BETTER_AUTH_TRUSTED_ORIGINS");
+
+    if (url.origin === "null") {
+      throw new ConfigError(
+        "BETTER_AUTH_TRUSTED_ORIGINS must contain absolute HTTP or HTTPS URLs",
+      );
+    }
+
+    return url.origin;
+  });
+
+  if (new Set(origins).size !== origins.length) {
+    throw new ConfigError(
+      "BETTER_AUTH_TRUSTED_ORIGINS must not contain duplicate origins",
+    );
   }
 
   return origins;
@@ -193,6 +241,30 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
   const supabaseServiceRoleKey = requireValue(env, "SUPABASE_SERVICE_ROLE_KEY");
   const supabaseJwtSecret = requireValue(env, "SUPABASE_JWT_SECRET");
   const publicOrderTokenSecret = requireValue(env, "PUBLIC_ORDER_TOKEN_SECRET");
+  const betterAuthSecret = requireValue(env, "BETTER_AUTH_SECRET");
+  const betterAuthUrl = requireValue(env, "BETTER_AUTH_URL");
+  const betterAuthTrustedOrigins = requireValue(
+    env,
+    "BETTER_AUTH_TRUSTED_ORIGINS",
+  );
+  const databaseUrl = requireValue(env, "DATABASE_URL");
+  const turnstileSecretKey = requireValue(env, "TURNSTILE_SECRET_KEY");
+  const resendApiKey = requireValue(env, "RESEND_API_KEY");
+  const verifyAccountTemplate = requireValue(
+    env,
+    "RESEND_TEMPLATE_VERIFY_ACCOUNT",
+  );
+  const resetPasswordTemplate = requireValue(
+    env,
+    "RESEND_TEMPLATE_RESET_PASSWORD",
+  );
+  const emailFrom = requireValue(env, "EMAIL_FROM");
+
+  if (betterAuthSecret.length < 32) {
+    throw new ConfigError(
+      "BETTER_AUTH_SECRET must contain at least 32 characters",
+    );
+  }
   const r2Keys = [
     "R2_ACCOUNT_ID",
     "R2_ACCESS_KEY_ID",
@@ -314,6 +386,19 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
     },
     security: {
       publicOrderTokenSecret,
+    },
+    betterAuth: {
+      secret: betterAuthSecret,
+      url: parseUrl(betterAuthUrl, "BETTER_AUTH_URL"),
+      trustedOrigins: parseTrustedOrigins(betterAuthTrustedOrigins),
+      databaseUrl,
+      turnstileSecretKey,
+      email: {
+        resendApiKey,
+        from: emailFrom,
+        verifyAccountTemplate,
+        resetPasswordTemplate,
+      },
     },
     supabase: {
       url: parseUrl(supabaseUrl, "SUPABASE_URL"),

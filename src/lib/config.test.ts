@@ -1,7 +1,19 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { ConfigError, createConfig } from "./config.js";
+import { ConfigError, createConfig as createAppConfig } from "./config.js";
+
+const validBetterAuthEnv = {
+  BETTER_AUTH_SECRET: "better-auth-secret-at-least-32-characters",
+  BETTER_AUTH_URL: "https://api.vapt.test",
+  BETTER_AUTH_TRUSTED_ORIGINS: "https://app.vapt.test",
+  DATABASE_URL: "postgresql://vapt:password@db.vapt.test/vapt",
+  TURNSTILE_SECRET_KEY: "turnstile-secret-key",
+  RESEND_API_KEY: "re_test_key",
+  RESEND_TEMPLATE_VERIFY_ACCOUNT: "verify-account-template",
+  RESEND_TEMPLATE_RESET_PASSWORD: "reset-password-template",
+  EMAIL_FROM: "Vapt <noreply@vapt.test>",
+};
 
 const validEnv = {
   CORS_ORIGINS: "http://localhost:5173",
@@ -14,7 +26,89 @@ const validEnv = {
   SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
   SUPABASE_JWT_SECRET: "supabase-auth-secret",
   PUBLIC_ORDER_TOKEN_SECRET: "public-order-token-secret",
+  ...validBetterAuthEnv,
 };
+
+function createConfig(env: NodeJS.ProcessEnv) {
+  return createAppConfig({ ...validBetterAuthEnv, ...env });
+}
+
+const requiredBetterAuthVariables = [
+  "BETTER_AUTH_SECRET",
+  "BETTER_AUTH_URL",
+  "BETTER_AUTH_TRUSTED_ORIGINS",
+  "DATABASE_URL",
+  "TURNSTILE_SECRET_KEY",
+  "RESEND_API_KEY",
+  "RESEND_TEMPLATE_VERIFY_ACCOUNT",
+  "RESEND_TEMPLATE_RESET_PASSWORD",
+  "EMAIL_FROM",
+] as const;
+
+for (const variable of requiredBetterAuthVariables) {
+  test(`createConfig requires ${variable}`, () => {
+    assert.throws(
+      () => createConfig({ ...validEnv, [variable]: "" }),
+      new RegExp(`Missing required environment variable: ${variable}`),
+    );
+  });
+}
+
+test("createConfig requires a Better Auth secret with at least 32 characters", () => {
+  assert.throws(
+    () => createConfig({ ...validEnv, BETTER_AUTH_SECRET: "too-short" }),
+    /BETTER_AUTH_SECRET must contain at least 32 characters/,
+  );
+});
+
+test("createConfig rejects a non-absolute Better Auth URL", () => {
+  assert.throws(
+    () => createConfig({ ...validEnv, BETTER_AUTH_URL: "/api/auth" }),
+    /BETTER_AUTH_URL must be a valid absolute URL/,
+  );
+});
+
+test("createConfig normalizes Better Auth trusted origins", () => {
+  const config = createConfig({
+    ...validEnv,
+    BETTER_AUTH_TRUSTED_ORIGINS:
+      "https://app.vapt.test/path?source=test#fragment, https://user:password@preview.vapt.test/dashboard",
+  });
+
+  assert.deepEqual(config.betterAuth.trustedOrigins, [
+    "https://app.vapt.test",
+    "https://preview.vapt.test",
+  ]);
+});
+
+test("createConfig rejects duplicate normalized Better Auth trusted origins", () => {
+  assert.throws(
+    () => createConfig({
+      ...validEnv,
+      BETTER_AUTH_TRUSTED_ORIGINS:
+        "https://app.vapt.test,https://app.vapt.test/dashboard",
+    }),
+    /BETTER_AUTH_TRUSTED_ORIGINS must not contain duplicate origins/,
+  );
+});
+
+test("createConfig maps Better Auth runtime settings", () => {
+  const config = createConfig(validEnv);
+
+  assert.deepEqual(config.betterAuth, {
+    secret: "better-auth-secret-at-least-32-characters",
+    url: new URL("https://api.vapt.test"),
+    trustedOrigins: ["https://app.vapt.test"],
+    databaseUrl: "postgresql://vapt:password@db.vapt.test/vapt",
+    turnstileSecretKey: "turnstile-secret-key",
+    email: {
+      resendApiKey: "re_test_key",
+      from: "Vapt <noreply@vapt.test>",
+      verifyAccountTemplate: "verify-account-template",
+      resetPasswordTemplate: "reset-password-template",
+    },
+  });
+});
 
 test("createConfig requires a dedicated public order token secret", () => {
   assert.throws(
