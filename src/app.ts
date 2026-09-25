@@ -1,9 +1,15 @@
 import Fastify from "fastify";
 
+import { createResendAuthEmailService } from "./email/email.service.js";
+import { createResendEmailClient } from "./email/resend.client.js";
 import type { AppConfig } from "./lib/config.js";
 import { createSupabaseAdminClient } from "./lib/supabase.js";
 import { registerStripeBillingRoutes } from "./modules/billing/stripe/routes.js";
+import { createBetterAuthRuntime } from "./modules/auth/better-auth.js";
+import { registerBetterAuthHandler } from "./modules/auth/fastify-handler.js";
 import { registerAuthRoutes } from "./modules/auth/routes.js";
+import type { AuthRuntime } from "./modules/auth/runtime.js";
+import { createSessionResolver } from "./modules/auth/session-resolver.js";
 import { registerIngestRoutes } from "./modules/ingest/routes.js";
 import { registerHealthRoutes } from "./modules/health/routes.js";
 import type { PaymentProvider } from "./modules/payments/provider.js";
@@ -50,13 +56,42 @@ import { createLoggerConfig } from "./plugins/logger.js";
 import { registerRateLimit } from "./plugins/rate-limit.js";
 import { registerRawBody } from "./plugins/raw-body.js";
 
-export async function buildApp(config: AppConfig) {
+export type BuildAppDependencies = {
+  authRuntime?: AuthRuntime;
+};
+
+export async function buildApp(
+  config: AppConfig,
+  dependencies: BuildAppDependencies = {},
+) {
   const app = Fastify({
     logger: createLoggerConfig(config),
     trustProxy: true,
   });
 
-  registerAuthDecorator(app);
+  const authRuntime = dependencies.authRuntime ?? createBetterAuthRuntime(
+    config.betterAuth,
+    {
+      emailService: createResendAuthEmailService(
+        createResendEmailClient(config.betterAuth.email.resendApiKey),
+        config.betterAuth.email,
+        {
+          info(fields, message) {
+            app.log.info(fields, message);
+          },
+        },
+      ),
+      runInBackground(task) {
+        void task.catch((error: unknown) => {
+          app.log.error({ err: error }, "Better Auth background task failed");
+        });
+      },
+    },
+  );
+  const sessionResolver = createSessionResolver(authRuntime);
+
+  registerAuthDecorator(app, sessionResolver);
+  app.addHook("onClose", async () => authRuntime.close());
   registerErrorHandler(app);
   registerRateLimit(app);
 
@@ -87,6 +122,7 @@ export async function buildApp(config: AppConfig) {
   const paymentModule = registerPaymentModule(app, config, paymentProviders);
   await registerRawBody(app);
   await registerCors(app, config);
+  await registerBetterAuthHandler(app, config.betterAuth.url, authRuntime.handler);
   await registerHealthRoutes(app);
   await registerAuthRoutes(app, config);
   await registerStripeBillingRoutes(app, config);

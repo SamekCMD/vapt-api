@@ -114,7 +114,8 @@ export async function registerMercadoPagoOAuthRoutes(
     "/restaurants/:restaurantId/payments/mercado-pago/connect",
     {
       config: { rateLimitGroup: "billing" },
-      preHandler: async (request, reply) => requireAuth(request, reply, config),
+      preHandler: async (request, reply) =>
+        requireAuth(request, reply, app.authSessionResolver),
     },
     async (request) => {
       const params = validateWithSchema(restaurantParamsSchema, request.params);
@@ -154,7 +155,8 @@ export async function registerMercadoPagoOAuthRoutes(
     "/restaurants/:restaurantId/payments/mercado-pago/status",
     {
       config: { rateLimitGroup: "billing" },
-      preHandler: async (request, reply) => requireAuth(request, reply, config),
+      preHandler: async (request, reply) =>
+        requireAuth(request, reply, app.authSessionResolver),
     },
     async (request) => {
       const params = validateWithSchema(restaurantParamsSchema, request.params);
@@ -171,7 +173,8 @@ export async function registerMercadoPagoOAuthRoutes(
     "/restaurants/:restaurantId/payments/mercado-pago/connection",
     {
       config: { rateLimitGroup: "billing" },
-      preHandler: async (request, reply) => requireAuth(request, reply, config),
+      preHandler: async (request, reply) =>
+        requireAuth(request, reply, app.authSessionResolver),
     },
     async (request) => {
       const params = validateWithSchema(restaurantParamsSchema, request.params);

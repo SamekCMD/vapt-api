@@ -37,7 +37,8 @@ export async function registerStripeBillingRoutes(
       config: {
         rateLimitGroup: "billing",
       },
-      preHandler: async (request, reply) => requireAuth(request, reply, config),
+      preHandler: async (request, reply) =>
+        requireAuth(request, reply, app.authSessionResolver),
     },
     async (request) => {
       const body = validateWithSchema(stripeCheckoutBodySchema, request.body);
@@ -58,7 +59,8 @@ export async function registerStripeBillingRoutes(
       config: {
         rateLimitGroup: "billing",
       },
-      preHandler: async (request, reply) => requireAuth(request, reply, config),
+      preHandler: async (request, reply) =>
+        requireAuth(request, reply, app.authSessionResolver),
     },
     async (request) => {
       const body = validateWithSchema(stripeChangeSubscriptionBodySchema, request.body);
@@ -78,7 +80,8 @@ export async function registerStripeBillingRoutes(
       config: {
         rateLimitGroup: "billing",
       },
-      preHandler: async (request, reply) => requireAuth(request, reply, config),
+      preHandler: async (request, reply) =>
+        requireAuth(request, reply, app.authSessionResolver),
     },
     async (request) => {
       const body = validateWithSchema(stripeCancelSubscriptionBodySchema, request.body);
@@ -96,7 +99,8 @@ export async function registerStripeBillingRoutes(
       config: {
         rateLimitGroup: "billing",
       },
-      preHandler: async (request, reply) => requireAuth(request, reply, config),
+      preHandler: async (request, reply) =>
+        requireAuth(request, reply, app.authSessionResolver),
     },
     async (request) => {
       const query = validateWithSchema(stripeSubscriptionStatusQuerySchema, request.query);

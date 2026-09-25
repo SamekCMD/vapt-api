@@ -36,7 +36,7 @@ Implemented phases:
 - Phase 0: bootstrap, Fastify app, Docker, health routes
 - Phase 1: config, logger, error handling, folder structure, strict startup config
 - Phase 2: internal n8n client
-- Phase 3: local Supabase JWT validation and initial restaurant authorization adapter
+- Phase 3: Better Auth cookie sessions and initial restaurant authorization adapter
 - Phase 4 Stripe: public billing routes backed by n8n
 - Phase 4 Asaas: public billing routes and webhook forwarding retired
 - Phase 5: provider webhooks in `vapt-api` with signature validation and persisted idempotency
@@ -54,6 +54,7 @@ Health:
 
 Auth:
 
+- `GET|POST /api/auth/*` (Better Auth)
 - `GET /auth/me`
 - `GET /auth/restaurants/:restaurantId/access`
 
@@ -87,8 +88,8 @@ Webhooks:
 ## Security Rules
 
 - startup fails if required env is missing or invalid
-- CORS is allowlist-based through `CORS_ORIGINS`
-- auth tokens are validated locally with Supabase JWT secret
+- CORS is credentialed and allowlist-based through `CORS_ORIGINS`
+- protected routes resolve Better Auth cookie sessions and ignore legacy Supabase bearer JWTs
 - authorization currently uses the existing `restaurants.owner_id` model behind an adapter
 - billing and webhook secrets stay only in backend env
 - request validation uses `zod`
@@ -192,7 +193,16 @@ Important env vars currently required:
 - `STRIPE_WEBHOOK_SIGNING_SECRET`
 - `SUPABASE_URL`
 - `SUPABASE_SERVICE_ROLE_KEY`
-- `SUPABASE_JWT_SECRET`
+- `PUBLIC_ORDER_TOKEN_SECRET`
+- `BETTER_AUTH_SECRET`
+- `BETTER_AUTH_URL`
+- `BETTER_AUTH_TRUSTED_ORIGINS`
+- `DATABASE_URL`
+- `TURNSTILE_SECRET_KEY`
+- `RESEND_API_KEY`
+- `RESEND_TEMPLATE_VERIFY_ACCOUNT`
+- `RESEND_TEMPLATE_RESET_PASSWORD`
+- `EMAIL_FROM`
 - `FRONTEND_URL`
 - `API_PUBLIC_URL`
 - `PAYMENT_TOKEN_ENCRYPTION_KEY`
@@ -215,14 +225,14 @@ Useful optional/defaulted env vars:
 
 ## Recommended Next Work
 
-The highest-value next step is frontend migration:
+The highest-value next step is the authenticated business-data cutover:
 
-- replace direct frontend->n8n calls with frontend->`vapt-api`
-- update the React app contracts to the backend routes above
-- validate real environment flows on Coolify
+- replace protected frontend Supabase queries with ownership-checked `vapt-api` routes backed by Neon
+- keep public anonymous reads explicitly inventoried until their later removal
+- activate the Better Auth frontend client only after that gate is green
 
 After that:
 
-- replace the temporary authorization lookup with real Supabase-backed access checks
+- validate the complete Better Auth flow in preview before applying the same migration to production
 - improve operational observability and request correlation
 - later evolve to membership/role-based authorization

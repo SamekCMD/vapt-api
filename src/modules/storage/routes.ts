@@ -17,7 +17,7 @@ export async function registerMenuImageRoutes(
   const protectedOptions = {
     config: { rateLimitGroup: "storage" as const },
     preHandler: async (request: Parameters<typeof requireAuth>[0], reply: Parameters<typeof requireAuth>[1]) =>
-      requireAuth(request, reply, config),
+      requireAuth(request, reply, app.authSessionResolver),
   };
 
   app.post(

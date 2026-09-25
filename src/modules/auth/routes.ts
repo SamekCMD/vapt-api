@@ -30,7 +30,8 @@ export async function registerAuthRoutes(
       config: {
         rateLimitGroup: "auth",
       },
-      preHandler: async (request, reply) => requireAuth(request, reply, config),
+      preHandler: async (request, reply) =>
+        requireAuth(request, reply, app.authSessionResolver),
     },
     async (request) => {
       return request.auth;
@@ -43,7 +44,8 @@ export async function registerAuthRoutes(
       config: {
         rateLimitGroup: "auth",
       },
-      preHandler: async (request, reply) => requireAuth(request, reply, config),
+      preHandler: async (request, reply) =>
+        requireAuth(request, reply, app.authSessionResolver),
     },
     async (request) => {
       const params = validateWithSchema(restaurantAccessParamsSchema, request.params);

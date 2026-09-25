@@ -73,7 +73,6 @@ export type AppConfig = {
   supabase: {
     url: URL;
     serviceRoleKey: string;
-    jwtSecret: string;
   };
   r2?: {
     accountId: string;
@@ -239,7 +238,6 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
   );
   const supabaseUrl = requireValue(env, "SUPABASE_URL");
   const supabaseServiceRoleKey = requireValue(env, "SUPABASE_SERVICE_ROLE_KEY");
-  const supabaseJwtSecret = requireValue(env, "SUPABASE_JWT_SECRET");
   const publicOrderTokenSecret = requireValue(env, "PUBLIC_ORDER_TOKEN_SECRET");
   const betterAuthSecret = requireValue(env, "BETTER_AUTH_SECRET");
   const betterAuthUrl = requireValue(env, "BETTER_AUTH_URL");
@@ -403,7 +401,6 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
     supabase: {
       url: parseUrl(supabaseUrl, "SUPABASE_URL"),
       serviceRoleKey: supabaseServiceRoleKey,
-      jwtSecret: supabaseJwtSecret,
     },
     r2,
   };

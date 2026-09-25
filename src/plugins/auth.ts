@@ -1,47 +1,45 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
 
-import type { AppConfig } from "../lib/config.js";
 import { AppError } from "../lib/errors.js";
-import { verifySupabaseToken } from "../lib/jwt.js";
+import type { SessionResolver } from "../modules/auth/session-resolver.js";
 
 export type AuthContext = {
   userId: string;
   email: string | null;
-  role: string;
+  role: "authenticated";
 };
 
 declare module "fastify" {
+  interface FastifyInstance {
+    authSessionResolver: SessionResolver;
+  }
+
   interface FastifyRequest {
     auth?: AuthContext;
   }
 }
 
-export function registerAuthDecorator(app: { decorateRequest: (name: string, value: unknown) => void }) {
+export function registerAuthDecorator(
+  app: {
+    decorate: (name: string, value: unknown) => void;
+    decorateRequest: (name: string, value: unknown) => void;
+  },
+  sessionResolver: SessionResolver,
+) {
+  app.decorate("authSessionResolver", sessionResolver);
   app.decorateRequest("auth", null);
 }
 
 export async function requireAuth(
   request: FastifyRequest,
   _reply: FastifyReply,
-  config: AppConfig,
+  sessionResolver: SessionResolver,
 ) {
-  const authorization = request.headers.authorization;
+  const auth = await sessionResolver(request.headers);
 
-  if (!authorization || !authorization.startsWith("Bearer ")) {
+  if (!auth) {
     throw new AppError(401, "unauthorized", "Unauthorized");
   }
 
-  const token = authorization.slice("Bearer ".length).trim();
-
-  if (!token) {
-    throw new AppError(401, "unauthorized", "Unauthorized");
-  }
-
-  const payload = verifySupabaseToken(token, config.supabase.jwtSecret);
-
-  request.auth = {
-    userId: payload.sub,
-    email: payload.email ?? null,
-    role: payload.role ?? "authenticated",
-  };
+  request.auth = auth;
 }

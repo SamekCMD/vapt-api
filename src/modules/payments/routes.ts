@@ -184,7 +184,8 @@ export async function createManualPaymentRoutes(
     "/orders/:orderId/payments/manual-confirmation",
     {
       config: { rateLimitGroup: "billing" },
-      preHandler: async (request, reply) => requireAuth(request, reply, config),
+      preHandler: async (request, reply) =>
+        requireAuth(request, reply, app.authSessionResolver),
     },
     async (request) => {
       const params = validateWithSchema(manualPaymentParamsSchema, request.params);

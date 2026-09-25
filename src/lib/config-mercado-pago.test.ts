@@ -14,7 +14,6 @@ test("createConfig rejects an unsupported Mercado Pago environment", () => {
       STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
       SUPABASE_URL: "https://supabase.example.com",
       SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
-      SUPABASE_JWT_SECRET: "jwt-secret",
       PUBLIC_ORDER_TOKEN_SECRET: "public-order-token-secret",
       BETTER_AUTH_SECRET: "better-auth-secret-at-least-32-characters",
       BETTER_AUTH_URL: "https://api.vapt.test",

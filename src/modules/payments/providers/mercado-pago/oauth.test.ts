@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createHash, createHmac } from "node:crypto";
+import { createHash } from "node:crypto";
 import test from "node:test";
 
 import Fastify from "fastify";
@@ -11,6 +11,7 @@ import { createSecretCipher } from "../../../../lib/crypto.js";
 import type { OwnershipLookup } from "../../../../lib/permissions.js";
 import { registerAuthDecorator } from "../../../../plugins/auth.js";
 import { registerErrorHandler } from "../../../../plugins/error-handler.js";
+import type { SessionResolver } from "../../../auth/session-resolver.js";
 import {
   createMercadoPagoOAuthClient,
   type MercadoPagoTokenResponse,
@@ -644,7 +645,6 @@ const routeConfig: AppConfig = {
   supabase: {
     url: new URL("https://supabase.example.com"),
     serviceRoleKey: "service-role-key",
-    jwtSecret: "jwt-secret",
   },
   frontendUrl: new URL("https://app.vapt.test"),
   apiPublicUrl: new URL("https://api.vapt.test"),
@@ -659,18 +659,10 @@ const routeConfig: AppConfig = {
   },
 };
 
-function routeToken(): string {
-  const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
-  const body = Buffer.from(JSON.stringify({
-    sub: "user-1",
-    role: "authenticated",
-    exp: Math.floor(Date.now() / 1000) + 3600,
-  })).toString("base64url");
-  const signature = createHmac("sha256", routeConfig.supabase.jwtSecret)
-    .update(`${header}.${body}`)
-    .digest("base64url");
-  return `${header}.${body}.${signature}`;
-}
+const testSessionResolver: SessionResolver = async (headers) =>
+  String(headers.cookie ?? "").includes("better-auth.session_token=valid")
+    ? { userId: "user-1", email: null, role: "authenticated" }
+    : null;
 
 function fakeRouteService(): MercadoPagoOAuthRouteService {
   return {
@@ -700,7 +692,7 @@ test("connect route requires authentication and forwards only the tenant context
     return { authorizationUrl: "https://auth.mercadopago.com/authorization?state=safe-state-1234567890" };
   };
   const app = Fastify({ logger: false });
-  registerAuthDecorator(app);
+  registerAuthDecorator(app, testSessionResolver);
   registerErrorHandler(app);
   await registerMercadoPagoOAuthRoutes(app, routeConfig, service);
 
@@ -714,7 +706,7 @@ test("connect route requires authentication and forwards only the tenant context
   const response = await app.inject({
     method: "POST",
     url: `/restaurants/${RESTAURANT_ID}/payments/mercado-pago/connect`,
-    headers: { authorization: `Bearer ${routeToken()}` },
+    headers: { cookie: "better-auth.session_token=valid" },
     payload: { environment: "sandbox" },
   });
   assert.equal(response.statusCode, 200);
@@ -742,10 +734,10 @@ test("connect route accepts only a trusted frontend return origin", async () => 
     };
   };
   const app = Fastify({ logger: false });
-  registerAuthDecorator(app);
+  registerAuthDecorator(app, testSessionResolver);
   registerErrorHandler(app);
   await registerMercadoPagoOAuthRoutes(app, routeConfig, service);
-  const headers = { authorization: `Bearer ${routeToken()}` };
+  const headers = { cookie: "better-auth.session_token=valid" };
 
   const trusted = await app.inject({
     method: "POST",
@@ -773,7 +765,7 @@ test("connect route accepts only a trusted frontend return origin", async () => 
 
 test("OAuth callback validates state and redirects without returning credentials", async () => {
   const app = Fastify({ logger: false });
-  registerAuthDecorator(app);
+  registerAuthDecorator(app, testSessionResolver);
   registerErrorHandler(app);
   await registerMercadoPagoOAuthRoutes(app, routeConfig, fakeRouteService());
 
@@ -806,7 +798,7 @@ test("OAuth callback returns to the trusted preview that initiated the connectio
     returnOrigin: previewOrigin,
   });
   const app = Fastify({ logger: false });
-  registerAuthDecorator(app);
+  registerAuthDecorator(app, testSessionResolver);
   registerErrorHandler(app);
   await registerMercadoPagoOAuthRoutes(app, routeConfig, service);
 
@@ -825,10 +817,10 @@ test("OAuth callback returns to the trusted preview that initiated the connectio
 
 test("status and disconnect routes are authenticated and never serialize tokens", async () => {
   const app = Fastify({ logger: false });
-  registerAuthDecorator(app);
+  registerAuthDecorator(app, testSessionResolver);
   registerErrorHandler(app);
   await registerMercadoPagoOAuthRoutes(app, routeConfig, fakeRouteService());
-  const headers = { authorization: `Bearer ${routeToken()}` };
+  const headers = { cookie: "better-auth.session_token=valid" };
 
   const status = await app.inject({
     method: "GET",

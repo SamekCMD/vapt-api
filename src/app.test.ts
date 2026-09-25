@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { AppConfig } from "./lib/config.js";
-import { buildApp } from "./app.js";
+import { buildApp as buildVaptApp } from "./app.js";
+import type { AuthRuntime } from "./modules/auth/runtime.js";
 
 const validConfig: AppConfig = {
   nodeEnv: "test",
@@ -41,9 +42,22 @@ const validConfig: AppConfig = {
   supabase: {
     url: new URL("https://supabase.example.com"),
     serviceRoleKey: "service-role-key",
-    jwtSecret: "jwt-secret",
   },
 };
+
+const testAuthRuntime: AuthRuntime = {
+  async handler() {
+    return new Response(null, { status: 404 });
+  },
+  async getSession() {
+    return null;
+  },
+  async close() {},
+};
+
+function buildApp(config: AppConfig) {
+  return buildVaptApp(config, { authRuntime: testAuthRuntime });
+}
 
 test("GET /health returns ok", async () => {
   const app = await buildApp(validConfig);
@@ -121,7 +135,7 @@ test("allowed CORS origin is echoed back", async () => {
   await app.close();
 });
 
-test("CORS preflight allows authenticated DELETE requests", async () => {
+test("CORS preflight allows credentialed DELETE requests and CAPTCHA headers", async () => {
   const app = await buildApp(validConfig);
 
   const response = await app.inject({
@@ -130,7 +144,7 @@ test("CORS preflight allows authenticated DELETE requests", async () => {
     headers: {
       origin: "http://localhost:5173",
       "access-control-request-method": "DELETE",
-      "access-control-request-headers": "authorization",
+      "access-control-request-headers": "content-type,x-captcha-response",
     },
   });
 
@@ -138,6 +152,12 @@ test("CORS preflight allows authenticated DELETE requests", async () => {
   assert.match(
     String(response.headers["access-control-allow-methods"]),
     /(?:^|,\s*)DELETE(?:,|$)/,
+  );
+  assert.equal(response.headers["access-control-allow-origin"], "http://localhost:5173");
+  assert.equal(response.headers["access-control-allow-credentials"], "true");
+  assert.match(
+    String(response.headers["access-control-allow-headers"]),
+    /X-Captcha-Response/i,
   );
 
   await app.close();
@@ -179,10 +199,12 @@ test("blocked CORS origin is rejected", async () => {
   const app = await buildApp(validConfig);
 
   const response = await app.inject({
-    method: "GET",
-    url: "/health",
+    method: "OPTIONS",
+    url: "/api/auth/sign-in/email",
     headers: {
       origin: "https://evil.example.com",
+      "access-control-request-method": "POST",
+      "access-control-request-headers": "content-type,x-captcha-response",
     },
   });
 
@@ -195,6 +217,22 @@ test("blocked CORS origin is rejected", async () => {
   });
 
   await app.close();
+});
+
+test("app close releases the injected Better Auth runtime", async () => {
+  let closeCalls = 0;
+  const app = await buildVaptApp(validConfig, {
+    authRuntime: {
+      ...testAuthRuntime,
+      async close() {
+        closeCalls += 1;
+      },
+    },
+  });
+
+  await app.close();
+
+  assert.equal(closeCalls, 1);
 });
 
 test("buildApp registers Mercado Pago OAuth routes only when configured", async () => {

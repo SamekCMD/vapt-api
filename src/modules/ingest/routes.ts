@@ -29,7 +29,8 @@ export async function registerIngestRoutes(app: FastifyInstance, config: AppConf
       config: {
         rateLimitGroup: "billing",
       },
-      preHandler: async (request, reply) => requireAuth(request, reply, config),
+      preHandler: async (request, reply) =>
+        requireAuth(request, reply, app.authSessionResolver),
     },
     async (request) => {
       const body = validateWithSchema(pushSubscriptionBodySchema, request.body);

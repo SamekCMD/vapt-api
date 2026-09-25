@@ -24,7 +24,6 @@ const validEnv = {
   STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
   SUPABASE_URL: "https://supabase.example.com",
   SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
-  SUPABASE_JWT_SECRET: "supabase-auth-secret",
   PUBLIC_ORDER_TOKEN_SECRET: "public-order-token-secret",
   ...validBetterAuthEnv,
 };
@@ -117,7 +116,7 @@ test("createConfig requires a dedicated public order token secret", () => {
   );
 });
 
-test("createConfig keeps public order tokens separate from Supabase auth", () => {
+test("createConfig keeps public order tokens independent after Supabase auth removal", () => {
   const config = createConfig({
     ...validEnv,
     PUBLIC_ORDER_TOKEN_SECRET: "public-order-token-secret",
@@ -127,10 +126,10 @@ test("createConfig keeps public order tokens separate from Supabase auth", () =>
     config.security.publicOrderTokenSecret,
     "public-order-token-secret",
   );
-  assert.notEqual(
-    config.security.publicOrderTokenSecret,
-    config.supabase.jwtSecret,
-  );
+  assert.deepEqual(config.supabase, {
+    url: new URL("https://supabase.example.com"),
+    serviceRoleKey: "service-role-key",
+  });
 });
 
 test("createConfig parses valid environment values", () => {
@@ -147,7 +146,6 @@ test("createConfig parses valid environment values", () => {
     STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
     SUPABASE_URL: "https://supabase.example.com",
     SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
-    SUPABASE_JWT_SECRET: "jwt-secret",
     PUBLIC_ORDER_TOKEN_SECRET: "public-order-token-secret",
   });
 
@@ -184,7 +182,6 @@ test("createConfig falls back to safe infrastructure defaults", () => {
     STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
     SUPABASE_URL: "https://supabase.example.com",
     SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
-    SUPABASE_JWT_SECRET: "jwt-secret",
     PUBLIC_ORDER_TOKEN_SECRET: "public-order-token-secret",
   });
 
@@ -204,7 +201,6 @@ test("createConfig does not require the retired Asaas setup secret", () => {
     STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
     SUPABASE_URL: "https://supabase.example.com",
     SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
-    SUPABASE_JWT_SECRET: "jwt-secret",
     PUBLIC_ORDER_TOKEN_SECRET: "public-order-token-secret",
   });
 
@@ -226,7 +222,6 @@ test("createConfig throws when a required env is missing", () => {
         STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
         SUPABASE_URL: "https://supabase.example.com",
         SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
-        SUPABASE_JWT_SECRET: "jwt-secret",
         PUBLIC_ORDER_TOKEN_SECRET: "public-order-token-secret",
       }),
     ConfigError,
@@ -249,7 +244,6 @@ test("createConfig throws when port is invalid", () => {
         STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
         SUPABASE_URL: "https://supabase.example.com",
         SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
-        SUPABASE_JWT_SECRET: "jwt-secret",
         PUBLIC_ORDER_TOKEN_SECRET: "public-order-token-secret",
       }),
     ConfigError,
@@ -272,7 +266,6 @@ test("createConfig throws when cors origins is empty", () => {
         STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
         SUPABASE_URL: "https://supabase.example.com",
         SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
-        SUPABASE_JWT_SECRET: "jwt-secret",
         PUBLIC_ORDER_TOKEN_SECRET: "public-order-token-secret",
       }),
     ConfigError,
@@ -291,7 +284,6 @@ test("createConfig throws when n8n base url is invalid", () => {
         STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
         SUPABASE_URL: "https://supabase.example.com",
         SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
-        SUPABASE_JWT_SECRET: "jwt-secret",
         PUBLIC_ORDER_TOKEN_SECRET: "public-order-token-secret",
       }),
     ConfigError,
@@ -310,25 +302,7 @@ test("createConfig throws when n8n timeout is invalid", () => {
         STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
         SUPABASE_URL: "https://supabase.example.com",
         SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
-        SUPABASE_JWT_SECRET: "jwt-secret",
         PUBLIC_ORDER_TOKEN_SECRET: "public-order-token-secret",
-      }),
-    ConfigError,
-  );
-});
-
-test("createConfig throws when supabase jwt secret is missing", () => {
-  assert.throws(
-    () =>
-      createConfig({
-        CORS_ORIGINS: "http://localhost:5173",
-        N8N_BASE_URL: "https://n8n.example.com",
-        N8N_TIMEOUT_MS: "5000",
-        VAPT_APP_ENDPOINT_SECRET: "app-secret",
-        VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
-        STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
-        SUPABASE_URL: "https://supabase.example.com",
-        SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
       }),
     ConfigError,
   );
@@ -345,7 +319,6 @@ test("createConfig enables Mercado Pago only with a complete secure configuratio
     STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
     SUPABASE_URL: "https://supabase.example.com",
     SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
-    SUPABASE_JWT_SECRET: "jwt-secret",
     PUBLIC_ORDER_TOKEN_SECRET: "public-order-token-secret",
     MERCADO_PAGO_CLIENT_ID: "app-123",
     MERCADO_PAGO_CLIENT_SECRET: "client-secret",
@@ -380,7 +353,6 @@ test("createConfig rejects partial Mercado Pago configuration", () => {
       STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
       SUPABASE_URL: "https://supabase.example.com",
       SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
-      SUPABASE_JWT_SECRET: "jwt-secret",
       PUBLIC_ORDER_TOKEN_SECRET: "public-order-token-secret",
       MERCADO_PAGO_CLIENT_ID: "app-123",
     }),
@@ -398,7 +370,6 @@ test("createConfig rejects a Mercado Pago redirect outside API_PUBLIC_URL", () =
       STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
       SUPABASE_URL: "https://supabase.example.com",
       SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
-      SUPABASE_JWT_SECRET: "jwt-secret",
       PUBLIC_ORDER_TOKEN_SECRET: "public-order-token-secret",
       MERCADO_PAGO_CLIENT_ID: "app-123",
       MERCADO_PAGO_CLIENT_SECRET: "client-secret",
@@ -422,7 +393,6 @@ test("createConfig reads the Mercado Pago test access token only in sandbox", ()
     STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
     SUPABASE_URL: "https://supabase.example.com",
     SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
-    SUPABASE_JWT_SECRET: "jwt-secret",
     PUBLIC_ORDER_TOKEN_SECRET: "public-order-token-secret",
     MERCADO_PAGO_CLIENT_ID: "app-123",
     MERCADO_PAGO_CLIENT_SECRET: "client-secret",
@@ -449,7 +419,6 @@ test("createConfig rejects the Mercado Pago test access token in production", ()
       STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
       SUPABASE_URL: "https://supabase.example.com",
       SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
-      SUPABASE_JWT_SECRET: "jwt-secret",
       PUBLIC_ORDER_TOKEN_SECRET: "public-order-token-secret",
       MERCADO_PAGO_CLIENT_ID: "app-123",
       MERCADO_PAGO_CLIENT_SECRET: "client-secret",
@@ -475,7 +444,6 @@ test("createConfig enables R2 only with a complete configuration", () => {
     STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
     SUPABASE_URL: "https://supabase.example.com",
     SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
-    SUPABASE_JWT_SECRET: "jwt-secret",
     PUBLIC_ORDER_TOKEN_SECRET: "public-order-token-secret",
     R2_ACCOUNT_ID: "account-id",
     R2_ACCESS_KEY_ID: "access-key-id",
@@ -506,7 +474,6 @@ test("createConfig rejects partial R2 configuration", () => {
       STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
       SUPABASE_URL: "https://supabase.example.com",
       SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
-      SUPABASE_JWT_SECRET: "jwt-secret",
       PUBLIC_ORDER_TOKEN_SECRET: "public-order-token-secret",
       R2_BUCKET_NAME: "vapt-assets-production",
     }),
@@ -525,7 +492,6 @@ test("createConfig rejects an R2 upload URL lifetime outside the safe range", ()
       STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
       SUPABASE_URL: "https://supabase.example.com",
       SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
-      SUPABASE_JWT_SECRET: "jwt-secret",
       PUBLIC_ORDER_TOKEN_SECRET: "public-order-token-secret",
       R2_ACCOUNT_ID: "account-id",
       R2_ACCESS_KEY_ID: "access-key-id",
@@ -549,7 +515,6 @@ test("createConfig requires a credential-free HTTPS origin for public R2 assets"
       STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
       SUPABASE_URL: "https://supabase.example.com",
       SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
-      SUPABASE_JWT_SECRET: "jwt-secret",
       PUBLIC_ORDER_TOKEN_SECRET: "public-order-token-secret",
       R2_ACCOUNT_ID: "account-id",
       R2_ACCESS_KEY_ID: "access-key-id",

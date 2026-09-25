@@ -51,7 +51,6 @@ const validConfig = {
   supabase: {
     url: new URL("https://supabase.example.com"),
     serviceRoleKey: "service-role-key",
-    jwtSecret: "jwt-secret",
   },
 } satisfies AppConfig;
 

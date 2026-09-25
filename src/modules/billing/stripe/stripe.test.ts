@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import { createHmac } from "node:crypto";
 import { createServer } from "node:http";
 import test from "node:test";
 
 import type { AppConfig } from "../../../lib/config.js";
-import { buildApp } from "../../../app.js";
+import { buildApp as buildVaptApp } from "../../../app.js";
+import type { AuthRuntime } from "../../auth/runtime.js";
 
 const validConfig: AppConfig = {
   nodeEnv: "test",
@@ -43,29 +43,31 @@ const validConfig: AppConfig = {
   supabase: {
     url: new URL("https://supabase.example.com"),
     serviceRoleKey: "service-role-key",
-    jwtSecret: "jwt-secret",
   },
 };
 
-function createToken(payload: Record<string, unknown>, secret: string): string {
-  const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
-  const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
-  const signature = createHmac("sha256", secret)
-    .update(`${header}.${body}`)
-    .digest("base64url");
-
-  return `${header}.${body}.${signature}`;
-}
-
-const validOwnerToken = createToken(
-  {
-    sub: "user-1",
-    email: "owner@example.com",
-    role: "authenticated",
-    exp: Math.floor(Date.now() / 1000) + 3600,
+const testAuthRuntime: AuthRuntime = {
+  async handler() {
+    return new Response(null, { status: 404 });
   },
-  validConfig.supabase.jwtSecret,
-);
+  async getSession(headers) {
+    return headers.get("cookie")?.includes("better-auth.session_token=valid")
+      ? {
+          user: { id: "user-1", email: "owner@example.com", name: "Owner" },
+          session: {
+            id: "session-1",
+            userId: "user-1",
+            expiresAt: new Date("2030-01-01T00:00:00.000Z"),
+          },
+        }
+      : null;
+  },
+  async close() {},
+};
+
+function buildApp(config: AppConfig) {
+  return buildVaptApp(config, { authRuntime: testAuthRuntime });
+}
 
 async function withN8nStub(
   handler: (request: import("node:http").IncomingMessage, response: import("node:http").ServerResponse) => void,
@@ -121,7 +123,7 @@ test("stripe checkout rejects missing fields", async () => {
     method: "POST",
     url: "/billing/stripe/checkout",
     headers: {
-      authorization: `Bearer ${validOwnerToken}`,
+      cookie: "better-auth.session_token=valid",
     },
     payload: {
       restaurantId: "rest-1",
@@ -159,7 +161,7 @@ test("stripe checkout succeeds for authorized restaurant", async () => {
     method: "POST",
     url: "/billing/stripe/checkout",
     headers: {
-      authorization: `Bearer ${validOwnerToken}`,
+      cookie: "better-auth.session_token=valid",
     },
     payload: {
       restaurantId: "rest-1",
@@ -199,7 +201,7 @@ test("stripe subscription change succeeds", async () => {
     method: "POST",
     url: "/billing/stripe/subscription/change",
     headers: {
-      authorization: `Bearer ${validOwnerToken}`,
+      cookie: "better-auth.session_token=valid",
     },
     payload: {
       restaurantId: "rest-1",
@@ -236,7 +238,7 @@ test("stripe subscription cancel succeeds", async () => {
     method: "POST",
     url: "/billing/stripe/subscription/cancel",
     headers: {
-      authorization: `Bearer ${validOwnerToken}`,
+      cookie: "better-auth.session_token=valid",
     },
     payload: {
       restaurantId: "rest-1",
@@ -273,7 +275,7 @@ test("stripe subscription status succeeds", async () => {
     method: "GET",
     url: "/billing/stripe/subscription?restaurantId=rest-1",
     headers: {
-      authorization: `Bearer ${validOwnerToken}`,
+      cookie: "better-auth.session_token=valid",
     },
   });
 
@@ -297,7 +299,7 @@ test("stripe routes return 403 for unauthorized restaurant access", async () => 
     method: "POST",
     url: "/billing/stripe/subscription/cancel",
     headers: {
-      authorization: `Bearer ${validOwnerToken}`,
+      cookie: "better-auth.session_token=valid",
     },
     payload: {
       restaurantId: "rest-2",

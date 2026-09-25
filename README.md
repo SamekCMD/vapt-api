@@ -33,7 +33,6 @@ Required variables:
 - `STRIPE_WEBHOOK_TOLERANCE_SECONDS` defaults to `300`
 - `SUPABASE_URL`
 - `SUPABASE_SERVICE_ROLE_KEY`
-- `SUPABASE_JWT_SECRET`
 - `PUBLIC_ORDER_TOKEN_SECRET`, a dedicated HMAC secret for public order tokens; do not reuse an authentication secret
 - `BETTER_AUTH_SECRET`, at least 32 characters and unique per environment
 - `BETTER_AUTH_URL`, the absolute public API origin
@@ -93,7 +92,9 @@ The service listens on `0.0.0.0` and uses `PORT`, defaulting to `3000`.
 
 `CORS_ORIGINS` must contain a comma-separated allowlist of approved browser origins.
 Every origin must be explicit. Add the stable named Cloudflare preview URL when preview
-needs to call this API; wildcards are not accepted.
+needs to call this API; wildcards are not accepted. Browser authentication uses secure
+Better Auth session cookies with credentialed CORS. Authentication endpoints are mounted
+under `/api/auth/*`; protected API routes no longer accept Supabase bearer JWTs.
 
 `N8N_BASE_URL` should point at the n8n webhook base, for example `https://your-n8n-host/webhook`.
 
