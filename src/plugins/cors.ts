@@ -11,8 +11,13 @@ export function isAllowedOrigin(origin: string, allowedOrigins: string[]): boole
 export async function registerCors(app: FastifyInstance, config: AppConfig) {
   await app.register(cors, {
     credentials: true,
-    methods: ["GET", "HEAD", "POST", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "X-Captcha-Response"],
+    methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: [
+      "Content-Type",
+      "X-Captcha-Response",
+      "Idempotency-Key",
+      "X-Vapt-Order-Token",
+    ],
     origin(origin, callback) {
       if (!origin) {
         callback(null, true);

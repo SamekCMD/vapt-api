@@ -88,17 +88,15 @@ export function createBetterAuthOptions(
 export type BetterAuthRuntimeDependencies = {
   emailService: AuthEmailService;
   runInBackground: BackgroundTaskRunner;
-  pool?: Pool;
+  pool: Pool;
 };
 
 export function createBetterAuthRuntime(
   config: BetterAuthConfig,
   dependencies: BetterAuthRuntimeDependencies,
 ): AuthRuntime {
-  const ownsPool = dependencies.pool === undefined;
-  const pool = dependencies.pool ?? new Pool({ connectionString: config.databaseUrl });
   const auth = betterAuth(createBetterAuthOptions(config, {
-    pool,
+    pool: dependencies.pool,
     emailService: dependencies.emailService,
     runInBackground: dependencies.runInBackground,
   }));
@@ -109,10 +107,6 @@ export function createBetterAuthRuntime(
       const session = await auth.api.getSession({ headers });
       return session as BetterAuthSession | null;
     },
-    async close() {
-      if (ownsPool) {
-        await pool.end();
-      }
-    },
+    async close() {},
   };
 }

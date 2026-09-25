@@ -163,6 +163,38 @@ test("CORS preflight allows credentialed DELETE requests and CAPTCHA headers", a
   await app.close();
 });
 
+test("CORS preflight allows public order idempotency and token headers", async () => {
+  const app = await buildApp(validConfig);
+
+  const response = await app.inject({
+    method: "OPTIONS",
+    url: "/public/orders/10000000-0000-4000-8000-000000000001/feedback",
+    headers: {
+      origin: "http://localhost:5173",
+      "access-control-request-method": "PUT",
+      "access-control-request-headers": "content-type,idempotency-key,x-vapt-order-token",
+    },
+  });
+
+  assert.equal(response.statusCode, 204);
+  assert.equal(response.headers["access-control-allow-origin"], "http://localhost:5173");
+  assert.equal(response.headers["access-control-allow-credentials"], "true");
+  assert.match(
+    String(response.headers["access-control-allow-methods"]),
+    /(?:^|,\s*)PUT(?:,|$)/,
+  );
+  assert.match(
+    String(response.headers["access-control-allow-headers"]),
+    /(?:^|,\s*)Idempotency-Key(?:,|$)/i,
+  );
+  assert.match(
+    String(response.headers["access-control-allow-headers"]),
+    /(?:^|,\s*)X-Vapt-Order-Token(?:,|$)/i,
+  );
+
+  await app.close();
+});
+
 test("CORS requires an exact configured preview origin", async () => {
   const app = await buildApp({
     ...validConfig,

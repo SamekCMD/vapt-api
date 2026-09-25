@@ -1,8 +1,10 @@
 import Fastify from "fastify";
+import { Pool } from "pg";
 
 import { createResendAuthEmailService } from "./email/email.service.js";
 import { createResendEmailClient } from "./email/resend.client.js";
 import type { AppConfig } from "./lib/config.js";
+import type { Database } from "./lib/database.js";
 import { createSupabaseAdminClient } from "./lib/supabase.js";
 import { registerStripeBillingRoutes } from "./modules/billing/stripe/routes.js";
 import { createBetterAuthRuntime } from "./modules/auth/better-auth.js";
@@ -58,6 +60,7 @@ import { registerRawBody } from "./plugins/raw-body.js";
 
 export type BuildAppDependencies = {
   authRuntime?: AuthRuntime;
+  database?: Database;
 };
 
 export async function buildApp(
@@ -68,6 +71,11 @@ export async function buildApp(
     logger: createLoggerConfig(config),
     trustProxy: true,
   });
+
+  const ownedDatabase = dependencies.database
+    ? null
+    : new Pool({ connectionString: config.betterAuth.databaseUrl });
+  const database = dependencies.database ?? ownedDatabase!;
 
   const authRuntime = dependencies.authRuntime ?? createBetterAuthRuntime(
     config.betterAuth,
@@ -86,12 +94,19 @@ export async function buildApp(
           app.log.error({ err: error }, "Better Auth background task failed");
         });
       },
+      pool: database as Pool,
     },
   );
   const sessionResolver = createSessionResolver(authRuntime);
 
   registerAuthDecorator(app, sessionResolver);
-  app.addHook("onClose", async () => authRuntime.close());
+  app.addHook("onClose", async () => {
+    try {
+      await authRuntime.close();
+    } finally {
+      await ownedDatabase?.end();
+    }
+  });
   registerErrorHandler(app);
   registerRateLimit(app);
 
