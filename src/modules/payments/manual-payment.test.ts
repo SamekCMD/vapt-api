@@ -52,10 +52,6 @@ const validConfig: AppConfig = {
       resetPasswordTemplate: "reset-password-template",
     },
   },
-  supabase: {
-    url: new URL("https://supabase.example.com"),
-    serviceRoleKey: "service-role-key",
-  },
 };
 
 const testSessionResolver: SessionResolver = async (headers) =>
@@ -93,7 +89,7 @@ function order(overrides: Record<string, unknown> = {}) {
   return {
     id: ORDER_ID,
     restaurantId: RESTAURANT_ID,
-    displayId: 42,
+    displayId: "42",
     totalPrice: "42.50",
     status: "ready",
     paymentStatus: null,

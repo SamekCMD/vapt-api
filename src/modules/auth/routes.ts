@@ -1,13 +1,12 @@
 import type { FastifyInstance } from "fastify";
 
 import type { AppConfig } from "../../lib/config.js";
+import { AppError } from "../../lib/errors.js";
 import {
   createRestaurantAccessChecker,
-  createSupabaseOwnershipLookup,
   testOwnershipLookup,
   type OwnershipLookup,
 } from "../../lib/permissions.js";
-import { createSupabaseAdminClient } from "../../lib/supabase.js";
 import { validateWithSchema } from "../../lib/validation.js";
 import { requireAuth } from "../../plugins/auth.js";
 import { restaurantAccessParamsSchema } from "./schemas.js";
@@ -21,7 +20,9 @@ export async function registerAuthRoutes(
     ownershipLookup ??
     (config.nodeEnv === "test"
       ? testOwnershipLookup
-      : createSupabaseOwnershipLookup(createSupabaseAdminClient(config) as never));
+      : (() => {
+          throw new AppError(500, "internal_error", "Ownership lookup is not configured");
+        })());
   const assertRestaurantAccess = createRestaurantAccessChecker(resolvedOwnershipLookup);
 
   app.get(

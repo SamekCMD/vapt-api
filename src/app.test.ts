@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { AppConfig } from "./lib/config.js";
+import type { Database } from "./lib/database.js";
 import { buildApp as buildVaptApp } from "./app.js";
 import type { AuthRuntime } from "./modules/auth/runtime.js";
 
@@ -38,10 +39,6 @@ const validConfig: AppConfig = {
       verifyAccountTemplate: "verify-account-template",
       resetPasswordTemplate: "reset-password-template",
     },
-  },
-  supabase: {
-    url: new URL("https://supabase.example.com"),
-    serviceRoleKey: "service-role-key",
   },
 };
 
@@ -265,6 +262,59 @@ test("app close releases the injected Better Auth runtime", async () => {
   await app.close();
 
   assert.equal(closeCalls, 1);
+});
+
+test("buildApp wires the injected Neon database into public order routes", async () => {
+  const calls: Array<{ sql: string; values: unknown[] | undefined }> = [];
+  const database = {
+    async query(sql: string, values?: unknown[]) {
+      calls.push({ sql, values });
+      return { rows: [{
+        order_id: "10000000-0000-4000-8000-000000000001",
+        display_id: "9007199254740993",
+        restaurant_id: "20000000-0000-4000-8000-000000000002",
+        table_session_id: null,
+        total_price: "42.90",
+        status: "waiting_payment",
+        payment_status: null,
+        idempotent_replay: false,
+      }] };
+    },
+    async connect() {
+      throw new Error("not used");
+    },
+  } as unknown as Database;
+  const app = await buildVaptApp(validConfig, {
+    authRuntime: testAuthRuntime,
+    database,
+  });
+
+  const response = await app.inject({
+    method: "POST",
+    url: "/public/orders",
+    headers: { "idempotency-key": "order-attempt-0001" },
+    payload: {
+      restaurantSlug: "restaurante-teste",
+      channel: "delivery",
+      items: [{
+        menuItemId: "30000000-0000-4000-8000-000000000003",
+        quantity: 1,
+      }],
+      delivery: {
+        name: "Cliente Teste",
+        phone: "61999999999",
+        street: "Rua Um",
+        number: "42",
+        neighborhood: "Centro",
+        paymentMode: "online",
+      },
+    },
+  });
+
+  assert.equal(response.statusCode, 201);
+  assert.equal(response.json().displayId, "9007199254740993");
+  assert.match(calls[0]?.sql ?? "", /public\.create_public_order_v3/i);
+  await app.close();
 });
 
 test("buildApp registers Mercado Pago OAuth routes only when configured", async () => {

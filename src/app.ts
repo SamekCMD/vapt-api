@@ -5,7 +5,11 @@ import { createResendAuthEmailService } from "./email/email.service.js";
 import { createResendEmailClient } from "./email/resend.client.js";
 import type { AppConfig } from "./lib/config.js";
 import type { Database } from "./lib/database.js";
-import { createSupabaseAdminClient } from "./lib/supabase.js";
+import {
+  createOwnershipLookup,
+  createRestaurantAccessChecker,
+  testOwnershipLookup,
+} from "./lib/permissions.js";
 import { registerStripeBillingRoutes } from "./modules/billing/stripe/routes.js";
 import { createBetterAuthRuntime } from "./modules/auth/better-auth.js";
 import { registerBetterAuthHandler } from "./modules/auth/fastify-handler.js";
@@ -46,8 +50,7 @@ import { createOrderRepository } from "./modules/orders/repository.js";
 import { registerOrderRoutes } from "./modules/orders/routes.js";
 import { createOrderService } from "./modules/orders/service.js";
 import { registerWebhookRoutes } from "./modules/webhooks/routes.js";
-import { createRestaurantAccessChecker, createSupabaseOwnershipLookup } from "./lib/permissions.js";
-import { createSupabaseMenuItemExists } from "./modules/storage/repository.js";
+import { createMenuItemExists } from "./modules/storage/repository.js";
 import { createR2MenuImageGateway } from "./modules/storage/r2.js";
 import { registerMenuImageRoutes } from "./modules/storage/routes.js";
 import { createMenuImageService } from "./modules/storage/service.js";
@@ -110,9 +113,14 @@ export async function buildApp(
   registerErrorHandler(app);
   registerRateLimit(app);
 
+  const ownershipLookup = config.nodeEnv === "test"
+    ? testOwnershipLookup
+    : createOwnershipLookup(database);
+  const orderRepository = createOrderRepository(database);
+
   const paymentProviders: PaymentProvider[] = [createManualPaymentProvider()];
   const mercadoPagoOAuth = config.mercadoPago && config.frontendUrl && config.apiPublicUrl
-    ? createMercadoPagoOAuthServiceFromConfig(config)
+    ? createMercadoPagoOAuthServiceFromConfig(config, database, ownershipLookup)
     : null;
   const mercadoPagoPaymentClient = config.mercadoPago
     ? createMercadoPagoPaymentClient()
@@ -134,31 +142,28 @@ export async function buildApp(
       notificationUrl: new URL("/webhooks/payments/mercado-pago", config.apiPublicUrl),
     }));
   }
-  const paymentModule = registerPaymentModule(app, config, paymentProviders);
+  const paymentModule = registerPaymentModule(app, config, database, paymentProviders);
   await registerRawBody(app);
   await registerCors(app, config);
   await registerBetterAuthHandler(app, config.betterAuth.url, authRuntime.handler);
   await registerHealthRoutes(app);
-  await registerAuthRoutes(app, config);
-  await registerStripeBillingRoutes(app, config);
-  await registerOrderRoutes(app, config);
+  await registerAuthRoutes(app, config, ownershipLookup);
+  await registerStripeBillingRoutes(app, config, ownershipLookup);
+  await registerOrderRoutes(app, config, orderRepository);
   if (config.r2) {
-    const supabaseAdmin = createSupabaseAdminClient(config);
     await registerMenuImageRoutes(
       app,
       config,
       createMenuImageService({
-        assertRestaurantAccess: createRestaurantAccessChecker(
-          createSupabaseOwnershipLookup(supabaseAdmin as never),
-        ),
-        menuItemExists: createSupabaseMenuItemExists(supabaseAdmin as never),
+        assertRestaurantAccess: createRestaurantAccessChecker(ownershipLookup),
+        menuItemExists: createMenuItemExists(database),
         gateway: createR2MenuImageGateway(config.r2),
         publicBaseUrl: config.r2.publicBaseUrl,
         uploadUrlTtlSeconds: config.r2.uploadUrlTtlSeconds,
       }),
     );
   }
-  await createManualPaymentRoutes(app, config);
+  await createManualPaymentRoutes(app, config, undefined, ownershipLookup);
   if (
     config.mercadoPago &&
     config.frontendUrl &&
@@ -179,13 +184,13 @@ export async function buildApp(
         client: mercadoPagoPaymentClient,
       }),
     );
-    await registerHostedCheckoutRoutes(app, config);
+    await registerHostedCheckoutRoutes(app, config, undefined, orderRepository);
     await registerMercadoPagoDiagnosticsRoutes(
       app,
       config,
       createMercadoPagoPaymentDiagnosticsService({
         orderService: createOrderService(
-          createOrderRepository(createSupabaseAdminClient(config)),
+          orderRepository,
           config.security.publicOrderTokenSecret,
         ),
         paymentService: paymentModule.service,
@@ -208,7 +213,7 @@ export async function buildApp(
   }
   await registerPaymentEffectRoutes(app, config);
   await registerIngestRoutes(app, config);
-  await registerWebhookRoutes(app, config);
+  await registerWebhookRoutes(app, config, { database });
 
   return app;
 }

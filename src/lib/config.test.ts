@@ -126,10 +126,16 @@ test("createConfig keeps public order tokens independent after Supabase auth rem
     config.security.publicOrderTokenSecret,
     "public-order-token-secret",
   );
-  assert.deepEqual(config.supabase, {
-    url: new URL("https://supabase.example.com"),
-    serviceRoleKey: "service-role-key",
-  });
+});
+
+test("createConfig no longer requires Supabase runtime credentials", () => {
+  const {
+    SUPABASE_URL: _supabaseUrl,
+    SUPABASE_SERVICE_ROLE_KEY: _supabaseServiceRoleKey,
+    ...neonOnlyEnv
+  } = validEnv;
+
+  assert.doesNotThrow(() => createConfig(neonOnlyEnv));
 });
 
 test("createConfig parses valid environment values", () => {
@@ -162,7 +168,6 @@ test("createConfig parses valid environment values", () => {
   assert.equal(config.n8n.secrets.app, "app-secret");
   assert.equal(config.webhooks.stripe.signingSecret, "whsec_test");
   assert.equal(config.webhooks.stripe.toleranceSeconds, 300);
-  assert.equal(config.supabase.url.toString(), "https://supabase.example.com/");
   assert.deepEqual(config.paymentEffects, {
     pollIntervalMs: 5_000,
     batchSize: 25,

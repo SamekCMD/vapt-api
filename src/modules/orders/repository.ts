@@ -1,5 +1,4 @@
-import type { SupabaseClient } from "@supabase/supabase-js";
-
+import type { Queryable } from "../../lib/database.js";
 import { AppError } from "../../lib/errors.js";
 import type { CreateOrderBody } from "./schemas.js";
 
@@ -26,7 +25,7 @@ export type CreatePublicOrderInput = CreateOrderBody & {
 
 export type CreatePublicOrderRecord = {
   orderId: string;
-  displayId: number | null;
+  displayId: string | null;
   restaurantId: string;
   tableSessionId: string | null;
   totalPrice: string;
@@ -57,7 +56,7 @@ export interface OrderRepository {
 
 type RawCreateOrder = {
   order_id: string;
-  display_id: number | null;
+  display_id: string | number | null;
   restaurant_id: string;
   table_session_id: string | null;
   total_price: string | number;
@@ -76,7 +75,7 @@ type RawOrderItem = {
 
 type RawPublicOrder = {
   id: string;
-  display_id: number | null;
+  display_id: string | number | null;
   restaurant_id: string;
   table_session_id: string | null;
   table_number: string | null;
@@ -84,8 +83,7 @@ type RawPublicOrder = {
   status: string;
   payment_status: string | null;
   order_channel: "local" | "delivery";
-  created_at: string;
-  order_items: RawOrderItem[] | null;
+  created_at: string | Date;
 };
 
 const ORDER_ERROR_CODES = new Set<OrderRepositoryErrorCode>([
@@ -97,92 +95,135 @@ const ORDER_ERROR_CODES = new Set<OrderRepositoryErrorCode>([
   "idempotency_conflict",
 ]);
 
+function decimalString(value: string | number): string {
+  return typeof value === "string" ? value : value.toFixed(2);
+}
+
+function bigintString(value: string | number | null): string | null {
+  return value === null ? null : String(value);
+}
+
+function isoString(value: string | Date): string {
+  return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
+}
+
 function mapCreateOrder(row: RawCreateOrder): CreatePublicOrderRecord {
   return {
     orderId: row.order_id,
-    displayId: row.display_id,
+    displayId: bigintString(row.display_id),
     restaurantId: row.restaurant_id,
     tableSessionId: row.table_session_id,
-    totalPrice: Number(row.total_price).toFixed(2),
+    totalPrice: decimalString(row.total_price),
     status: row.status,
     paymentStatus: row.payment_status,
     idempotentReplay: row.idempotent_replay,
   };
 }
 
-type PostgrestFailure = {
-  code?: string | null;
-  message?: string | null;
-  details?: string | null;
-  hint?: string | null;
-};
-
-function diagnosticText(value: string | null | undefined): string | null {
-  return value?.trim().slice(0, 2_000) || null;
-}
-
-function mapRepositoryError(error: PostgrestFailure): never {
-  const message = error.message?.trim() ?? "";
+function mapCreateFailure(error: unknown): never {
+  const message = error instanceof Error ? error.message.trim() : "";
   if (ORDER_ERROR_CODES.has(message as OrderRepositoryErrorCode)) {
     throw new OrderRepositoryError(message as OrderRepositoryErrorCode);
   }
-  throw new AppError(500, "order_storage_error", "Failed to persist order", {
-    provider: "postgrest",
-    code: diagnosticText(error.code),
-    message: diagnosticText(error.message),
-    details: diagnosticText(error.details),
-    hint: diagnosticText(error.hint),
-  });
+  throw new AppError(500, "order_storage_error", "Failed to persist order");
 }
 
-export function createOrderRepository(client: SupabaseClient): OrderRepository {
+export function createOrderRepository(database: Queryable): OrderRepository {
   return {
     async createPublicOrder(input) {
-      const result = await client.rpc("create_public_order_v3", {
-        p_restaurant_slug: input.restaurantSlug,
-        p_channel: input.channel,
-        p_table_number: input.tableNumber ?? null,
-        p_items: input.items,
-        p_delivery: input.delivery ?? null,
-        p_public_token_hash: input.publicTokenHash,
-        p_idempotency_key: input.idempotencyKey,
-        p_request_fingerprint: input.requestFingerprint,
-      }).single<RawCreateOrder>();
+      let result;
+      try {
+        result = await database.query<RawCreateOrder>(
+          `select * from public.create_public_order_v3(
+            $1::text,
+            $2::text,
+            $3::integer,
+            $4::jsonb,
+            $5::jsonb,
+            $6::text,
+            $7::text,
+            $8::text
+          )`,
+          [
+            input.restaurantSlug,
+            input.channel,
+            input.tableNumber ?? null,
+            input.items,
+            input.delivery ?? null,
+            input.publicTokenHash,
+            input.idempotencyKey,
+            input.requestFingerprint,
+          ],
+        );
+      } catch (error) {
+        mapCreateFailure(error);
+      }
 
-      if (result.error) mapRepositoryError(result.error);
-      return mapCreateOrder(result.data);
+      const row = result.rows[0];
+      if (!row) {
+        throw new AppError(500, "order_storage_error", "Failed to persist order");
+      }
+      return mapCreateOrder(row);
     },
 
     async findPublicOrder(orderId, tokenHash) {
-      const result = await client
-        .from("orders")
-        .select("id, display_id, restaurant_id, table_session_id, table_number, total_price, status, payment_status, order_channel, created_at, order_items(product_id, product_name, quantity, unit_price, notes)")
-        .eq("id", orderId)
-        .eq("public_access_token_hash", tokenHash)
-        .maybeSingle<RawPublicOrder>();
-
-      if (result.error) {
+      let orderResult;
+      try {
+        orderResult = await database.query<RawPublicOrder>(
+          `select
+            id,
+            display_id,
+            restaurant_id,
+            table_session_id,
+            table_number,
+            total_price,
+            status,
+            payment_status,
+            order_channel,
+            created_at
+          from public.orders
+          where id = $1::uuid
+            and public_access_token_hash = $2::text
+          limit 1`,
+          [orderId, tokenHash],
+        );
+      } catch {
         throw new AppError(500, "order_storage_error", "Failed to load order");
       }
-      if (!result.data) return null;
+
+      const order = orderResult.rows[0];
+      if (!order) return null;
+
+      let itemResult;
+      try {
+        itemResult = await database.query<RawOrderItem>(
+          `select product_id, product_name, quantity, unit_price, notes
+          from public.order_items
+          where order_id = $1::uuid
+          order by created_at, id`,
+          [orderId],
+        );
+      } catch {
+        throw new AppError(500, "order_storage_error", "Failed to load order");
+      }
 
       return {
-        orderId: result.data.id,
-        displayId: result.data.display_id,
-        restaurantId: result.data.restaurant_id,
-        tableSessionId: result.data.table_session_id,
-        tableNumber: result.data.table_number,
-        totalPrice: Number(result.data.total_price).toFixed(2),
-        status: result.data.status,
-        paymentStatus: result.data.payment_status,
+        orderId: order.id,
+        displayId: bigintString(order.display_id),
+        restaurantId: order.restaurant_id,
+        tableSessionId: order.table_session_id,
+        tableNumber: order.table_number,
+        totalPrice: decimalString(order.total_price),
+        status: order.status,
+        paymentStatus: order.payment_status,
         idempotentReplay: false,
-        channel: result.data.order_channel,
-        createdAt: result.data.created_at,
-        items: (result.data.order_items ?? []).map((item) => ({
+        channel: order.order_channel,
+        createdAt: isoString(order.created_at),
+        items: itemResult.rows.map((item) => ({
           menuItemId: item.product_id,
           name: item.product_name,
           quantity: item.quantity,
-          unitPrice: Number(item.unit_price).toFixed(2),
+          unitPrice: decimalString(item.unit_price),
           notes: item.notes,
         })),
       };

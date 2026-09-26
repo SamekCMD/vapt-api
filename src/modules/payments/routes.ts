@@ -3,12 +3,11 @@ import type { FastifyInstance, FastifyReply } from "fastify";
 import type { AppConfig } from "../../lib/config.js";
 import { AppError } from "../../lib/errors.js";
 import {
-  createSupabaseOwnershipLookup,
   testOwnershipLookup,
+  type OwnershipLookup,
 } from "../../lib/permissions.js";
-import { createSupabaseAdminClient } from "../../lib/supabase.js";
 import { validateWithSchema } from "../../lib/validation.js";
-import { createOrderRepository } from "../orders/repository.js";
+import type { OrderRepository } from "../orders/repository.js";
 import { createOrderService } from "../orders/service.js";
 import { requireAuth } from "../../plugins/auth.js";
 import { isAllowedOrigin } from "../../plugins/cors.js";
@@ -171,13 +170,16 @@ export async function createManualPaymentRoutes(
   app: FastifyInstance,
   config: AppConfig,
   service?: ManualPaymentService,
+  ownershipLookup?: OwnershipLookup,
 ) {
   const resolvedService = service ?? createManualPaymentService({
     repository: app.payments.repository,
     paymentService: app.payments.service,
     ownershipLookup: config.nodeEnv === "test"
       ? testOwnershipLookup
-      : createSupabaseOwnershipLookup(createSupabaseAdminClient(config) as never),
+      : ownershipLookup ?? (() => {
+          throw new AppError(500, "internal_error", "Ownership lookup is not configured");
+        })(),
   });
 
   app.post(
@@ -216,6 +218,7 @@ export async function registerHostedCheckoutRoutes(
   app: FastifyInstance,
   config: AppConfig,
   service?: HostedCheckoutService,
+  orderRepository?: OrderRepository,
 ) {
   if (!config.mercadoPago || !config.frontendUrl || !config.apiPublicUrl) {
     throw new AppError(
@@ -226,11 +229,12 @@ export async function registerHostedCheckoutRoutes(
   }
   const mercadoPago = config.mercadoPago;
 
-  const supabase = service ? null : createSupabaseAdminClient(config);
   const orderService = service
     ? null
     : createOrderService(
-      createOrderRepository(supabase!),
+      orderRepository ?? (() => {
+        throw new AppError(500, "internal_error", "Order repository is not configured");
+      })(),
       config.security.publicOrderTokenSecret,
     );
 

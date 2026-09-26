@@ -15,8 +15,7 @@ const itemId = "20000000-0000-4000-8000-000000000002";
 const config = {
   nodeEnv: "test",
   security: { publicOrderTokenSecret: "public-order-token-secret" },
-  supabase: {},
-} as AppConfig;
+} as unknown as AppConfig;
 
 const testSessionResolver: SessionResolver = async (headers) =>
   String(headers.cookie ?? "").includes("better-auth.session_token=valid")

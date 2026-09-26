@@ -62,6 +62,7 @@ export function createMenuImageService(input: {
     });
 
     const exists = await input.menuItemExists({
+      userId: operation.userId,
       restaurantId: operation.restaurantId,
       itemId: operation.itemId,
     });

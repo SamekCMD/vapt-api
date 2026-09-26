@@ -70,10 +70,6 @@ export type AppConfig = {
     publicOrderTokenSecret: string;
   };
   betterAuth: BetterAuthConfig;
-  supabase: {
-    url: URL;
-    serviceRoleKey: string;
-  };
   r2?: {
     accountId: string;
     accessKeyId: string;
@@ -236,8 +232,6 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
     "STRIPE_WEBHOOK_TOLERANCE_SECONDS",
     "300",
   );
-  const supabaseUrl = requireValue(env, "SUPABASE_URL");
-  const supabaseServiceRoleKey = requireValue(env, "SUPABASE_SERVICE_ROLE_KEY");
   const publicOrderTokenSecret = requireValue(env, "PUBLIC_ORDER_TOKEN_SECRET");
   const betterAuthSecret = requireValue(env, "BETTER_AUTH_SECRET");
   const betterAuthUrl = requireValue(env, "BETTER_AUTH_URL");
@@ -397,10 +391,6 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
         verifyAccountTemplate,
         resetPasswordTemplate,
       },
-    },
-    supabase: {
-      url: parseUrl(supabaseUrl, "SUPABASE_URL"),
-      serviceRoleKey: supabaseServiceRoleKey,
     },
     r2,
   };

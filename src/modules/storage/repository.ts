@@ -1,44 +1,29 @@
+import type { Queryable } from "../../lib/database.js";
 import { AppError } from "../../lib/errors.js";
 
 export type MenuItemExists = (input: {
+  userId: string;
   restaurantId: string;
   itemId: string;
 }) => Promise<boolean>;
 
-type MenuItemLookupClient = {
-  from: (table: "menu_items") => {
-    select: (columns: "id") => {
-      eq: (column: "id", value: string) => {
-        eq: (column: "restaurant_id", value: string) => {
-          maybeSingle: () => Promise<{
-            data: { id: string } | null;
-            error: { message?: string } | null;
-          }>;
-        };
-      };
-    };
-  };
-};
-
-export function createSupabaseMenuItemExists(client: MenuItemLookupClient): MenuItemExists {
-  return async ({ restaurantId, itemId }) => {
-    const result = await client
-      .from("menu_items")
-      .select("id")
-      .eq("id", itemId)
-      .eq("restaurant_id", restaurantId)
-      .maybeSingle();
-
-    if (result.error) {
-      const details = result.error.message?.trim() || "unknown supabase error";
-      throw new AppError(
-        500,
-        "internal_error",
-        "Failed to verify menu item",
-        { storage: details },
+export function createMenuItemExists(database: Queryable): MenuItemExists {
+  return async ({ userId, restaurantId, itemId }) => {
+    try {
+      const result = await database.query<{ exists: boolean }>(
+        `select exists (
+          select 1
+          from public.menu_items as item
+          join public.restaurants as restaurant on restaurant.id = item.restaurant_id
+          where item.id = $1::uuid
+            and restaurant.id = $2::uuid
+            and restaurant.owner_id = $3::uuid
+        ) as exists`,
+        [itemId, restaurantId, userId],
       );
+      return result.rows[0]?.exists === true;
+    } catch {
+      throw new AppError(500, "internal_error", "Failed to verify menu item");
     }
-
-    return Boolean(result.data);
   };
 }

@@ -2,10 +2,10 @@ import { createHash, randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 
 import type { AppConfig } from "../../lib/config.js";
+import type { Queryable } from "../../lib/database.js";
 import { AppError } from "../../lib/errors.js";
 import type { OrderService } from "../orders/service.js";
 import { createRestaurantAccessChecker, type OwnershipLookup } from "../../lib/permissions.js";
-import { createSupabaseAdminClient } from "../../lib/supabase.js";
 import type { PaymentProvider } from "./provider.js";
 import type { MercadoPagoPaymentClient } from "./providers/mercado-pago/payment-client.js";
 import type {
@@ -776,10 +776,11 @@ export function createManualPaymentService({
 export function registerPaymentModule(
   app: FastifyInstance,
   config: AppConfig,
+  database: Queryable,
   providers: readonly PaymentProvider[] = [],
 ): PaymentModule {
   const registry = createPaymentProviderRegistry(providers);
-  const repository = createPaymentRepository(createSupabaseAdminClient(config));
+  const repository = createPaymentRepository(database);
   const service = createPaymentService(registry, repository);
   const effectsConfig = config.paymentEffects ?? {
     pollIntervalMs: 5_000,

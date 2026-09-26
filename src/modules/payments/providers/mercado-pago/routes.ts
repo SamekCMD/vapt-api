@@ -3,12 +3,11 @@ import { z } from "zod";
 
 import type { AppConfig } from "../../../../lib/config.js";
 import { createSecretCipher } from "../../../../lib/crypto.js";
+import type { Queryable } from "../../../../lib/database.js";
 import { AppError } from "../../../../lib/errors.js";
 import {
-  createSupabaseOwnershipLookup,
-  testOwnershipLookup,
+  type OwnershipLookup,
 } from "../../../../lib/permissions.js";
-import { createSupabaseAdminClient } from "../../../../lib/supabase.js";
 import { validateWithSchema } from "../../../../lib/validation.js";
 import { requireAuth } from "../../../../plugins/auth.js";
 import { isAllowedOrigin } from "../../../../plugins/cors.js";
@@ -66,7 +65,11 @@ function resolveReturnOrigin(value: string | undefined, config: AppConfig): stri
   return origin;
 }
 
-export function createMercadoPagoOAuthServiceFromConfig(config: AppConfig): MercadoPagoOAuthService {
+export function createMercadoPagoOAuthServiceFromConfig(
+  config: AppConfig,
+  database: Queryable,
+  ownershipLookup: OwnershipLookup,
+): MercadoPagoOAuthService {
   if (!config.mercadoPago || !config.frontendUrl) {
     throw new AppError(
       503,
@@ -75,17 +78,14 @@ export function createMercadoPagoOAuthServiceFromConfig(config: AppConfig): Merc
     );
   }
 
-  const supabase = createSupabaseAdminClient(config);
   return createMercadoPagoOAuthService({
-    repository: createMercadoPagoOAuthRepository(supabase),
+    repository: createMercadoPagoOAuthRepository(database),
     client: createMercadoPagoOAuthClient({
       clientId: config.mercadoPago.clientId,
       clientSecret: config.mercadoPago.clientSecret,
     }),
     cipher: createSecretCipher(config.mercadoPago.tokenEncryptionKey),
-    ownershipLookup: config.nodeEnv === "test"
-      ? testOwnershipLookup
-      : createSupabaseOwnershipLookup(supabase as never),
+    ownershipLookup,
     config: {
       clientId: config.mercadoPago.clientId,
       redirectUri: config.mercadoPago.redirectUri,
@@ -101,7 +101,9 @@ export async function registerMercadoPagoOAuthRoutes(
   config: AppConfig,
   service?: MercadoPagoOAuthRouteService,
 ) {
-  const resolvedService = service ?? createMercadoPagoOAuthServiceFromConfig(config);
+  const resolvedService = service ?? (() => {
+    throw new AppError(500, "internal_error", "Mercado Pago OAuth service is not configured");
+  })();
   if (!config.frontendUrl) {
     throw new AppError(
       503,

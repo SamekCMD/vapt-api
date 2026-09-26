@@ -48,10 +48,6 @@ const validConfig = {
       resetPasswordTemplate: "reset-password-template",
     },
   },
-  supabase: {
-    url: new URL("https://supabase.example.com"),
-    serviceRoleKey: "service-role-key",
-  },
 } satisfies AppConfig;
 
 function pendingTransaction(): PaymentTransactionRecord {

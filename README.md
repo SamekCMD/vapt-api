@@ -31,8 +31,6 @@ Required variables:
 - `VAPT_ADMIN_ENDPOINT_SECRET`
 - `STRIPE_WEBHOOK_SIGNING_SECRET`
 - `STRIPE_WEBHOOK_TOLERANCE_SECONDS` defaults to `300`
-- `SUPABASE_URL`
-- `SUPABASE_SERVICE_ROLE_KEY`
 - `PUBLIC_ORDER_TOKEN_SECRET`, a dedicated HMAC secret for public order tokens; do not reuse an authentication secret
 - `BETTER_AUTH_SECRET`, at least 32 characters and unique per environment
 - `BETTER_AUTH_URL`, the absolute public API origin
@@ -46,6 +44,9 @@ Required variables:
 - `FRONTEND_URL`
 - `API_PUBLIC_URL`
 - `PAYMENT_TOKEN_ENCRYPTION_KEY`
+
+Legacy `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are accepted only by the one-time
+`storage:migrate` script; they are not runtime API configuration.
 
 Menu image storage routes are enabled only when the complete R2 configuration is present:
 

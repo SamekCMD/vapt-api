@@ -60,10 +60,6 @@ const validConfig: AppConfig = {
       resetPasswordTemplate: "reset-password-template",
     },
   },
-  supabase: {
-    url: new URL("https://supabase.example.com"),
-    serviceRoleKey: "service-role-key",
-  },
 };
 
 function createFakeAuthRuntime(): AuthRuntime {

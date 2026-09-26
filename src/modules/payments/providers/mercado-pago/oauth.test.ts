@@ -642,10 +642,6 @@ const routeConfig: AppConfig = {
       resetPasswordTemplate: "reset-password-template",
     },
   },
-  supabase: {
-    url: new URL("https://supabase.example.com"),
-    serviceRoleKey: "service-role-key",
-  },
   frontendUrl: new URL("https://app.vapt.test"),
   apiPublicUrl: new URL("https://api.vapt.test"),
   mercadoPago: {

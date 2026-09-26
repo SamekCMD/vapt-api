@@ -1,5 +1,4 @@
-import type { SupabaseClient } from "@supabase/supabase-js";
-
+import type { Queryable } from "../../lib/database.js";
 import { AppError } from "../../lib/errors.js";
 
 type GatewayEventStatus = "received" | "processed" | "pending_retry";
@@ -41,74 +40,102 @@ function createStoredPayload(
   };
 }
 
-function isDuplicateError(error: { code?: string | null; message?: string | null }) {
-  return error.code === "23505" || error.message?.toLowerCase().includes("duplicate key") === true;
-}
-
 function normalizeStorageError(message: string): never {
   throw new AppError(500, "internal_error", message);
 }
 
-export function createWebhookRepository(client: SupabaseClient) {
+export function createWebhookRepository(database: Queryable) {
   return {
     async reserveBillingEvent(input: BillingEventInput): Promise<{ duplicate: boolean }> {
       const receivedAt = new Date().toISOString();
-      const result = await client.from("billing_provider_events").insert({
-        provider: "stripe_gateway",
-        provider_event_id: input.providerEventId,
-        event_type: input.eventType,
-        restaurant_id: input.restaurantId ?? null,
-        stripe_customer_id: input.stripeCustomerId ?? null,
-        stripe_subscription_id: input.stripeSubscriptionId ?? null,
-        payload: createStoredPayload(input.rawPayload, "received", receivedAt),
-      });
-
-      if (!result.error) {
-        return { duplicate: false };
+      try {
+        const result = await database.query<{ id: string }>(
+          `insert into public.billing_provider_events (
+            provider,
+            provider_event_id,
+            event_type,
+            restaurant_id,
+            stripe_customer_id,
+            stripe_subscription_id,
+            payload
+          ) values (
+            'stripe_gateway',
+            $1::text,
+            $2::text,
+            $3::uuid,
+            $4::text,
+            $5::text,
+            jsonb_build_object(
+              'raw', $6::jsonb,
+              'gateway', jsonb_build_object(
+                'status', 'received',
+                'receivedAt', $7::text,
+                'processedAt', null,
+                'lastProcessingError', null
+              )
+            )
+          )
+          on conflict (provider, provider_event_id) do nothing
+          returning id`,
+          [
+            input.providerEventId,
+            input.eventType,
+            input.restaurantId ?? null,
+            input.stripeCustomerId ?? null,
+            input.stripeSubscriptionId ?? null,
+            input.rawPayload,
+            receivedAt,
+          ],
+        );
+        return { duplicate: !result.rows[0] };
+      } catch {
+        normalizeStorageError("Failed to persist Stripe webhook event");
       }
-
-      if (isDuplicateError(result.error)) {
-        return { duplicate: true };
-      }
-
-      normalizeStorageError("Failed to persist Stripe webhook event");
     },
 
     async markBillingEventProcessed(input: BillingEventInput) {
       const processedAt = new Date().toISOString();
-      const result = await client
-        .from("billing_provider_events")
-        .update({
-          processed_at: processedAt,
-          payload: createStoredPayload(input.rawPayload, "processed", processedAt, null, processedAt),
-        })
-        .eq("provider", "stripe_gateway")
-        .eq("provider_event_id", input.providerEventId);
-
-      if (result.error) {
+      const payload = createStoredPayload(
+        input.rawPayload,
+        "processed",
+        processedAt,
+        null,
+        processedAt,
+      );
+      try {
+        await database.query(
+          `update public.billing_provider_events
+          set processed_at = $2::timestamptz,
+              payload = $1::jsonb
+          where provider = 'stripe_gateway'
+            and provider_event_id = $3::text`,
+          [payload, processedAt, input.providerEventId],
+        );
+      } catch {
         normalizeStorageError("Failed to mark Stripe webhook as processed");
       }
     },
 
     async markBillingEventFailed(input: BillingEventInput, errorMessage: string) {
-      const result = await client
-        .from("billing_provider_events")
-        .update({
-          payload: createStoredPayload(
-            input.rawPayload,
-            "pending_retry",
-            new Date().toISOString(),
-            errorMessage,
-            null,
-          ),
-        })
-        .eq("provider", "stripe_gateway")
-        .eq("provider_event_id", input.providerEventId);
-
-      if (result.error) {
+      const failedAt = new Date().toISOString();
+      const payload = createStoredPayload(
+        input.rawPayload,
+        "pending_retry",
+        failedAt,
+        errorMessage,
+        null,
+      );
+      try {
+        await database.query(
+          `update public.billing_provider_events
+          set payload = $1::jsonb
+          where provider = 'stripe_gateway'
+            and provider_event_id = $2::text`,
+          [payload, input.providerEventId],
+        );
+      } catch {
         normalizeStorageError("Failed to mark Stripe webhook as failed");
       }
     },
-
   };
 }

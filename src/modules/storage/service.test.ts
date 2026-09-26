@@ -48,7 +48,7 @@ test("menu image upload preserves the legacy object key and returns the canonica
   });
   assert.deepEqual(calls, [
     ["access", { userId: "user-1", restaurantId }],
-    ["item", { restaurantId, itemId }],
+    ["item", { userId: "user-1", restaurantId, itemId }],
     ["sign", {
       objectKey: `${restaurantId}/${itemId}`,
       contentType: "image/jpeg",

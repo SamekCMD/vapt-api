@@ -1,8 +1,9 @@
 import type { FastifyInstance } from "fastify";
 
 import type { AppConfig } from "../../lib/config.js";
+import type { Queryable } from "../../lib/database.js";
+import { AppError } from "../../lib/errors.js";
 import { validateWithSchema } from "../../lib/validation.js";
-import { createSupabaseAdminClient } from "../../lib/supabase.js";
 import { createN8nClient } from "../n8n/client.js";
 import { createWebhookRepository } from "./repository.js";
 import { stripeWebhookHeadersSchema } from "./schemas.js";
@@ -10,6 +11,7 @@ import { createWebhookService } from "./service.js";
 
 type WebhookRouteDeps = {
   service?: ReturnType<typeof createWebhookService>;
+  database?: Queryable;
 };
 
 export async function registerWebhookRoutes(
@@ -24,7 +26,9 @@ export async function registerWebhookRoutes(
         stripeSigningSecret: config.webhooks.stripe.signingSecret,
         stripeToleranceSeconds: config.webhooks.stripe.toleranceSeconds,
       },
-      createWebhookRepository(createSupabaseAdminClient(config)),
+      createWebhookRepository(deps.database ?? (() => {
+        throw new AppError(500, "internal_error", "Webhook database is not configured");
+      })()),
       createN8nClient(config),
     );
 
