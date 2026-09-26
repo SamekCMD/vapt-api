@@ -20,6 +20,8 @@ import type { AuthRuntime } from "./modules/auth/runtime.js";
 import { createSessionResolver } from "./modules/auth/session-resolver.js";
 import { registerIngestRoutes } from "./modules/ingest/routes.js";
 import { registerHealthRoutes } from "./modules/health/routes.js";
+import { createKitchenRepository } from "./modules/kitchen/repository.js";
+import { registerKitchenRoutes } from "./modules/kitchen/routes.js";
 import { createMenuRepository } from "./modules/menu/repository.js";
 import { registerMenuRoutes } from "./modules/menu/routes.js";
 import type { PaymentProvider } from "./modules/payments/provider.js";
@@ -158,6 +160,7 @@ export async function buildApp(
   await registerMenuRoutes(app, createMenuRepository(database), {
     publicBaseUrl: config.r2?.publicBaseUrl ?? null,
   });
+  await registerKitchenRoutes(app, createKitchenRepository(database));
   await registerAuthRoutes(app, config, ownershipLookup);
   await registerStripeBillingRoutes(app, config, ownershipLookup);
   await registerOrderRoutes(app, config, orderRepository);

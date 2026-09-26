@@ -78,3 +78,27 @@ export type PublicCatalogDto = {
   restaurant: PublicRestaurantDto;
   items: MenuItemDto[];
 };
+
+export type KitchenOrderStatus = "paid" | "pending" | "preparing" | "ready" | "delivered";
+
+export type KitchenOrderItemDto = {
+  id: string;
+  productName: string;
+  quantity: number;
+  unitPrice: string;
+  notes: string;
+};
+
+export type KitchenOrderDto = {
+  id: string;
+  displayId: string | null;
+  restaurantId: string;
+  tableNumber: string | null;
+  totalPrice: string;
+  status: KitchenOrderStatus;
+  channel: "local" | "delivery";
+  paymentStatus: string | null;
+  createdAt: string;
+  updatedAt: string;
+  items: KitchenOrderItemDto[];
+};
