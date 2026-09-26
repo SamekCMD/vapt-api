@@ -32,16 +32,6 @@ export const n8nContracts = {
     path: "/stripe/webhook",
     auth: "none",
   },
-  "ingest.pushSubscription": {
-    method: "POST",
-    path: "/ingest/push-subscription",
-    auth: "app",
-  },
-  "ingest.orderFeedback": {
-    method: "POST",
-    path: "/ingest/order-feedback",
-    auth: "app",
-  },
 } as const;
 
 export type N8nOperation = keyof typeof n8nContracts;

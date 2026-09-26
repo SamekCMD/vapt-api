@@ -3,8 +3,14 @@ import { createServer } from "node:http";
 import test from "node:test";
 
 import type { AppConfig } from "../../../lib/config.js";
+import type { Database } from "../../../lib/database.js";
 import { buildApp as buildVaptApp } from "../../../app.js";
 import type { AuthRuntime } from "../../auth/runtime.js";
+import {
+  createStripeBillingRepository,
+  type StripeBillingRepository,
+} from "./repository.js";
+import { createStripeBillingService } from "./service.js";
 
 const validConfig: AppConfig = {
   nodeEnv: "test",
@@ -61,8 +67,15 @@ const testAuthRuntime: AuthRuntime = {
   async close() {},
 };
 
-function buildApp(config: AppConfig) {
-  return buildVaptApp(config, { authRuntime: testAuthRuntime });
+function buildApp(config: AppConfig, database: Database = {
+  async query() {
+    return { rows: [{ id: "rest-1" }] };
+  },
+  async connect() {
+    throw new Error("Transactions are not expected in Stripe route tests");
+  },
+} as unknown as Database) {
+  return buildVaptApp(config, { authRuntime: testAuthRuntime, database });
 }
 
 async function withN8nStub(
@@ -305,4 +318,158 @@ test("stripe routes return 403 for unauthorized restaurant access", async () => 
   assert.equal(response.statusCode, 403);
 
   await app.close();
+});
+
+function stripeClientReturningCheckout() {
+  return {
+    stripe: {
+      async createSubscription() {
+        return {
+          data: {
+            clientSecret: "cs_test_123",
+            subscriptionId: "sub_123",
+            customerId: "cus_123",
+            autoCharged: true,
+          },
+        };
+      },
+      async changeSubscription() {
+        return {
+          data: {
+            subscriptionId: "sub_123",
+            plan_type: "pro",
+            status: "updated",
+            autoCharged: true,
+          },
+        };
+      },
+      async cancelSubscription() {
+        return { data: { subscriptionId: "sub_123", status: "canceled" } };
+      },
+      async getSubscriptionStatus() {
+        return {
+          data: {
+            plan_type: "starter",
+            plan_status: "active",
+            trial_ends_at: null,
+            stripe_customer_id: "cus_123",
+            stripe_subscription_id: "sub_123",
+            billing_last_error: null,
+            subscription_canceled_at: null,
+          },
+        };
+      },
+    },
+  };
+}
+
+function recordingStripeRepository(writes: unknown[]): StripeBillingRepository {
+  return {
+    async persistCheckoutResult(input) { writes.push(["checkout", input]); },
+    async persistChangeResult(input) { writes.push(["change", input]); },
+    async persistCancellationResult(input) { writes.push(["cancel", input]); },
+    async persistStatusResult(input) { writes.push(["status", input]); },
+  };
+}
+
+test("stripe service persists a valid checkout response for the authorized restaurant", async () => {
+  const writes: unknown[] = [];
+  const service = createStripeBillingService(
+    stripeClientReturningCheckout(),
+    async () => true,
+    recordingStripeRepository(writes),
+  );
+
+  const result = await service.createCheckout({
+    userId: "user-1",
+    restaurantId: "rest-1",
+    email: "owner@example.com",
+    planType: "starter",
+    priceId: "price_123",
+  });
+
+  assert.equal(result.subscriptionId, "sub_123");
+  assert.deepEqual(writes, [["checkout", {
+    userId: "user-1",
+    restaurantId: "rest-1",
+    stripeCustomerId: "cus_123",
+    stripeSubscriptionId: "sub_123",
+    planType: "starter",
+    planStatus: "active",
+  }]]);
+});
+
+test("stripe service does not claim success when Neon persistence fails", async () => {
+  const repository = recordingStripeRepository([]);
+  repository.persistCheckoutResult = async () => {
+    throw new Error("database unavailable");
+  };
+  const service = createStripeBillingService(
+    stripeClientReturningCheckout(),
+    async () => true,
+    repository,
+  );
+
+  await assert.rejects(() => service.createCheckout({
+    userId: "user-1",
+    restaurantId: "rest-1",
+    email: "owner@example.com",
+    planType: "starter",
+    priceId: "price_123",
+  }), /database unavailable/);
+});
+
+test("stripe repository scopes all billing writes to the restaurant owner", async () => {
+  const calls: Array<{ sql: string; values?: unknown[] }> = [];
+  const database = {
+    async query(sql: string, values?: unknown[]) {
+      calls.push({ sql, values });
+      return { rows: [{ id: "10000000-0000-4000-8000-000000000001" }] };
+    },
+  } as unknown as Database;
+  const repository = createStripeBillingRepository(database);
+  const scope = {
+    userId: "20000000-0000-4000-8000-000000000001",
+    restaurantId: "10000000-0000-4000-8000-000000000001",
+  };
+
+  await repository.persistCheckoutResult({
+    ...scope,
+    stripeCustomerId: "cus_123",
+    stripeSubscriptionId: "sub_123",
+    planType: "starter",
+    planStatus: "active",
+  });
+  await repository.persistChangeResult({
+    ...scope,
+    stripeSubscriptionId: "sub_123",
+    planType: "pro",
+    planStatus: "active",
+  });
+  await repository.persistCancellationResult({
+    ...scope,
+    stripeSubscriptionId: "sub_123",
+  });
+  await repository.persistStatusResult({
+    ...scope,
+    planType: "pro",
+    planStatus: "cancelled",
+    trialEndsAt: null,
+    stripeCustomerId: "cus_123",
+    stripeSubscriptionId: "sub_123",
+    billingLastError: null,
+    subscriptionCanceledAt: "2026-09-26T14:00:00.000Z",
+  });
+
+  assert.equal(calls.length, 4);
+  for (const call of calls) {
+    assert.match(call.sql, /where id = \$1::uuid\s+and owner_id = \$2::uuid/i);
+    assert.deepEqual(call.values?.slice(0, 2), [scope.restaurantId, scope.userId]);
+  }
+  assert.match(calls[0]?.sql ?? "", /stripe_customer_id/i);
+  assert.match(calls[0]?.sql ?? "", /stripe_subscription_id/i);
+  assert.match(calls[0]?.sql ?? "", /plan_type/i);
+  assert.match(calls[0]?.sql ?? "", /plan_status/i);
+  assert.match(calls[2]?.sql ?? "", /subscription_canceled_at = now\(\)/i);
+  assert.match(calls[3]?.sql ?? "", /trial_ends_at/i);
 });

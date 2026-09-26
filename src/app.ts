@@ -11,6 +11,7 @@ import {
   testOwnershipLookup,
 } from "./lib/permissions.js";
 import { registerStripeBillingRoutes } from "./modules/billing/stripe/routes.js";
+import { createStripeBillingRepository } from "./modules/billing/stripe/repository.js";
 import { createCatalogRepository } from "./modules/catalog/repository.js";
 import { registerCatalogRoutes } from "./modules/catalog/routes.js";
 import { createBetterAuthRuntime } from "./modules/auth/better-auth.js";
@@ -19,6 +20,7 @@ import { registerAuthRoutes } from "./modules/auth/routes.js";
 import type { AuthRuntime } from "./modules/auth/runtime.js";
 import { createSessionResolver } from "./modules/auth/session-resolver.js";
 import { registerIngestRoutes } from "./modules/ingest/routes.js";
+import { createPushSubscriptionRepository } from "./modules/ingest/repository.js";
 import { createFeedbackRepository } from "./modules/feedback/repository.js";
 import { registerFeedbackRoutes } from "./modules/feedback/routes.js";
 import { registerHealthRoutes } from "./modules/health/routes.js";
@@ -177,13 +179,15 @@ export async function buildApp(
     createTableSessionRepository(database),
     publicOrderService,
   );
-  await registerFeedbackRoutes(
-    app,
-    createFeedbackRepository(database),
-    publicOrderService,
-  );
+  const feedbackRepository = createFeedbackRepository(database);
+  await registerFeedbackRoutes(app, feedbackRepository, publicOrderService);
   await registerAuthRoutes(app, config, ownershipLookup);
-  await registerStripeBillingRoutes(app, config, ownershipLookup);
+  await registerStripeBillingRoutes(
+    app,
+    config,
+    ownershipLookup,
+    createStripeBillingRepository(database),
+  );
   await registerOrderRoutes(app, config, orderRepository);
   if (config.r2) {
     await registerMenuImageRoutes(
@@ -247,7 +251,11 @@ export async function buildApp(
     );
   }
   await registerPaymentEffectRoutes(app, config);
-  await registerIngestRoutes(app, config);
+  await registerIngestRoutes(app, {
+    pushSubscriptions: createPushSubscriptionRepository(database),
+    feedbackRepository,
+    publicOrders: publicOrderService,
+  });
   await registerWebhookRoutes(app, config, { database });
 
   return app;

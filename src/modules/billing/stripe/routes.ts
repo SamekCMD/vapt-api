@@ -16,11 +16,13 @@ import {
   stripeSubscriptionStatusQuerySchema,
 } from "./schemas.js";
 import { createStripeBillingService } from "./service.js";
+import type { StripeBillingRepository } from "./repository.js";
 
 export async function registerStripeBillingRoutes(
   app: FastifyInstance,
   config: AppConfig,
   ownershipLookup?: OwnershipLookup,
+  repository?: StripeBillingRepository,
 ) {
   const resolvedOwnershipLookup =
     ownershipLookup ??
@@ -30,7 +32,10 @@ export async function registerStripeBillingRoutes(
           throw new AppError(500, "internal_error", "Ownership lookup is not configured");
         })());
   const client = createN8nClient(config);
-  const service = createStripeBillingService(client, resolvedOwnershipLookup);
+  if (!repository) {
+    throw new AppError(500, "internal_error", "Stripe billing repository is not configured");
+  }
+  const service = createStripeBillingService(client, resolvedOwnershipLookup, repository);
 
   app.post(
     "/billing/stripe/checkout",

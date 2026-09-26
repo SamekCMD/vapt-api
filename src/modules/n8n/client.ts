@@ -200,6 +200,8 @@ export function createN8nClient(config: AppConfig, fetchImpl: FetchLike = fetch)
           trial_ends_at: string | null;
           stripe_customer_id: string | null;
           stripe_subscription_id: string | null;
+          billing_last_error?: string | null;
+          subscription_canceled_at?: string | null;
         }>("stripe.subscriptionStatus", {
           query: {
             restaurant_id: restaurantId,
