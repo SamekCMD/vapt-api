@@ -50,3 +50,31 @@ export type MenuItemDto = {
   updatedAt: string;
   variations: MenuVariationDto[];
 };
+
+export type PublicRestaurantDto = Pick<
+  RestaurantDto,
+  | "id"
+  | "name"
+  | "slug"
+  | "whatsapp"
+  | "address"
+  | "phone"
+  | "hours"
+  | "description"
+  | "primaryColor"
+  | "secondaryColor"
+  | "fontFamily"
+  | "logoUrl"
+  | "totalTables"
+  | "maxTables"
+  | "paymentMode"
+  | "maxPendingOrders"
+  | "localEnabled"
+  | "deliveryEnabled"
+  | "updatedAt"
+>;
+
+export type PublicCatalogDto = {
+  restaurant: PublicRestaurantDto;
+  items: MenuItemDto[];
+};

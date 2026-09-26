@@ -11,6 +11,8 @@ import {
   testOwnershipLookup,
 } from "./lib/permissions.js";
 import { registerStripeBillingRoutes } from "./modules/billing/stripe/routes.js";
+import { createCatalogRepository } from "./modules/catalog/repository.js";
+import { registerCatalogRoutes } from "./modules/catalog/routes.js";
 import { createBetterAuthRuntime } from "./modules/auth/better-auth.js";
 import { registerBetterAuthHandler } from "./modules/auth/fastify-handler.js";
 import { registerAuthRoutes } from "./modules/auth/routes.js";
@@ -147,6 +149,7 @@ export async function buildApp(
   await registerCors(app, config);
   await registerBetterAuthHandler(app, config.betterAuth.url, authRuntime.handler);
   await registerHealthRoutes(app);
+  await registerCatalogRoutes(app, createCatalogRepository(database));
   await registerAuthRoutes(app, config, ownershipLookup);
   await registerStripeBillingRoutes(app, config, ownershipLookup);
   await registerOrderRoutes(app, config, orderRepository);
