@@ -51,6 +51,8 @@ import {
 import { createOrderRepository } from "./modules/orders/repository.js";
 import { registerOrderRoutes } from "./modules/orders/routes.js";
 import { createOrderService } from "./modules/orders/service.js";
+import { createRestaurantRepository } from "./modules/restaurants/repository.js";
+import { registerRestaurantRoutes } from "./modules/restaurants/routes.js";
 import { registerWebhookRoutes } from "./modules/webhooks/routes.js";
 import { createMenuItemExists } from "./modules/storage/repository.js";
 import { createR2MenuImageGateway } from "./modules/storage/r2.js";
@@ -150,6 +152,7 @@ export async function buildApp(
   await registerBetterAuthHandler(app, config.betterAuth.url, authRuntime.handler);
   await registerHealthRoutes(app);
   await registerCatalogRoutes(app, createCatalogRepository(database));
+  await registerRestaurantRoutes(app, createRestaurantRepository(database));
   await registerAuthRoutes(app, config, ownershipLookup);
   await registerStripeBillingRoutes(app, config, ownershipLookup);
   await registerOrderRoutes(app, config, orderRepository);
