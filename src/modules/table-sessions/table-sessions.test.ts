@@ -18,7 +18,10 @@ import {
   type TableSessionRepository,
 } from "./repository.js";
 import { registerTableSessionRoutes } from "./routes.js";
-import { transferTableSessionBodySchema } from "./schemas.js";
+import {
+  requestCheckTableSessionBodySchema,
+  transferTableSessionBodySchema,
+} from "./schemas.js";
 import { createTableSessionService } from "./service.js";
 
 const ownerId = "20000000-0000-4000-8000-000000000001";
@@ -73,6 +76,21 @@ test("transfer schema trims and limits table numbers while rejecting tenant fiel
     { tableNumber: "20", restaurantId },
   ]) {
     assert.equal(transferTableSessionBodySchema.safeParse(payload).success, false);
+  }
+});
+
+test("public check schema requires only a bounded order id and token", () => {
+  assert.equal(requestCheckTableSessionBodySchema.safeParse({
+    publicOrderId: orderId,
+    publicOrderToken: "public-token-that-is-at-least-32-characters",
+  }).success, true);
+  for (const payload of [
+    { publicOrderId: orderId },
+    { publicOrderId: "not-a-uuid", publicOrderToken: "x".repeat(32) },
+    { publicOrderId: orderId, publicOrderToken: "short" },
+    { publicOrderId: orderId, publicOrderToken: "x".repeat(32), restaurantId },
+  ]) {
+    assert.equal(requestCheckTableSessionBodySchema.safeParse(payload).success, false);
   }
 });
 
@@ -280,6 +298,118 @@ test("missing ownership is 404 and a closed transfer is 409", async () => {
   );
 });
 
+function requestCheckDatabase(status: "open" | "check_requested" | "closed", linked = true) {
+  const events: string[] = [];
+  const calls: Array<{ sql: string; values: unknown[] | undefined }> = [];
+  const client = {
+    async query(sql: string, values?: unknown[]) {
+      events.push(sql.trim().split(/\s+/)[0]!.toUpperCase());
+      calls.push({ sql, values });
+      if (/select session_row\.status/i.test(sql)) {
+        return { rows: linked ? [{ status }] : [] };
+      }
+      if (/update public\.table_sessions as session_row/i.test(sql)) {
+        return { rows: [{ id: sessionId }] };
+      }
+      return { rows: [] };
+    },
+    release() { events.push("RELEASE"); },
+  };
+  return {
+    database: {
+      async query() { return { rows: [] }; },
+      async connect() { events.push("CONNECT"); return client; },
+    } as unknown as Database,
+    calls,
+    events,
+  };
+}
+
+test("public request-check locks only the session linked to the authorized order", async () => {
+  const { database, calls, events } = requestCheckDatabase("open");
+
+  const result = await createTableSessionRepository(database).requestPublicCheck(sessionId, orderId);
+
+  assert.deepEqual(result, { sessionId, status: "check_requested" });
+  assert.match(calls[1]?.sql ?? "", /join public\.orders as order_row/i);
+  assert.match(calls[1]?.sql ?? "", /order_row\.id = \$2::uuid/i);
+  assert.match(calls[1]?.sql ?? "", /for update of session_row/i);
+  assert.match(calls[2]?.sql ?? "", /order_row\.id = \$2::uuid/i);
+  assert.deepEqual(events.slice(-2), ["COMMIT", "RELEASE"]);
+});
+
+test("request-check retry is idempotent, closed sessions conflict, and mismatches stay hidden", async () => {
+  const retry = requestCheckDatabase("check_requested");
+  const retryResult = await createTableSessionRepository(retry.database).requestPublicCheck(sessionId, orderId);
+  assert.deepEqual(retryResult, { sessionId, status: "check_requested" });
+  assert.equal(retry.calls.some((call) => /update public\.table_sessions/i.test(call.sql)), false);
+
+  const closedService = createTableSessionService(
+    createTableSessionRepository(requestCheckDatabase("closed").database),
+  );
+  await assert.rejects(
+    () => closedService.requestPublicCheck(sessionId, { ...detail().orders[0], orderId, tableSessionId: sessionId }),
+    (error: unknown) => error instanceof AppError && error.statusCode === 409,
+  );
+
+  const mismatchService = createTableSessionService(
+    createTableSessionRepository(requestCheckDatabase("open").database),
+  );
+  await assert.rejects(
+    () => mismatchService.requestPublicCheck(sessionId, { ...detail().orders[0], orderId, tableSessionId: null }),
+    (error: unknown) => error instanceof AppError && error.statusCode === 404,
+  );
+});
+
+test("public request-check route authorizes the exact order token", async () => {
+  const database = requestCheckDatabase("open").database;
+  const app = Fastify({ logger: false });
+  registerAuthDecorator(app, async () => null);
+  registerErrorHandler(app);
+  await registerTableSessionRoutes(app, createTableSessionRepository(database), {
+    async getPublicOrder(id, publicToken) {
+      if (publicToken !== "valid-public-token-that-is-32-characters") {
+        throw new AppError(404, "not_found", "Order not found");
+      }
+      return {
+        orderId: id,
+        displayId: "42",
+        restaurantId,
+        tableSessionId: sessionId,
+        totalPrice: "29.90",
+        status: "delivered",
+        paymentStatus: "paid",
+        idempotentReplay: false,
+        channel: "local",
+        tableNumber: "12",
+        createdAt: "2026-09-26T12:00:00.000Z",
+        items: [],
+      };
+    },
+  });
+
+  const allowed = await app.inject({
+    method: "POST",
+    url: `/public/table-sessions/${sessionId}/request-check`,
+    payload: {
+      publicOrderId: orderId,
+      publicOrderToken: "valid-public-token-that-is-32-characters",
+    },
+  });
+  assert.equal(allowed.statusCode, 200);
+
+  const denied = await app.inject({
+    method: "POST",
+    url: `/public/table-sessions/${sessionId}/request-check`,
+    payload: {
+      publicOrderId: orderId,
+      publicOrderToken: "wrong-public-token-that-is-32-characters",
+    },
+  });
+  assert.equal(denied.statusCode, 401);
+  await app.close();
+});
+
 test("authenticated routes derive ownership only from the session", async () => {
   const owners: string[] = [];
   const repository: TableSessionRepository = {
@@ -293,6 +423,7 @@ test("authenticated routes derive ownership only from the session", async () => 
       owners.push(userId);
       return { sessionId, tableNumber, updatedOrderIds: [orderId] };
     },
+    async requestPublicCheck() { return { sessionId, status: "check_requested" }; },
   };
   const app = Fastify({ logger: false });
   registerAuthDecorator(app, async () => ({ userId: ownerId, email: null, role: "authenticated" }));

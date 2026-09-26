@@ -152,3 +152,51 @@ export type TransferTableSessionDto = {
   tableNumber: string;
   updatedOrderIds: string[];
 };
+
+export type RequestCheckTableSessionDto = {
+  sessionId: string;
+  status: "check_requested";
+};
+
+export type OverviewPeriod = "day" | "week" | "month";
+
+export type OverviewRestaurantDto = {
+  id: string;
+  name: string;
+  paymentMode: "open_tab" | "prepaid";
+  onboardingCompleted: boolean;
+  deliveryEnabled: boolean;
+};
+
+export type OverviewOrderItemDto = {
+  productName: string;
+  quantity: number;
+  unitPrice: string;
+};
+
+export type OverviewOrderDto = {
+  id: string;
+  displayId: string | null;
+  totalPrice: string;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+  items: OverviewOrderItemDto[];
+};
+
+export type OrderFeedbackDto = {
+  orderId: string;
+  restaurantId: string;
+  rating: number;
+  reasons: string[];
+  comment: string | null;
+  createdAt: string;
+};
+
+export type OverviewDto = {
+  period: OverviewPeriod;
+  periodStart: string;
+  restaurant: OverviewRestaurantDto;
+  orders: OverviewOrderDto[];
+  feedback: OrderFeedbackDto[];
+};

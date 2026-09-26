@@ -1,4 +1,5 @@
 import { AppError } from "../../lib/errors.js";
+import type { PublicOrderRecord } from "../orders/repository.js";
 import type { TableSessionRepository } from "./repository.js";
 
 export function createTableSessionService(repository: TableSessionRepository) {
@@ -28,6 +29,23 @@ export function createTableSessionService(repository: TableSessionRepository) {
         throw new AppError(409, "table_session_closed", "Closed table sessions cannot be transferred");
       }
       return transferred;
+    },
+
+    async requestPublicCheck(
+      sessionId: string,
+      order: Pick<PublicOrderRecord, "orderId" | "tableSessionId">,
+    ) {
+      if (order.tableSessionId !== sessionId) {
+        throw new AppError(404, "table_session_not_found", "Table session not found");
+      }
+      const requested = await repository.requestPublicCheck(sessionId, order.orderId);
+      if (!requested) {
+        throw new AppError(404, "table_session_not_found", "Table session not found");
+      }
+      if (requested === "closed") {
+        throw new AppError(409, "table_session_closed", "Closed table sessions cannot request a check");
+      }
+      return requested;
     },
   };
 }

@@ -3,6 +3,7 @@ import { withTransaction } from "../../lib/database.js";
 import { AppError } from "../../lib/errors.js";
 import type {
   CloseTableSessionDto,
+  RequestCheckTableSessionDto,
   TableSessionDetailDto,
   TableSessionOrderDto,
   TableSessionOrderItemDto,
@@ -40,6 +41,7 @@ type LockedSessionRow = {
 };
 
 export type TransferOwnedSessionResult = TransferTableSessionDto | "closed" | null;
+export type RequestPublicCheckResult = RequestCheckTableSessionDto | "closed" | null;
 
 export interface TableSessionRepository {
   listActiveOwnedSessions(userId: string): Promise<TableSessionSummaryDto[]>;
@@ -50,6 +52,10 @@ export interface TableSessionRepository {
     sessionId: string,
     tableNumber: string,
   ): Promise<TransferOwnedSessionResult>;
+  requestPublicCheck(
+    sessionId: string,
+    orderId: string,
+  ): Promise<RequestPublicCheckResult>;
 }
 
 const SUMMARY_SELECT = `
@@ -323,6 +329,46 @@ export function createTableSessionRepository(database: Database): TableSessionRe
             tableNumber,
             updatedOrderIds: updatedOrders.rows.map((row) => row.id),
           };
+        });
+      } catch (error) {
+        if (error instanceof AppError && error.code !== "internal_error") throw error;
+        throw storageFailure();
+      }
+    },
+
+    async requestPublicCheck(sessionId, orderId) {
+      try {
+        return await withTransaction(database, async (client) => {
+          const locked = await client.query<{ status: TableSessionStatus }>(
+            `select session_row.status
+            from public.table_sessions as session_row
+            join public.orders as order_row
+              on order_row.table_session_id = session_row.id
+            where session_row.id = $1::uuid
+              and order_row.id = $2::uuid
+            for update of session_row`,
+            [sessionId, orderId],
+          );
+          const session = locked.rows[0];
+          if (!session) return null;
+          if (session.status === "closed") return "closed";
+          if (session.status === "check_requested") {
+            return { sessionId, status: "check_requested" as const };
+          }
+
+          const updated = await client.query<{ id: string }>(
+            `update public.table_sessions as session_row
+            set status = 'check_requested'
+            from public.orders as order_row
+            where session_row.id = $1::uuid
+              and order_row.id = $2::uuid
+              and order_row.table_session_id = session_row.id
+              and session_row.status = 'open'
+            returning session_row.id`,
+            [sessionId, orderId],
+          );
+          if (!updated.rows[0]) throw storageFailure();
+          return { sessionId, status: "check_requested" as const };
         });
       } catch (error) {
         if (error instanceof AppError && error.code !== "internal_error") throw error;

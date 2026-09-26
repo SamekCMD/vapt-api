@@ -19,6 +19,8 @@ import { registerAuthRoutes } from "./modules/auth/routes.js";
 import type { AuthRuntime } from "./modules/auth/runtime.js";
 import { createSessionResolver } from "./modules/auth/session-resolver.js";
 import { registerIngestRoutes } from "./modules/ingest/routes.js";
+import { createFeedbackRepository } from "./modules/feedback/repository.js";
+import { registerFeedbackRoutes } from "./modules/feedback/routes.js";
 import { registerHealthRoutes } from "./modules/health/routes.js";
 import { createKitchenRepository } from "./modules/kitchen/repository.js";
 import { registerKitchenRoutes } from "./modules/kitchen/routes.js";
@@ -55,6 +57,8 @@ import {
 import { createOrderRepository } from "./modules/orders/repository.js";
 import { registerOrderRoutes } from "./modules/orders/routes.js";
 import { createOrderService } from "./modules/orders/service.js";
+import { createOverviewRepository } from "./modules/overview/repository.js";
+import { registerOverviewRoutes } from "./modules/overview/routes.js";
 import { createRestaurantRepository } from "./modules/restaurants/repository.js";
 import { registerRestaurantRoutes } from "./modules/restaurants/routes.js";
 import { registerWebhookRoutes } from "./modules/webhooks/routes.js";
@@ -127,6 +131,10 @@ export async function buildApp(
     ? testOwnershipLookup
     : createOwnershipLookup(database);
   const orderRepository = createOrderRepository(database);
+  const publicOrderService = createOrderService(
+    orderRepository,
+    config.security.publicOrderTokenSecret,
+  );
 
   const paymentProviders: PaymentProvider[] = [createManualPaymentProvider()];
   const mercadoPagoOAuth = config.mercadoPago && config.frontendUrl && config.apiPublicUrl
@@ -163,7 +171,17 @@ export async function buildApp(
     publicBaseUrl: config.r2?.publicBaseUrl ?? null,
   });
   await registerKitchenRoutes(app, createKitchenRepository(database));
-  await registerTableSessionRoutes(app, createTableSessionRepository(database));
+  await registerOverviewRoutes(app, createOverviewRepository(database));
+  await registerTableSessionRoutes(
+    app,
+    createTableSessionRepository(database),
+    publicOrderService,
+  );
+  await registerFeedbackRoutes(
+    app,
+    createFeedbackRepository(database),
+    publicOrderService,
+  );
   await registerAuthRoutes(app, config, ownershipLookup);
   await registerStripeBillingRoutes(app, config, ownershipLookup);
   await registerOrderRoutes(app, config, orderRepository);

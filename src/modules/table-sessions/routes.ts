@@ -2,9 +2,12 @@ import type { FastifyInstance } from "fastify";
 
 import { validateWithSchema } from "../../lib/validation.js";
 import { requireAuth } from "../../plugins/auth.js";
+import { AppError } from "../../lib/errors.js";
+import type { OrderService } from "../orders/service.js";
 import type { TableSessionRepository } from "./repository.js";
 import {
   tableSessionParamsSchema,
+  requestCheckTableSessionBodySchema,
   transferTableSessionBodySchema,
 } from "./schemas.js";
 import { createTableSessionService } from "./service.js";
@@ -12,6 +15,7 @@ import { createTableSessionService } from "./service.js";
 export async function registerTableSessionRoutes(
   app: FastifyInstance,
   repository: TableSessionRepository,
+  publicOrders?: Pick<OrderService, "getPublicOrder">,
 ) {
   const service = createTableSessionService(repository);
   const protectedOptions = {
@@ -59,4 +63,25 @@ export async function registerTableSessionRoutes(
       );
     },
   );
+
+  if (publicOrders) {
+    app.post(
+      "/public/table-sessions/:sessionId/request-check",
+      { config: { rateLimitGroup: "orders" } },
+      async (request) => {
+        const params = validateWithSchema(tableSessionParamsSchema, request.params);
+        const body = validateWithSchema(requestCheckTableSessionBodySchema, request.body);
+        let order;
+        try {
+          order = await publicOrders.getPublicOrder(body.publicOrderId, body.publicOrderToken);
+        } catch (error) {
+          if (error instanceof AppError && error.statusCode === 404) {
+            throw new AppError(401, "invalid_order_token", "Invalid order token");
+          }
+          throw error;
+        }
+        return service.requestPublicCheck(params.sessionId, order);
+      },
+    );
+  }
 }
