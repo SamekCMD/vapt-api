@@ -62,6 +62,8 @@ import { createMenuItemExists } from "./modules/storage/repository.js";
 import { createR2MenuImageGateway } from "./modules/storage/r2.js";
 import { registerMenuImageRoutes } from "./modules/storage/routes.js";
 import { createMenuImageService } from "./modules/storage/service.js";
+import { createTableSessionRepository } from "./modules/table-sessions/repository.js";
+import { registerTableSessionRoutes } from "./modules/table-sessions/routes.js";
 import { registerCors } from "./plugins/cors.js";
 import { registerAuthDecorator } from "./plugins/auth.js";
 import { registerErrorHandler } from "./plugins/error-handler.js";
@@ -161,6 +163,7 @@ export async function buildApp(
     publicBaseUrl: config.r2?.publicBaseUrl ?? null,
   });
   await registerKitchenRoutes(app, createKitchenRepository(database));
+  await registerTableSessionRoutes(app, createTableSessionRepository(database));
   await registerAuthRoutes(app, config, ownershipLookup);
   await registerStripeBillingRoutes(app, config, ownershipLookup);
   await registerOrderRoutes(app, config, orderRepository);

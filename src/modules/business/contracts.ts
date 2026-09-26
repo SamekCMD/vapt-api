@@ -102,3 +102,53 @@ export type KitchenOrderDto = {
   updatedAt: string;
   items: KitchenOrderItemDto[];
 };
+
+export type TableSessionStatus = "open" | "check_requested" | "closed";
+
+export type TableSessionSummaryDto = {
+  id: string;
+  restaurantId: string;
+  tableNumber: string;
+  status: TableSessionStatus;
+  openedAt: string;
+  closedAt: string | null;
+  sessionTotal: string;
+  orderCount: number;
+};
+
+export type TableSessionOrderItemDto = {
+  id: string;
+  productName: string;
+  quantity: number;
+  unitPrice: string;
+  notes: string;
+};
+
+export type TableSessionOrderDto = {
+  id: string;
+  displayId: string | null;
+  totalPrice: string;
+  status: string;
+  createdAt: string;
+  paymentStatus: string | null;
+  paymentConfirmedAt: string | null;
+  items: TableSessionOrderItemDto[];
+};
+
+export type TableSessionDetailDto = {
+  session: TableSessionSummaryDto;
+  orders: TableSessionOrderDto[];
+};
+
+export type CloseTableSessionDto = {
+  sessionId: string;
+  status: "closed";
+  closedAt: string;
+  deliveredOrderIds: string[];
+};
+
+export type TransferTableSessionDto = {
+  sessionId: string;
+  tableNumber: string;
+  updatedOrderIds: string[];
+};
