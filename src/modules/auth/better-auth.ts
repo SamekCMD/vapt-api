@@ -34,6 +34,7 @@ export function createBetterAuthOptions(
     emailAndPassword: {
       enabled: true,
       requireEmailVerification: true,
+      revokeSessionsOnPasswordReset: true,
       async sendResetPassword({ user, url }: {
         user: { email: string };
         url: string;

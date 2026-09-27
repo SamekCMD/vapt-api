@@ -67,6 +67,7 @@ test("Better Auth options require verified email and keep origin protections ena
   assert.deepEqual(options.trustedOrigins, config.trustedOrigins);
   assert.equal(options.emailAndPassword?.enabled, true);
   assert.equal(options.emailAndPassword?.requireEmailVerification, true);
+  assert.equal(options.emailAndPassword?.revokeSessionsOnPasswordReset, true);
   assert.equal(options.emailVerification?.sendOnSignUp, true);
   assert.equal(options.emailVerification?.sendOnSignIn, true);
   const advanced = options.advanced as {
