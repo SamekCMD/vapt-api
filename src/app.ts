@@ -13,6 +13,10 @@ import {
 import { registerStripeBillingRoutes } from "./modules/billing/stripe/routes.js";
 import { createStripeBillingRepository } from "./modules/billing/stripe/repository.js";
 import type { StripeGateway } from "./modules/billing/stripe/types.js";
+import { createStripeClient, createStripeGateway } from "./modules/billing/stripe/client.js";
+import { createStripeWebhookRepository } from "./modules/billing/stripe/webhook-repository.js";
+import { createStripeWebhookService } from "./modules/billing/stripe/webhook-service.js";
+import { registerStripeWebhookRoutes } from "./modules/billing/stripe/webhook-routes.js";
 import { createCatalogRepository } from "./modules/catalog/repository.js";
 import { registerCatalogRoutes } from "./modules/catalog/routes.js";
 import { createBetterAuthRuntime } from "./modules/auth/better-auth.js";
@@ -64,7 +68,6 @@ import { createOverviewRepository } from "./modules/overview/repository.js";
 import { registerOverviewRoutes } from "./modules/overview/routes.js";
 import { createRestaurantRepository } from "./modules/restaurants/repository.js";
 import { registerRestaurantRoutes } from "./modules/restaurants/routes.js";
-import { registerWebhookRoutes } from "./modules/webhooks/routes.js";
 import { createMenuItemExists } from "./modules/storage/repository.js";
 import { createR2MenuImageGateway } from "./modules/storage/r2.js";
 import { registerMenuImageRoutes } from "./modules/storage/routes.js";
@@ -97,6 +100,7 @@ export async function buildApp(
     ? null
     : new Pool({ connectionString: config.betterAuth.databaseUrl });
   const database = dependencies.database ?? ownedDatabase!;
+  const stripeGateway = dependencies.stripeGateway ?? createStripeGateway(createStripeClient(config.stripe));
 
   const authRuntime = dependencies.authRuntime ?? createBetterAuthRuntime(
     config.betterAuth,
@@ -189,7 +193,7 @@ export async function buildApp(
     config,
     ownershipLookup,
     createStripeBillingRepository(database),
-    dependencies.stripeGateway,
+    stripeGateway,
   );
   await registerOrderRoutes(app, config, orderRepository);
   if (config.r2) {
@@ -259,7 +263,11 @@ export async function buildApp(
     feedbackRepository,
     publicOrders: publicOrderService,
   });
-  await registerWebhookRoutes(app, config, { database });
+  await registerStripeWebhookRoutes(app, config, {
+    service: createStripeWebhookService(config.stripe, createStripeWebhookRepository(database), stripeGateway, {
+      logger: { info(fields, message) { app.log.info(fields, message); } },
+    }),
+  });
 
   return app;
 }

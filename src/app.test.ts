@@ -5,6 +5,8 @@ import type { AppConfig } from "./lib/config.js";
 import type { Database } from "./lib/database.js";
 import { buildApp as buildVaptApp } from "./app.js";
 import type { AuthRuntime } from "./modules/auth/runtime.js";
+import Stripe from "stripe";
+import { createStripeClient } from "./modules/billing/stripe/client.js";
 
 const validConfig: AppConfig = {
   nodeEnv: "test",
@@ -58,6 +60,30 @@ const testAuthRuntime: AuthRuntime = {
 function buildApp(config: AppConfig) {
   return buildVaptApp(config, { authRuntime: testAuthRuntime });
 }
+
+test("buildApp composes SDK-verified billing webhooks into the injected Neon event transaction", async () => {
+  const operations: string[] = [];
+  const query = async (sql: string) => {
+    operations.push(sql);
+    if (sql.includes("insert into public.billing_provider_events")) return { rows: [{ attemptCount: 1 }] };
+    if (sql.includes("for update")) return { rows: [{ attemptCount: 1, processingStatus: "processing" }] };
+    return { rows: [] };
+  };
+  const database = { query, async connect() { return { query, release() {} }; } } as unknown as Database;
+  const app = await buildVaptApp(validConfig, { database, authRuntime: testAuthRuntime });
+  const raw = JSON.stringify({ id: "evt_composed", type: "customer.created", created: 1790500000,
+    livemode: false, data: { object: { id: "cus_vapt", object: "customer" } } });
+  const client = createStripeClient(validConfig.stripe);
+  const signature = await client.webhooks.generateTestHeaderStringAsync({ payload: raw,
+    secret: validConfig.stripe.webhookSecret, cryptoProvider: Stripe.createSubtleCryptoProvider() });
+  const response = await app.inject({ method: "POST", url: "/webhooks/stripe", payload: raw,
+    headers: { "content-type": "application/json", "stripe-signature": signature } });
+  assert.equal(response.statusCode, 200); assert.equal(response.json().ignored, true);
+  assert.ok(operations.some(sql => sql.includes("processing_status = $3::text")));
+  assert.ok(operations.includes("COMMIT"));
+  assert.equal((await app.inject({ method: "POST", url: "/webhooks/asaas" })).statusCode, 404);
+  await app.close();
+});
 
 test("GET /health returns ok", async () => {
   const app = await buildApp(validConfig);

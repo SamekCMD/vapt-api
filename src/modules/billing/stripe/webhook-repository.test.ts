@@ -3,12 +3,18 @@ import test from "node:test";
 
 import type { Database } from "../../../lib/database.js";
 import { createStripeWebhookRepository } from "./webhook-repository.js";
+import type { ReconciliationScope } from "./webhook-repository.js";
 
 const event = {
   providerEventId: "evt_test", eventType: "invoice.paid",
   payload: { id: "evt_test", type: "invoice.paid", livemode: false },
 };
 const now = new Date("2026-09-27T12:00:00Z");
+const reconciliationScope: ReconciliationScope = {
+  restaurantId: "10000000-0000-4000-8000-000000000001", userId: "20000000-0000-4000-8000-000000000001",
+  stripeCustomerId: "cus_vapt", stripeSubscriptionId: null, checkoutSessionId: "cs_test_vapt",
+  planStatus: "trialing", stateUpdatedAt: null,
+};
 
 function scriptedDatabase(responses: unknown[][], errorAt?: number) {
   const calls: Array<{ sql: string; values?: unknown[] }> = [];
@@ -37,6 +43,50 @@ test("Stripe event claim is atomic and begins with attempt one", async () => {
   assert.match(calls[0]!.sql, /on conflict \(provider, provider_event_id\) do update/i);
   assert.match(calls[0]!.sql, /attempt_count = .*attempt_count \+ 1/i);
   assert.equal(calls[0]!.values?.[0], event.providerEventId);
+});
+
+test("restaurant resolution prioritizes unique Subscription then Customer then UUID metadata and locks row", async () => {
+  for (const foundAt of [0, 1, 2]) {
+    const responses = Array.from({ length: foundAt }, () => [] as unknown[]);
+    responses.push([{ ...reconciliationScope, stateUpdatedAt: now }]);
+    const { database, calls } = scriptedDatabase(responses);
+    const scope = await createStripeWebhookRepository(database).resolveRestaurant(database, {
+      subscriptionId: "sub_vapt", customerId: "cus_vapt", restaurantId: reconciliationScope.restaurantId,
+    });
+    assert.equal(calls.length, foundAt + 1);
+    assert.match(calls[0]!.sql, /where stripe_subscription_id = \$1::text for update/);
+    if (foundAt > 0) assert.match(calls[1]!.sql, /where stripe_customer_id = \$1::text for update/);
+    if (foundAt > 1) assert.match(calls[2]!.sql, /where id = \$1::uuid for update/);
+    assert.equal(scope?.stateUpdatedAt, now.toISOString());
+  }
+});
+test("unknown/untrusted non-UUID metadata never becomes a SQL identifier or cast", async () => {
+  const { database, calls } = scriptedDatabase([]);
+  assert.equal(await createStripeWebhookRepository(database).resolveRestaurant(database, {
+    subscriptionId: null, customerId: null, restaurantId: "not-a-uuid' OR true",
+  }), null);
+  assert.equal(calls.length, 0);
+});
+test("canonical reconciliation is parameterized, owner-fenced and excludes stale observations", async () => {
+  const { database, calls } = scriptedDatabase([[{ id: reconciliationScope.restaurantId }]]);
+  const changed = await createStripeWebhookRepository(database).applySubscription(database, reconciliationScope, {
+    customerId: "cus_vapt", subscriptionId: "sub_vapt", subscriptionItemId: "si_vapt", planType: "pro",
+    planStatus: "active", trialEndsAt: null, currentPeriodEnd: "2030-01-01T00:00:00.000Z",
+    cancelAtPeriodEnd: false, subscriptionCanceledAt: null, observedAt: now.toISOString(),
+    checkoutSessionId: "cs_test_vapt", billingLastError: null,
+  });
+  assert.equal(changed, true);
+  assert.match(calls[0]!.sql, /owner_id = \$2::uuid/);
+  assert.match(calls[0]!.sql, /stripe_state_updated_at <= \$12::timestamptz/);
+  assert.match(calls[0]!.sql, /stripe_subscription_item_id = \$5::text/);
+  assert.deepEqual(calls[0]!.values?.slice(0, 5), [reconciliationScope.restaurantId, reconciliationScope.userId, "cus_vapt", "sub_vapt", "si_vapt"]);
+});
+test("expiration clears all three pending columns only for matching owned Session", async () => {
+  const { database, calls } = scriptedDatabase([[]]);
+  assert.equal(await createStripeWebhookRepository(database).clearPendingCheckout(database, reconciliationScope, "cs_test_old"), false);
+  assert.match(calls[0]!.sql, /owner_id = \$2::uuid and stripe_checkout_session_id = \$3::text/);
+  assert.match(calls[0]!.sql, /stripe_checkout_plan_type = null/);
+  assert.match(calls[0]!.sql, /stripe_checkout_expires_at = null/);
 });
 
 for (const status of ["processed", "ignored"]) {
