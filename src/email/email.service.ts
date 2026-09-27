@@ -51,7 +51,7 @@ export function createResendAuthEmailService(
   return {
     async sendVerification(input) {
       const variables: AccountConfirmationTemplateVariables = {
-        CONFIRMATION_CODE: input.confirmationCode,
+        confirmation_code: input.confirmationCode,
         CONFIRMATION_URL: input.confirmationUrl,
       };
 

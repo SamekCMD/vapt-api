@@ -1,5 +1,5 @@
 export type AccountConfirmationTemplateVariables = {
-  CONFIRMATION_CODE: string;
+  confirmation_code: string;
   CONFIRMATION_URL: string;
 };
 

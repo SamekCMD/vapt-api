@@ -44,7 +44,7 @@ test("verification email uses only the published Resend template contract", asyn
     template: {
       id: "account-confirmation",
       variables: {
-        CONFIRMATION_CODE: "verification-token-redacted",
+        confirmation_code: "verification-token-redacted",
         CONFIRMATION_URL:
           "https://api.preview.example/api/auth/verify-email?token=redacted",
       },
