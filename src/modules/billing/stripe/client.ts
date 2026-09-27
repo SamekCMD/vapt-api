@@ -82,7 +82,9 @@ export function createStripeGateway(client: Stripe): StripeGateway {
           currentPeriodEnd: new Date(item.current_period_end * 1000).toISOString() })),
         trialEndsAt: value.trial_end === null ? null : new Date(value.trial_end * 1000).toISOString(),
         canceledAt: value.canceled_at === null ? null : new Date(value.canceled_at * 1000).toISOString(),
-        cancelAtPeriodEnd: value.cancel_at_period_end };
+        cancelAtPeriodEnd: value.cancel_at_period_end ||
+          (value.cancel_at !== null && value.items.data.length === 1 &&
+            value.cancel_at === value.items.data[0]!.current_period_end) };
     }),
   };
 }

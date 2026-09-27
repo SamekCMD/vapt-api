@@ -101,6 +101,25 @@ test("gateway sanitizes real SDK errors without retaining Stripe request data", 
     "code" in error && error.code === "stripe_unavailable" && !/secret|card|payload/.test(JSON.stringify(error)));
 });
 
+test("gateway recognizes Portal end-of-period cancellation when Stripe sets cancel_at only", async () => {
+  const currentPeriodEnd = 1793123057;
+  const client = createStripeClient(config, { fetchImpl: async () => new Response(JSON.stringify({
+    id: "sub_portal", object: "subscription", livemode: false, metadata: {},
+    customer: "cus_portal", status: "active", trial_end: null,
+    canceled_at: 1790546539, cancel_at: currentPeriodEnd, cancel_at_period_end: false,
+    items: { object: "list", has_more: false, data: [{
+      id: "si_portal", object: "subscription_item", current_period_end: currentPeriodEnd,
+      price: { id: "price_pro", recurring: { interval: "month", interval_count: 1 } },
+    }] },
+  }), { status: 200, headers: { "content-type": "application/json" } }) });
+
+  const subscription = await createStripeGateway(client).getSubscription("sub_portal");
+
+  assert.equal(subscription.status, "active");
+  assert.equal(subscription.cancelAtPeriodEnd, true);
+  assert.equal(subscription.items[0]?.currentPeriodEnd, "2026-10-27T17:44:17.000Z");
+});
+
 test("constructStripeWebhookEvent verifies signatures with Web Crypto asynchronously", async () => {
   const client = createStripeClient(config, {
     fetchImpl: async () => {
