@@ -17,11 +17,6 @@ export const n8nContracts = {
     path: "/stripe/subscription/cancel",
     auth: "app",
   },
-  "stripe.subscriptionStatus": {
-    method: "GET",
-    path: "/stripe/subscription/status",
-    auth: "app",
-  },
   "stripe.health": {
     method: "GET",
     path: "/stripe/health",

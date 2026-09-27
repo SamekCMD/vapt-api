@@ -41,6 +41,13 @@ export type AppConfig = {
       admin: string;
     };
   };
+  stripe: {
+    prices: {
+      starter: string;
+      pro: string;
+      business: string;
+    };
+  };
   paymentEffects?: {
     pollIntervalMs: number;
     batchSize: number;
@@ -227,6 +234,9 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
   const paymentEffectsMaxAttempts = getValueOrDefault(env, "PAYMENT_EFFECTS_MAX_ATTEMPTS", "5");
   const paymentEffectsRetryBaseMs = getValueOrDefault(env, "PAYMENT_EFFECTS_RETRY_BASE_MS", "30000");
   const stripeWebhookSigningSecret = requireValue(env, "STRIPE_WEBHOOK_SIGNING_SECRET");
+  const stripePriceStarter = requireValue(env, "STRIPE_PRICE_STARTER");
+  const stripePricePro = requireValue(env, "STRIPE_PRICE_PRO");
+  const stripePriceBusiness = requireValue(env, "STRIPE_PRICE_BUSINESS");
   const stripeWebhookToleranceSeconds = getValueOrDefault(
     env,
     "STRIPE_WEBHOOK_TOLERANCE_SECONDS",
@@ -355,6 +365,13 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
       secrets: {
         app: appSecret,
         admin: adminSecret,
+      },
+    },
+    stripe: {
+      prices: {
+        starter: stripePriceStarter,
+        pro: stripePricePro,
+        business: stripePriceBusiness,
       },
     },
     paymentEffects: {

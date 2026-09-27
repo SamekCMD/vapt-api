@@ -22,6 +22,7 @@ const baseConfig: AppConfig = {
       admin: "admin-secret",
     },
   },
+  stripe: { prices: { starter: "price_starter", pro: "price_pro", business: "price_business" } },
   webhooks: {
     stripe: {
       signingSecret: "whsec_test",
@@ -60,7 +61,6 @@ test("n8n route catalog covers all approved operations", () => {
     "stripe.subscriptionCancel",
     "stripe.subscriptionChange",
     "stripe.subscriptionCreate",
-    "stripe.subscriptionStatus",
     "stripe.webhookForward",
   ]);
 });

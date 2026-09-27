@@ -33,6 +33,7 @@ const validConfig = {
     credentialKeyId: "env-v1",
     environment: "sandbox",
   },
+  stripe: { prices: { starter: "price_starter", pro: "price_pro", business: "price_business" } },
   webhooks: { stripe: { signingSecret: "whsec_test", toleranceSeconds: 300 } },
   security: { publicOrderTokenSecret: "public-order-token-secret" },
   betterAuth: {

@@ -24,6 +24,7 @@ const validConfig: AppConfig = {
       admin: "admin-secret",
     },
   },
+  stripe: { prices: { starter: "price_starter", pro: "price_pro", business: "price_business" } },
   webhooks: {
     stripe: {
       signingSecret: "whsec_test",

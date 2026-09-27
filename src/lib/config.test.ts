@@ -22,6 +22,9 @@ const validEnv = {
   VAPT_APP_ENDPOINT_SECRET: "app-secret",
   VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
   STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
+  STRIPE_PRICE_STARTER: "price_server_starter",
+  STRIPE_PRICE_PRO: "price_server_pro",
+  STRIPE_PRICE_BUSINESS: "price_server_business",
   SUPABASE_URL: "https://supabase.example.com",
   SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
   PUBLIC_ORDER_TOKEN_SECRET: "public-order-token-secret",
@@ -29,7 +32,13 @@ const validEnv = {
 };
 
 function createConfig(env: NodeJS.ProcessEnv) {
-  return createAppConfig({ ...validBetterAuthEnv, ...env });
+  return createAppConfig({
+    ...validBetterAuthEnv,
+    STRIPE_PRICE_STARTER: "price_server_starter",
+    STRIPE_PRICE_PRO: "price_server_pro",
+    STRIPE_PRICE_BUSINESS: "price_server_business",
+    ...env,
+  });
 }
 
 const requiredBetterAuthVariables = [
@@ -44,7 +53,22 @@ const requiredBetterAuthVariables = [
   "EMAIL_FROM",
 ] as const;
 
+const requiredStripePriceVariables = [
+  "STRIPE_PRICE_STARTER",
+  "STRIPE_PRICE_PRO",
+  "STRIPE_PRICE_BUSINESS",
+] as const;
+
 for (const variable of requiredBetterAuthVariables) {
+  test(`createConfig requires ${variable}`, () => {
+    assert.throws(
+      () => createConfig({ ...validEnv, [variable]: "" }),
+      new RegExp(`Missing required environment variable: ${variable}`),
+    );
+  });
+}
+
+for (const variable of requiredStripePriceVariables) {
   test(`createConfig requires ${variable}`, () => {
     assert.throws(
       () => createConfig({ ...validEnv, [variable]: "" }),
@@ -168,6 +192,11 @@ test("createConfig parses valid environment values", () => {
   assert.equal(config.n8n.secrets.app, "app-secret");
   assert.equal(config.webhooks.stripe.signingSecret, "whsec_test");
   assert.equal(config.webhooks.stripe.toleranceSeconds, 300);
+  assert.deepEqual(config.stripe.prices, {
+    starter: "price_server_starter",
+    pro: "price_server_pro",
+    business: "price_server_business",
+  });
   assert.deepEqual(config.paymentEffects, {
     pollIntervalMs: 5_000,
     batchSize: 25,

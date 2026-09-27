@@ -35,7 +35,12 @@ export async function registerStripeBillingRoutes(
   if (!repository) {
     throw new AppError(500, "internal_error", "Stripe billing repository is not configured");
   }
-  const service = createStripeBillingService(client, resolvedOwnershipLookup, repository);
+  const service = createStripeBillingService(
+    client,
+    resolvedOwnershipLookup,
+    repository,
+    config.stripe.prices,
+  );
 
   app.post(
     "/billing/stripe/checkout",
@@ -52,9 +57,10 @@ export async function registerStripeBillingRoutes(
       return service.createCheckout({
         userId: request.auth!.userId,
         restaurantId: body.restaurantId,
-        email: body.email,
+        email: request.auth!.email ?? (() => {
+          throw new AppError(400, "invalid_request", "Authenticated email is required");
+        })(),
         planType: body.planType,
-        priceId: body.priceId,
       });
     },
   );
@@ -75,7 +81,6 @@ export async function registerStripeBillingRoutes(
         userId: request.auth!.userId,
         restaurantId: body.restaurantId,
         targetPlanType: body.targetPlanType,
-        targetPriceId: body.targetPriceId,
       });
     },
   );

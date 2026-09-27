@@ -25,7 +25,7 @@ export type PersistCancellationResultInput = OwnedBillingScope & {
   stripeSubscriptionId: string | null;
 };
 
-export type PersistStatusResultInput = OwnedBillingScope & {
+export type StripeBillingStatus = {
   planType: string | null;
   planStatus: StripePlanStatus | null;
   trialEndsAt: string | null;
@@ -35,11 +35,23 @@ export type PersistStatusResultInput = OwnedBillingScope & {
   subscriptionCanceledAt: string | null;
 };
 
+type StripeBillingStatusRow = Omit<
+  StripeBillingStatus,
+  "trialEndsAt" | "subscriptionCanceledAt"
+> & {
+  trialEndsAt: string | Date | null;
+  subscriptionCanceledAt: string | Date | null;
+};
+
+function isoString(value: string | Date): string {
+  return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
+}
+
 export interface StripeBillingRepository {
   persistCheckoutResult(input: PersistCheckoutResultInput): Promise<void>;
   persistChangeResult(input: PersistChangeResultInput): Promise<void>;
   persistCancellationResult(input: PersistCancellationResultInput): Promise<void>;
-  persistStatusResult(input: PersistStatusResultInput): Promise<void>;
+  getStatus(input: OwnedBillingScope): Promise<StripeBillingStatus>;
 }
 
 async function updateOwnedRestaurant(
@@ -124,33 +136,35 @@ export function createStripeBillingRepository(database: Queryable): StripeBillin
       );
     },
 
-    async persistStatusResult(input) {
-      await updateOwnedRestaurant(
-        database,
-        `update public.restaurants
-        set plan_type = coalesce($3::text, plan_type),
-            plan_status = coalesce($4::text, plan_status),
-            trial_ends_at = $5::timestamptz,
-            stripe_customer_id = $6::text,
-            stripe_subscription_id = $7::text,
-            billing_last_error = $8::text,
-            subscription_canceled_at = $9::timestamptz,
-            updated_at = now()
-        where id = $1::uuid
-          and owner_id = $2::uuid
-        returning id`,
-        [
-          input.restaurantId,
-          input.userId,
-          input.planType,
-          input.planStatus,
-          input.trialEndsAt,
-          input.stripeCustomerId,
-          input.stripeSubscriptionId,
-          input.billingLastError,
-          input.subscriptionCanceledAt,
-        ],
-      );
+    async getStatus(input) {
+      try {
+        const result = await database.query<StripeBillingStatusRow>(
+          `select plan_type as "planType",
+                  plan_status as "planStatus",
+                  trial_ends_at as "trialEndsAt",
+                  stripe_customer_id as "stripeCustomerId",
+                  stripe_subscription_id as "stripeSubscriptionId",
+                  billing_last_error as "billingLastError",
+                  subscription_canceled_at as "subscriptionCanceledAt"
+          from public.restaurants
+          where id = $1::uuid
+            and owner_id = $2::uuid`,
+          [input.restaurantId, input.userId],
+        );
+        const row = result.rows[0];
+        if (!row) throw new AppError(403, "forbidden", "Forbidden");
+        return {
+          ...row,
+          trialEndsAt: row.trialEndsAt === null ? null : isoString(row.trialEndsAt),
+          subscriptionCanceledAt:
+            row.subscriptionCanceledAt === null
+              ? null
+              : isoString(row.subscriptionCanceledAt),
+        };
+      } catch (error) {
+        if (error instanceof AppError) throw error;
+        throw new AppError(500, "internal_error", "Failed to read Stripe billing state");
+      }
     },
   };
 }

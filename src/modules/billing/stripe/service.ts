@@ -4,13 +4,16 @@ import type {
   StripeBillingRepository,
   StripePlanStatus,
 } from "./repository.js";
+import type { StripePlanType } from "./schemas.js";
+
+type StripePriceCatalog = Record<StripePlanType, string>;
 
 type StripeClient = {
   stripe: {
     createSubscription: (input: {
       restaurantId: string;
       email: string;
-      planType: string;
+      planType: StripePlanType;
       priceId: string;
     }) => Promise<{
       data: {
@@ -22,7 +25,7 @@ type StripeClient = {
     }>;
     changeSubscription: (input: {
       restaurantId: string;
-      targetPlanType: string;
+      targetPlanType: StripePlanType;
       targetPriceId: string;
     }) => Promise<{
       data: {
@@ -40,17 +43,6 @@ type StripeClient = {
         status: string;
       };
     }>;
-    getSubscriptionStatus: (restaurantId: string) => Promise<{
-      data: {
-        plan_type: string | null;
-        plan_status: string | null;
-        trial_ends_at: string | null;
-        stripe_customer_id: string | null;
-        stripe_subscription_id: string | null;
-        billing_last_error?: string | null;
-        subscription_canceled_at?: string | null;
-      };
-    }>;
   };
 };
 
@@ -63,6 +55,7 @@ export function createStripeBillingService(
   client: StripeClient,
   ownershipLookup: OwnershipLookup = defaultOwnershipLookup,
   repository: StripeBillingRepository,
+  priceCatalog: StripePriceCatalog,
 ) {
   const assertRestaurantAccess = createRestaurantAccessChecker(ownershipLookup);
 
@@ -71,8 +64,7 @@ export function createStripeBillingService(
       userId: string;
       restaurantId: string;
       email: string;
-      planType: string;
-      priceId: string;
+      planType: StripePlanType;
     }) {
       await assertRestaurantAccess({ userId: input.userId, restaurantId: input.restaurantId });
 
@@ -80,7 +72,7 @@ export function createStripeBillingService(
         restaurantId: input.restaurantId,
         email: input.email,
         planType: input.planType,
-        priceId: input.priceId,
+        priceId: priceCatalog[input.planType],
       });
 
       assertCheckoutResponse(response.data);
@@ -99,18 +91,17 @@ export function createStripeBillingService(
     async changeSubscription(input: {
       userId: string;
       restaurantId: string;
-      targetPlanType: string;
-      targetPriceId: string;
+      targetPlanType: StripePlanType;
     }) {
       await assertRestaurantAccess({ userId: input.userId, restaurantId: input.restaurantId });
 
       const response = await client.stripe.changeSubscription({
         restaurantId: input.restaurantId,
         targetPlanType: input.targetPlanType,
-        targetPriceId: input.targetPriceId,
+        targetPriceId: priceCatalog[input.targetPlanType],
       });
 
-      assertChangeResponse(response.data);
+      assertChangeResponse(response.data, input.targetPlanType);
       await repository.persistChangeResult({
         userId: input.userId,
         restaurantId: input.restaurantId,
@@ -154,30 +145,10 @@ export function createStripeBillingService(
       restaurantId: string;
     }) {
       await assertRestaurantAccess({ userId: input.userId, restaurantId: input.restaurantId });
-
-      const response = await client.stripe.getSubscriptionStatus(input.restaurantId);
-
-      assertStatusResponse(response.data);
-      const planStatus = normalizePlanStatus(response.data.plan_status);
-      await repository.persistStatusResult({
+      return repository.getStatus({
         userId: input.userId,
         restaurantId: input.restaurantId,
-        planType: response.data.plan_type,
-        planStatus,
-        trialEndsAt: response.data.trial_ends_at,
-        stripeCustomerId: response.data.stripe_customer_id,
-        stripeSubscriptionId: response.data.stripe_subscription_id,
-        billingLastError: response.data.billing_last_error ?? null,
-        subscriptionCanceledAt: response.data.subscription_canceled_at ?? null,
       });
-
-      return {
-        planType: response.data.plan_type,
-        planStatus,
-        trialEndsAt: response.data.trial_ends_at,
-        stripeCustomerId: response.data.stripe_customer_id,
-        stripeSubscriptionId: response.data.stripe_subscription_id,
-      };
     },
   };
 }
@@ -186,18 +157,27 @@ function invalidUpstreamResponse(): never {
   throw new AppError(502, "invalid_upstream_response", "Stripe integration returned invalid data");
 }
 
-function isNullableString(value: unknown): value is string | null {
-  return value === null || typeof value === "string";
+function isNullableNonEmptyString(value: unknown): value is string | null {
+  return value === null || (typeof value === "string" && value.trim().length > 0);
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function isStripePlanType(value: unknown): value is StripePlanType {
+  return value === "starter" || value === "pro" || value === "business";
 }
 
 function assertCheckoutResponse(value: StripeClient["stripe"] extends {
   createSubscription: (...args: never[]) => Promise<{ data: infer T }>;
 } ? T : never): void {
   if (
-    !isNullableString(value.clientSecret) ||
-    !isNullableString(value.subscriptionId) ||
-    !isNullableString(value.customerId) ||
-    typeof value.autoCharged !== "boolean"
+    !isNullableNonEmptyString(value.clientSecret) ||
+    !isNonEmptyString(value.subscriptionId) ||
+    !isNonEmptyString(value.customerId) ||
+    typeof value.autoCharged !== "boolean" ||
+    (!value.autoCharged && !isNonEmptyString(value.clientSecret))
   ) invalidUpstreamResponse();
 }
 
@@ -206,11 +186,11 @@ function assertChangeResponse(value: {
   plan_type: unknown;
   status: unknown;
   autoCharged: unknown;
-}): void {
+}, expectedPlanType: StripePlanType): void {
   if (
-    !isNullableString(value.subscriptionId) ||
-    typeof value.plan_type !== "string" ||
-    value.plan_type.length === 0 ||
+    !isNonEmptyString(value.subscriptionId) ||
+    !isStripePlanType(value.plan_type) ||
+    value.plan_type !== expectedPlanType ||
     typeof value.status !== "string" ||
     value.status.length === 0 ||
     typeof value.autoCharged !== "boolean"
@@ -222,28 +202,9 @@ function assertCancellationResponse(value: {
   status: unknown;
 }): void {
   if (
-    !isNullableString(value.subscriptionId) ||
+    !isNonEmptyString(value.subscriptionId) ||
     (value.status !== "canceled" && value.status !== "cancelled")
   ) invalidUpstreamResponse();
-}
-
-function assertStatusResponse(value: {
-  plan_type: unknown;
-  plan_status: unknown;
-  trial_ends_at: unknown;
-  stripe_customer_id: unknown;
-  stripe_subscription_id: unknown;
-}): void {
-  if (
-    !isNullableString(value.plan_type) ||
-    !isNullableString(value.plan_status) ||
-    !isNullableString(value.trial_ends_at) ||
-    !isNullableString(value.stripe_customer_id) ||
-    !isNullableString(value.stripe_subscription_id)
-  ) invalidUpstreamResponse();
-  if (value.plan_status !== null && normalizePlanStatus(value.plan_status) === null) {
-    invalidUpstreamResponse();
-  }
 }
 
 function normalizePlanStatus(value: string | null): StripePlanStatus | null {

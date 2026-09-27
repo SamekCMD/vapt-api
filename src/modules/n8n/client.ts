@@ -193,20 +193,6 @@ export function createN8nClient(config: AppConfig, fetchImpl: FetchLike = fetch)
             restaurant_id: input.restaurantId,
           },
         }),
-      getSubscriptionStatus: (restaurantId: string) =>
-        call<{
-          plan_type: string | null;
-          plan_status: string | null;
-          trial_ends_at: string | null;
-          stripe_customer_id: string | null;
-          stripe_subscription_id: string | null;
-          billing_last_error?: string | null;
-          subscription_canceled_at?: string | null;
-        }>("stripe.subscriptionStatus", {
-          query: {
-            restaurant_id: restaurantId,
-          },
-        }),
       forwardWebhook: (input: {
         rawBody: string;
         signatureHeader: string;

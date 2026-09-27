@@ -31,11 +31,12 @@ Required variables:
 - `VAPT_ADMIN_ENDPOINT_SECRET`
 - `STRIPE_WEBHOOK_SIGNING_SECRET`
 - `STRIPE_WEBHOOK_TOLERANCE_SECONDS` defaults to `300`
+- `STRIPE_PRICE_STARTER`, `STRIPE_PRICE_PRO`, and `STRIPE_PRICE_BUSINESS`, the trusted server-side price catalog; price IDs must never come from the browser
 - `PUBLIC_ORDER_TOKEN_SECRET`, a dedicated HMAC secret for public order tokens; do not reuse an authentication secret
 - `BETTER_AUTH_SECRET`, at least 32 characters and unique per environment
 - `BETTER_AUTH_URL`, the absolute public API origin
 - `BETTER_AUTH_TRUSTED_ORIGINS`, a comma-separated exact frontend-origin allowlist
-- `DATABASE_URL`, the direct PostgreSQL connection used by Better Auth
+- `DATABASE_URL`, the direct PostgreSQL connection shared by Better Auth and all application repositories
 - `TURNSTILE_SECRET_KEY`
 - `RESEND_API_KEY`
 - `RESEND_TEMPLATE_VERIFY_ACCOUNT`
