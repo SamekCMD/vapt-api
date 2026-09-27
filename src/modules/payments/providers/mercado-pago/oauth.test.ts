@@ -620,11 +620,6 @@ const routeConfig: AppConfig = {
     "https://infra-foundation-vapt-web.autoistloko.workers.dev",
   ],
   logLevel: "silent",
-  n8n: {
-    baseUrl: new URL("https://n8n.example.com"),
-    timeoutMs: 5000,
-    secrets: { app: "app", admin: "admin" },
-  },
   stripe: {
     secretKey: "sk_test_vapt",
     webhookSecret: "whsec_test",

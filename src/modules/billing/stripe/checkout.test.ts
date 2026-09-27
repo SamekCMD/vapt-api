@@ -142,7 +142,7 @@ test("raw provider failure never reaches response or logs", async () => {
 test("status returns server snapshot without provider call", async () => {
   const f = fixture(); assert.deepEqual(await f.service().getSubscriptionStatus(owned), f.publicStatus); assert.deepEqual(f.calls, []);
 });
-test("routes require cookie auth and strict body, then expose hosted contracts; legacy mutations return 410", async () => {
+test("routes require cookie auth and strict body, then expose hosted contracts; legacy mutations return 404", async () => {
   const f = fixture(); const app = Fastify(); registerErrorHandler(app);
   registerAuthDecorator(app, async headers => headers.cookie === "session=valid" ? { userId: owned.userId, email: input.email, role: "authenticated" } : null);
   await registerStripeBillingRoutes(app, config, async () => true, f.store, f.gateway);
@@ -155,6 +155,6 @@ test("routes require cookie auth and strict body, then expose hosted contracts; 
   const portal = await app.inject({ method: "POST", url: "/billing/stripe/portal", headers: { cookie: "session=valid" }, payload: { restaurantId: owned.restaurantId } });
   assert.equal(portal.statusCode, 200); assert.deepEqual(portal.json(), { url: "https://billing.stripe.com/p/session/vapt" });
   const status = await app.inject({ url: "/billing/stripe/subscription?restaurantId=restaurant-1", headers: { cookie: "session=valid" } }); assert.deepEqual(status.json(), f.publicStatus);
-  for (const operation of ["change", "cancel"]) assert.equal((await app.inject({ method: "POST", url: "/billing/stripe/subscription/" + operation, headers: { cookie: "session=valid" }, payload: { restaurantId: owned.restaurantId, ...(operation === "change" ? { targetPlanType: "pro" } : {}) } })).statusCode, 410);
+  for (const operation of ["change", "cancel"]) assert.equal((await app.inject({ method: "POST", url: "/billing/stripe/subscription/" + operation, headers: { cookie: "session=valid" }, payload: { restaurantId: owned.restaurantId, ...(operation === "change" ? { targetPlanType: "pro" } : {}) } })).statusCode, 404);
   await app.close();
 });

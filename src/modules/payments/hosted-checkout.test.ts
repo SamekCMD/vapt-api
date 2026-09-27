@@ -17,11 +17,6 @@ const validConfig = {
   host: "127.0.0.1",
   corsOrigins: ["http://localhost:5173", "https://infra-foundation-vapt-web.autoistloko.workers.dev"],
   logLevel: "silent",
-  n8n: {
-    baseUrl: new URL("https://n8n.example.com"),
-    timeoutMs: 5000,
-    secrets: { app: "app", admin: "admin" },
-  },
   frontendUrl: new URL("https://vapt.example.com"),
   apiPublicUrl: new URL("https://api.vapt.example.com"),
   mercadoPago: {

@@ -45,14 +45,6 @@ export type AppConfig = {
   host: string;
   corsOrigins: string[];
   logLevel: "fatal" | "error" | "warn" | "info" | "debug" | "trace" | "silent";
-  n8n: {
-    baseUrl: URL;
-    timeoutMs: number;
-    secrets: {
-      app: string;
-      admin: string;
-    };
-  };
   stripe: StripeBillingConfig;
   paymentEffects?: {
     pollIntervalMs: number;
@@ -75,6 +67,7 @@ export type AppConfig = {
   };
   security: {
     publicOrderTokenSecret: string;
+    paymentEffectsAdminSecret?: string;
   };
   betterAuth: BetterAuthConfig;
   r2?: {
@@ -259,10 +252,6 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
   const host = getValueOrDefault(env, "HOST", "0.0.0.0");
   const corsOrigins = requireValue(env, "CORS_ORIGINS");
   const logLevel = getValueOrDefault(env, "LOG_LEVEL", "info");
-  const n8nBaseUrl = requireValue(env, "N8N_BASE_URL");
-  const n8nTimeoutMs = requireValue(env, "N8N_TIMEOUT_MS");
-  const appSecret = requireValue(env, "VAPT_APP_ENDPOINT_SECRET");
-  const adminSecret = requireValue(env, "VAPT_ADMIN_ENDPOINT_SECRET");
   const paymentEffectsPollIntervalMs = getValueOrDefault(env, "PAYMENT_EFFECTS_POLL_INTERVAL_MS", "5000");
   const paymentEffectsBatchSize = getValueOrDefault(env, "PAYMENT_EFFECTS_BATCH_SIZE", "25");
   const paymentEffectsLeaseMs = getValueOrDefault(env, "PAYMENT_EFFECTS_LEASE_MS", "60000");
@@ -285,6 +274,10 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
   );
   const frontendUrl = requireValue(env, "FRONTEND_URL");
   const publicOrderTokenSecret = requireValue(env, "PUBLIC_ORDER_TOKEN_SECRET");
+  const paymentEffectsAdminSecret = env.PAYMENT_EFFECTS_ADMIN_SECRET?.trim() || undefined;
+  if (paymentEffectsAdminSecret && paymentEffectsAdminSecret.length < 32) {
+    throw new ConfigError("PAYMENT_EFFECTS_ADMIN_SECRET must contain at least 32 characters");
+  }
   const betterAuthSecret = requireValue(env, "BETTER_AUTH_SECRET");
   const betterAuthUrl = requireValue(env, "BETTER_AUTH_URL");
   const betterAuthTrustedOrigins = requireValue(
@@ -399,14 +392,6 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
     host,
     corsOrigins: parseCorsOrigins(corsOrigins),
     logLevel: logLevel as AppConfig["logLevel"],
-    n8n: {
-      baseUrl: parseUrl(n8nBaseUrl, "N8N_BASE_URL"),
-      timeoutMs: parsePositiveInteger(n8nTimeoutMs, "N8N_TIMEOUT_MS"),
-      secrets: {
-        app: appSecret,
-        admin: adminSecret,
-      },
-    },
     stripe: {
       secretKey: stripeSecretKey,
       webhookSecret: stripeWebhookSecret,
@@ -436,6 +421,7 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
     mercadoPago,
     security: {
       publicOrderTokenSecret,
+      paymentEffectsAdminSecret,
     },
     betterAuth: {
       secret: betterAuthSecret,

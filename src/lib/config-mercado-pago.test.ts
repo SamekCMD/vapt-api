@@ -7,10 +7,6 @@ test("createConfig rejects an unsupported Mercado Pago environment", () => {
   assert.throws(
     () => createConfig({
       CORS_ORIGINS: "https://app.vapt.test",
-      N8N_BASE_URL: "https://n8n.example.com",
-      N8N_TIMEOUT_MS: "5000",
-      VAPT_APP_ENDPOINT_SECRET: "app-secret",
-      VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
       STRIPE_SECRET_KEY: "sk_test_vapt",
       STRIPE_WEBHOOK_SECRET: "whsec_vapt",
       STRIPE_ENVIRONMENT: "test",

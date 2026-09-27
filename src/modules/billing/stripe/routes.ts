@@ -11,8 +11,6 @@ import { requireAuth } from "../../../plugins/auth.js";
 import { createStripeClient, createStripeGateway } from "./client.js";
 import type { StripeGateway } from "./types.js";
 import {
-  stripeCancelSubscriptionBodySchema,
-  stripeChangeSubscriptionBodySchema,
   stripeCheckoutBodySchema,
   stripePortalBodySchema,
   stripeSubscriptionStatusQuerySchema,
@@ -65,44 +63,6 @@ export async function registerStripeBillingRoutes(
         planType: body.planType,
         idempotencyKey: typeof request.headers["idempotency-key"] === "string"
           ? request.headers["idempotency-key"] : "",
-      });
-    },
-  );
-
-  app.post(
-    "/billing/stripe/subscription/change",
-    {
-      config: {
-        rateLimitGroup: "billing",
-      },
-      preHandler: async (request, reply) =>
-        requireAuth(request, reply, app.authSessionResolver),
-    },
-    async (request) => {
-      const body = validateWithSchema(stripeChangeSubscriptionBodySchema, request.body);
-
-      return service.retiredMutation({
-        userId: request.auth!.userId,
-        restaurantId: body.restaurantId,
-      });
-    },
-  );
-
-  app.post(
-    "/billing/stripe/subscription/cancel",
-    {
-      config: {
-        rateLimitGroup: "billing",
-      },
-      preHandler: async (request, reply) =>
-        requireAuth(request, reply, app.authSessionResolver),
-    },
-    async (request) => {
-      const body = validateWithSchema(stripeCancelSubscriptionBodySchema, request.body);
-
-      return service.retiredMutation({
-        userId: request.auth!.userId,
-        restaurantId: body.restaurantId,
       });
     },
   );

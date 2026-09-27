@@ -17,10 +17,6 @@ const validBetterAuthEnv = {
 
 const validEnv = {
   CORS_ORIGINS: "http://localhost:5173",
-  N8N_BASE_URL: "https://n8n.example.com",
-  N8N_TIMEOUT_MS: "5000",
-  VAPT_APP_ENDPOINT_SECRET: "app-secret",
-  VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
   STRIPE_SECRET_KEY: "sk_test_vapt",
   STRIPE_WEBHOOK_SECRET: "whsec_vapt",
   STRIPE_ENVIRONMENT: "test",
@@ -314,10 +310,6 @@ test("createConfig parses valid environment values", () => {
     HOST: "0.0.0.0",
     CORS_ORIGINS: "http://localhost:5173,https://app.example.com",
     LOG_LEVEL: "info",
-    N8N_BASE_URL: "https://n8n.example.com",
-    N8N_TIMEOUT_MS: "5000",
-    VAPT_APP_ENDPOINT_SECRET: "app-secret",
-    VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
     STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
     SUPABASE_URL: "https://supabase.example.com",
     SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
@@ -331,11 +323,7 @@ test("createConfig parses valid environment values", () => {
   assert.deepEqual(config.corsOrigins, [
     "http://localhost:5173",
     "https://app.example.com",
-  ]);
-  assert.equal(config.n8n.baseUrl.toString(), "https://n8n.example.com/");
-  assert.equal(config.n8n.timeoutMs, 5000);
-  assert.equal(config.n8n.secrets.app, "app-secret");
-  assert.equal(config.stripe.webhookSecret, "whsec_vapt");
+  ]);  assert.equal(config.stripe.webhookSecret, "whsec_vapt");
   assert.equal(config.stripe.webhookToleranceSeconds, 300);
   assert.deepEqual(config.stripe.prices, {
     starter: "price_server_starter",
@@ -354,10 +342,6 @@ test("createConfig parses valid environment values", () => {
 test("createConfig falls back to safe infrastructure defaults", () => {
   const config = createConfig({
     CORS_ORIGINS: "http://localhost:5173",
-    N8N_BASE_URL: "https://n8n.example.com",
-    N8N_TIMEOUT_MS: "5000",
-    VAPT_APP_ENDPOINT_SECRET: "app-secret",
-    VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
     STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
     SUPABASE_URL: "https://supabase.example.com",
     SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
@@ -373,18 +357,11 @@ test("createConfig falls back to safe infrastructure defaults", () => {
 test("createConfig does not require the retired Asaas setup secret", () => {
   const config = createConfig({
     CORS_ORIGINS: "http://localhost:5173",
-    N8N_BASE_URL: "https://n8n.example.com",
-    N8N_TIMEOUT_MS: "5000",
-    VAPT_APP_ENDPOINT_SECRET: "app-secret",
-    VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
     STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
     SUPABASE_URL: "https://supabase.example.com",
     SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
     PUBLIC_ORDER_TOKEN_SECRET: "public-order-token-secret",
-  });
-
-  assert.equal(config.n8n.secrets.app, "app-secret");
-  assert.equal(config.n8n.secrets.admin, "admin-secret");
+  });  assert.equal(config.stripe.environment, "test");
 });
 
 test("createConfig throws when a required env is missing", () => {
@@ -394,10 +371,6 @@ test("createConfig throws when a required env is missing", () => {
         NODE_ENV: "development",
         PORT: "3000",
         LOG_LEVEL: "info",
-        N8N_BASE_URL: "https://n8n.example.com",
-        N8N_TIMEOUT_MS: "5000",
-        VAPT_APP_ENDPOINT_SECRET: "app-secret",
-        VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
         STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
         SUPABASE_URL: "https://supabase.example.com",
         SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
@@ -416,10 +389,6 @@ test("createConfig throws when port is invalid", () => {
         HOST: "0.0.0.0",
         CORS_ORIGINS: "http://localhost:5173",
         LOG_LEVEL: "info",
-        N8N_BASE_URL: "https://n8n.example.com",
-        N8N_TIMEOUT_MS: "5000",
-        VAPT_APP_ENDPOINT_SECRET: "app-secret",
-        VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
         STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
         SUPABASE_URL: "https://supabase.example.com",
         SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
@@ -438,46 +407,6 @@ test("createConfig throws when cors origins is empty", () => {
         HOST: "0.0.0.0",
         CORS_ORIGINS: "   ",
         LOG_LEVEL: "info",
-        N8N_BASE_URL: "https://n8n.example.com",
-        N8N_TIMEOUT_MS: "5000",
-        VAPT_APP_ENDPOINT_SECRET: "app-secret",
-        VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
-        STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
-        SUPABASE_URL: "https://supabase.example.com",
-        SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
-        PUBLIC_ORDER_TOKEN_SECRET: "public-order-token-secret",
-      }),
-    ConfigError,
-  );
-});
-
-test("createConfig throws when n8n base url is invalid", () => {
-  assert.throws(
-    () =>
-      createConfig({
-        CORS_ORIGINS: "http://localhost:5173",
-        N8N_BASE_URL: "not-a-url",
-        N8N_TIMEOUT_MS: "5000",
-        VAPT_APP_ENDPOINT_SECRET: "app-secret",
-        VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
-        STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
-        SUPABASE_URL: "https://supabase.example.com",
-        SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
-        PUBLIC_ORDER_TOKEN_SECRET: "public-order-token-secret",
-      }),
-    ConfigError,
-  );
-});
-
-test("createConfig throws when n8n timeout is invalid", () => {
-  assert.throws(
-    () =>
-      createConfig({
-        CORS_ORIGINS: "http://localhost:5173",
-        N8N_BASE_URL: "https://n8n.example.com",
-        N8N_TIMEOUT_MS: "0",
-        VAPT_APP_ENDPOINT_SECRET: "app-secret",
-        VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
         STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
         SUPABASE_URL: "https://supabase.example.com",
         SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
@@ -491,10 +420,6 @@ test("createConfig enables Mercado Pago only with a complete secure configuratio
   const encryptionKey = Buffer.alloc(32, 4).toString("base64");
   const config = createConfig({
     CORS_ORIGINS: "https://app.vapt.test",
-    N8N_BASE_URL: "https://n8n.example.com",
-    N8N_TIMEOUT_MS: "5000",
-    VAPT_APP_ENDPOINT_SECRET: "app-secret",
-    VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
     STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
     SUPABASE_URL: "https://supabase.example.com",
     SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
@@ -525,10 +450,6 @@ test("createConfig rejects partial Mercado Pago configuration", () => {
   assert.throws(
     () => createConfig({
       CORS_ORIGINS: "https://app.vapt.test",
-      N8N_BASE_URL: "https://n8n.example.com",
-      N8N_TIMEOUT_MS: "5000",
-      VAPT_APP_ENDPOINT_SECRET: "app-secret",
-      VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
       STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
       SUPABASE_URL: "https://supabase.example.com",
       SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
@@ -542,10 +463,6 @@ test("createConfig rejects a Mercado Pago redirect outside API_PUBLIC_URL", () =
   assert.throws(
     () => createConfig({
       CORS_ORIGINS: "https://app.vapt.test",
-      N8N_BASE_URL: "https://n8n.example.com",
-      N8N_TIMEOUT_MS: "5000",
-      VAPT_APP_ENDPOINT_SECRET: "app-secret",
-      VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
       STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
       SUPABASE_URL: "https://supabase.example.com",
       SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
@@ -565,10 +482,6 @@ test("createConfig rejects a Mercado Pago redirect outside API_PUBLIC_URL", () =
 test("createConfig reads the Mercado Pago test access token only in sandbox", () => {
   const config = createConfig({
     CORS_ORIGINS: "https://app.vapt.test",
-    N8N_BASE_URL: "https://n8n.example.com",
-    N8N_TIMEOUT_MS: "5000",
-    VAPT_APP_ENDPOINT_SECRET: "app-secret",
-    VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
     STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
     SUPABASE_URL: "https://supabase.example.com",
     SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
@@ -591,10 +504,6 @@ test("createConfig rejects the Mercado Pago test access token in production", ()
   assert.throws(
     () => createConfig({
       CORS_ORIGINS: "https://app.vapt.test",
-      N8N_BASE_URL: "https://n8n.example.com",
-      N8N_TIMEOUT_MS: "5000",
-      VAPT_APP_ENDPOINT_SECRET: "app-secret",
-      VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
       STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
       SUPABASE_URL: "https://supabase.example.com",
       SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
@@ -616,10 +525,6 @@ test("createConfig rejects the Mercado Pago test access token in production", ()
 test("createConfig enables R2 only with a complete configuration", () => {
   const config = createConfig({
     CORS_ORIGINS: "https://app.vapt.test",
-    N8N_BASE_URL: "https://n8n.example.com",
-    N8N_TIMEOUT_MS: "5000",
-    VAPT_APP_ENDPOINT_SECRET: "app-secret",
-    VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
     STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
     SUPABASE_URL: "https://supabase.example.com",
     SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
@@ -646,10 +551,6 @@ test("createConfig rejects partial R2 configuration", () => {
   assert.throws(
     () => createConfig({
       CORS_ORIGINS: "https://app.vapt.test",
-      N8N_BASE_URL: "https://n8n.example.com",
-      N8N_TIMEOUT_MS: "5000",
-      VAPT_APP_ENDPOINT_SECRET: "app-secret",
-      VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
       STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
       SUPABASE_URL: "https://supabase.example.com",
       SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
@@ -664,10 +565,6 @@ test("createConfig rejects an R2 upload URL lifetime outside the safe range", ()
   assert.throws(
     () => createConfig({
       CORS_ORIGINS: "https://app.vapt.test",
-      N8N_BASE_URL: "https://n8n.example.com",
-      N8N_TIMEOUT_MS: "5000",
-      VAPT_APP_ENDPOINT_SECRET: "app-secret",
-      VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
       STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
       SUPABASE_URL: "https://supabase.example.com",
       SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
@@ -687,10 +584,6 @@ test("createConfig requires a credential-free HTTPS origin for public R2 assets"
   assert.throws(
     () => createConfig({
       CORS_ORIGINS: "https://app.vapt.test",
-      N8N_BASE_URL: "https://n8n.example.com",
-      N8N_TIMEOUT_MS: "5000",
-      VAPT_APP_ENDPOINT_SECRET: "app-secret",
-      VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
       STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
       SUPABASE_URL: "https://supabase.example.com",
       SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
@@ -703,4 +596,13 @@ test("createConfig requires a credential-free HTTPS origin for public R2 assets"
     }),
     /R2_PUBLIC_BASE_URL/,
   );
+});
+test("createConfig no longer requires or exposes the retired n8n runtime", () => {
+  assert.equal("n8n" in createConfig(validEnv), false);
+});
+test("payment effect maintenance uses an independent optional strong admin secret", () => {
+  const secret = "payment-effects-admin-secret-at-least-32-characters";
+  assert.equal(createConfig(validEnv).security.paymentEffectsAdminSecret, undefined);
+  assert.equal(createConfig({ ...validEnv, PAYMENT_EFFECTS_ADMIN_SECRET: secret }).security.paymentEffectsAdminSecret, secret);
+  assert.throws(() => createConfig({ ...validEnv, PAYMENT_EFFECTS_ADMIN_SECRET: "short" }), /PAYMENT_EFFECTS_ADMIN_SECRET/);
 });

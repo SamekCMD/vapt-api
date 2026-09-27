@@ -122,9 +122,5 @@ export function createStripeBillingService(
       await assertAccess(input);
       return repository.getPublicStatus(input);
     },
-    async retiredMutation(input: OwnedBillingScope): Promise<never> {
-      await assertAccess(input);
-      throw new AppError(410, "billing_route_retired", "Manage billing in the customer portal");
-    },
   };
 }

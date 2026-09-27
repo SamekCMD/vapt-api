@@ -25,10 +25,6 @@ Required variables:
 - `PORT` defaults to `3000`
 - `HOST` defaults to `0.0.0.0`
 - `LOG_LEVEL` defaults to `info`
-- `N8N_BASE_URL`
-- `N8N_TIMEOUT_MS`
-- `VAPT_APP_ENDPOINT_SECRET`
-- `VAPT_ADMIN_ENDPOINT_SECRET`
 - `STRIPE_SECRET_KEY`
 - `STRIPE_WEBHOOK_SECRET` (the canonical name; the retired `STRIPE_WEBHOOK_SIGNING_SECRET` is ignored)
 - `STRIPE_ENVIRONMENT`, explicitly `test` or `live`
@@ -36,6 +32,7 @@ Required variables:
 - `STRIPE_WEBHOOK_TOLERANCE_SECONDS` defaults to `300`
 - `STRIPE_PRICE_STARTER`, `STRIPE_PRICE_PRO`, and `STRIPE_PRICE_BUSINESS`, the trusted server-side price catalog; price IDs must never come from the browser
 - `PUBLIC_ORDER_TOKEN_SECRET`, a dedicated HMAC secret for public order tokens; do not reuse an authentication secret
+- `PAYMENT_EFFECTS_ADMIN_SECRET`, optional independent secret of at least 32 characters for manual payment-effect reprocessing; the admin route is closed when absent
 - `BETTER_AUTH_SECRET`, at least 32 characters and unique per environment
 - `BETTER_AUTH_URL`, the absolute public API origin
 - `BETTER_AUTH_TRUSTED_ORIGINS`, a comma-separated exact frontend-origin allowlist
@@ -111,7 +108,19 @@ needs to call this API; wildcards are not accepted. Browser authentication uses 
 Better Auth session cookies with credentialed CORS. Authentication endpoints are mounted
 under `/api/auth/*`; protected API routes no longer accept Supabase bearer JWTs.
 
-`N8N_BASE_URL` should point at the n8n webhook base, for example `https://your-n8n-host/webhook`.
+Stripe SaaS billing and ingest run directly in the API with Neon persistence. There is
+no workflow-forwarding runtime or legacy workflow configuration requirement.
+
+## Stripe billing contracts
+
+- `POST /billing/stripe/checkout`: cookie auth, ownership check, UUID `Idempotency-Key`, and only `{ restaurantId, planType }`; returns `{ checkoutSessionId, url }` for hosted Checkout.
+- `POST /billing/stripe/portal`: cookie auth and `{ restaurantId }`; returns a short-lived Portal URL for the persisted Customer and configured Portal.
+- `GET /billing/stripe/subscription?restaurantId=...`: owner-scoped safe billing state; no Customer/Subscription IDs.
+- `POST /webhooks/stripe`: verifies the untouched raw body with the SDK before claiming an event. Canonical subscription reconciliation, email intent and event completion share a transaction; failed events remain retryable.
+
+Only verified webhooks change plan entitlement. Checkout/Portal responses and browser
+return query strings never activate a plan. Change/cancel forwarding routes are removed;
+the Customer Portal is their replacement. Email intents are persisted, not delivered yet.
 
 ## Build and run
 
@@ -148,5 +157,4 @@ docker run --rm -p 3000:3000 --env-file .env vapt-api
   - `GET /health`
   - `GET /health/ready`
   - `POST /webhooks/stripe`
-  - `POST /webhooks/asaas`
   - `POST /webhooks/payments/mercado-pago`

@@ -15,14 +15,6 @@ const validConfig: AppConfig = {
   corsOrigins: ["http://localhost:5173"],
   logLevel: "silent",
   frontendUrl: new URL("https://app.vapt.test"),
-  n8n: {
-    baseUrl: new URL("https://n8n.example.com"),
-    timeoutMs: 5000,
-    secrets: {
-      app: "app-secret",
-      admin: "admin-secret",
-    },
-  },
   stripe: {
     secretKey: "sk_test_vapt",
     webhookSecret: "whsec_test",
