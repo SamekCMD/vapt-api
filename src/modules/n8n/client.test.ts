@@ -14,6 +14,7 @@ const baseConfig: AppConfig = {
   host: "127.0.0.1",
   corsOrigins: ["http://localhost:5173"],
   logLevel: "silent",
+  frontendUrl: new URL("https://app.vapt.test"),
   n8n: {
     baseUrl: new URL("https://n8n.example.com"),
     timeoutMs: 100,
@@ -22,12 +23,13 @@ const baseConfig: AppConfig = {
       admin: "admin-secret",
     },
   },
-  stripe: { prices: { starter: "price_starter", pro: "price_pro", business: "price_business" } },
-  webhooks: {
-    stripe: {
-      signingSecret: "whsec_test",
-      toleranceSeconds: 300,
-    },
+  stripe: {
+    secretKey: "sk_test_vapt",
+    webhookSecret: "whsec_test",
+    webhookToleranceSeconds: 300,
+    environment: "test",
+    portalConfigurationId: "bpc_vapt",
+    prices: { starter: "price_starter", pro: "price_pro", business: "price_business" },
   },
   security: { publicOrderTokenSecret: "public-order-token-secret" },
   betterAuth: {

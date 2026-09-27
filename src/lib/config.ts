@@ -3,6 +3,7 @@ import type { PaymentEnvironment } from "../modules/payments/types.js";
 
 const validNodeEnvs = new Set(["development", "test", "production"]);
 const validPaymentEnvironments = new Set<PaymentEnvironment>(["sandbox", "production"]);
+const validStripeEnvironments = new Set<StripeEnvironment>(["test", "live"]);
 const validLogLevels = new Set([
   "fatal",
   "error",
@@ -27,6 +28,17 @@ export type BetterAuthConfig = {
   };
 };
 
+export type StripeEnvironment = "test" | "live";
+
+export type StripeBillingConfig = {
+  secretKey: string;
+  webhookSecret: string;
+  webhookToleranceSeconds: number;
+  environment: StripeEnvironment;
+  portalConfigurationId: string;
+  prices: Record<"starter" | "pro" | "business", string>;
+};
+
 export type AppConfig = {
   nodeEnv: "development" | "test" | "production";
   port: number;
@@ -41,13 +53,7 @@ export type AppConfig = {
       admin: string;
     };
   };
-  stripe: {
-    prices: {
-      starter: string;
-      pro: string;
-      business: string;
-    };
-  };
+  stripe: StripeBillingConfig;
   paymentEffects?: {
     pollIntervalMs: number;
     batchSize: number;
@@ -55,7 +61,7 @@ export type AppConfig = {
     maxAttempts: number;
     retryBaseMs: number;
   };
-  frontendUrl?: URL;
+  frontendUrl: URL;
   apiPublicUrl?: URL;
   mercadoPago?: {
     clientId: string;
@@ -66,12 +72,6 @@ export type AppConfig = {
     credentialKeyId: string;
     environment: PaymentEnvironment;
     testAccessToken?: string;
-  };
-  webhooks: {
-    stripe: {
-      signingSecret: string;
-      toleranceSeconds: number;
-    };
   };
   security: {
     publicOrderTokenSecret: string;
@@ -218,6 +218,41 @@ function parsePaymentEnvironment(value: string): PaymentEnvironment {
   return value as PaymentEnvironment;
 }
 
+function parseStripeEnvironment(value: string): StripeEnvironment {
+  if (!validStripeEnvironments.has(value as StripeEnvironment)) {
+    throw new ConfigError("STRIPE_ENVIRONMENT must be one of: test, live");
+  }
+
+  return value as StripeEnvironment;
+}
+
+function parseStripePortalConfigurationId(value: string): string {
+  if (!/^bpc_[A-Za-z0-9]+$/.test(value)) {
+    throw new ConfigError("STRIPE_PORTAL_CONFIGURATION_ID must start with bpc_");
+  }
+
+  return value;
+}
+
+function parseFrontendUrl(value: string, nodeEnv: string): URL {
+  const url = parseUrl(value, "FRONTEND_URL");
+  const localDevelopment =
+    nodeEnv === "development" &&
+    url.protocol === "http:" &&
+    (url.hostname === "localhost" || url.hostname === "127.0.0.1");
+
+  if (url.protocol !== "https:" && !localDevelopment) {
+    throw new ConfigError("FRONTEND_URL must use https outside local development");
+  }
+  if (url.username || url.password || url.search || url.hash) {
+    throw new ConfigError(
+      "FRONTEND_URL must not contain credentials, a query string, or a fragment",
+    );
+  }
+
+  return url;
+}
+
 export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
   const nodeEnv = getValueOrDefault(env, "NODE_ENV", "production");
   const port = getValueOrDefault(env, "PORT", "3000");
@@ -233,7 +268,13 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
   const paymentEffectsLeaseMs = getValueOrDefault(env, "PAYMENT_EFFECTS_LEASE_MS", "60000");
   const paymentEffectsMaxAttempts = getValueOrDefault(env, "PAYMENT_EFFECTS_MAX_ATTEMPTS", "5");
   const paymentEffectsRetryBaseMs = getValueOrDefault(env, "PAYMENT_EFFECTS_RETRY_BASE_MS", "30000");
-  const stripeWebhookSigningSecret = requireValue(env, "STRIPE_WEBHOOK_SIGNING_SECRET");
+  const stripeSecretKey = requireValue(env, "STRIPE_SECRET_KEY");
+  const stripeWebhookSecret = requireValue(env, "STRIPE_WEBHOOK_SECRET");
+  const stripeEnvironment = requireValue(env, "STRIPE_ENVIRONMENT");
+  const stripePortalConfigurationId = requireValue(
+    env,
+    "STRIPE_PORTAL_CONFIGURATION_ID",
+  );
   const stripePriceStarter = requireValue(env, "STRIPE_PRICE_STARTER");
   const stripePricePro = requireValue(env, "STRIPE_PRICE_PRO");
   const stripePriceBusiness = requireValue(env, "STRIPE_PRICE_BUSINESS");
@@ -242,6 +283,7 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
     "STRIPE_WEBHOOK_TOLERANCE_SECONDS",
     "300",
   );
+  const frontendUrl = requireValue(env, "FRONTEND_URL");
   const publicOrderTokenSecret = requireValue(env, "PUBLIC_ORDER_TOKEN_SECRET");
   const betterAuthSecret = requireValue(env, "BETTER_AUTH_SECRET");
   const betterAuthUrl = requireValue(env, "BETTER_AUTH_URL");
@@ -299,8 +341,6 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
     "MERCADO_PAGO_REDIRECT_URI",
     "MERCADO_PAGO_WEBHOOK_SECRET",
     "PAYMENT_TOKEN_ENCRYPTION_KEY",
-    "FRONTEND_URL",
-    "API_PUBLIC_URL",
   ] as const;
   const mercadoPagoEnabled = mercadoPagoKeys.some((key) => Boolean(env[key]?.trim()));
   const mercadoPagoEnvironment = parsePaymentEnvironment(
@@ -329,12 +369,12 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
         testAccessToken: mercadoPagoTestAccessToken,
       }
     : undefined;
-  const frontendUrl = mercadoPagoEnabled
-    ? parseUrl(requireValue(env, "FRONTEND_URL"), "FRONTEND_URL")
-    : undefined;
-  const apiPublicUrl = mercadoPagoEnabled
-    ? parseUrl(requireValue(env, "API_PUBLIC_URL"), "API_PUBLIC_URL")
-    : undefined;
+  const apiPublicUrlValue = env.API_PUBLIC_URL?.trim();
+  const apiPublicUrl = apiPublicUrlValue
+    ? parseUrl(apiPublicUrlValue, "API_PUBLIC_URL")
+    : mercadoPagoEnabled
+      ? parseUrl(requireValue(env, "API_PUBLIC_URL"), "API_PUBLIC_URL")
+      : undefined;
   if (
     mercadoPago &&
     apiPublicUrl &&
@@ -368,6 +408,16 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
       },
     },
     stripe: {
+      secretKey: stripeSecretKey,
+      webhookSecret: stripeWebhookSecret,
+      webhookToleranceSeconds: parsePositiveInteger(
+        stripeWebhookToleranceSeconds,
+        "STRIPE_WEBHOOK_TOLERANCE_SECONDS",
+      ),
+      environment: parseStripeEnvironment(stripeEnvironment),
+      portalConfigurationId: parseStripePortalConfigurationId(
+        stripePortalConfigurationId,
+      ),
       prices: {
         starter: stripePriceStarter,
         pro: stripePricePro,
@@ -381,18 +431,9 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
       maxAttempts: parsePositiveInteger(paymentEffectsMaxAttempts, "PAYMENT_EFFECTS_MAX_ATTEMPTS"),
       retryBaseMs: parsePositiveInteger(paymentEffectsRetryBaseMs, "PAYMENT_EFFECTS_RETRY_BASE_MS"),
     },
-    frontendUrl,
+    frontendUrl: parseFrontendUrl(frontendUrl, nodeEnv),
     apiPublicUrl,
     mercadoPago,
-    webhooks: {
-      stripe: {
-        signingSecret: stripeWebhookSigningSecret,
-        toleranceSeconds: parsePositiveInteger(
-          stripeWebhookToleranceSeconds,
-          "STRIPE_WEBHOOK_TOLERANCE_SECONDS",
-        ),
-      },
-    },
     security: {
       publicOrderTokenSecret,
     },

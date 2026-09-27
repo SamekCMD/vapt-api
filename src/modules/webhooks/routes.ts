@@ -23,8 +23,8 @@ export async function registerWebhookRoutes(
     deps.service ??
     createWebhookService(
       {
-        stripeSigningSecret: config.webhooks.stripe.signingSecret,
-        stripeToleranceSeconds: config.webhooks.stripe.toleranceSeconds,
+        stripeSigningSecret: config.stripe.webhookSecret,
+        stripeToleranceSeconds: config.stripe.webhookToleranceSeconds,
       },
       createWebhookRepository(deps.database ?? (() => {
         throw new AppError(500, "internal_error", "Webhook database is not configured");

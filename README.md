@@ -29,7 +29,10 @@ Required variables:
 - `N8N_TIMEOUT_MS`
 - `VAPT_APP_ENDPOINT_SECRET`
 - `VAPT_ADMIN_ENDPOINT_SECRET`
-- `STRIPE_WEBHOOK_SIGNING_SECRET`
+- `STRIPE_SECRET_KEY`
+- `STRIPE_WEBHOOK_SECRET` (the canonical name; the retired `STRIPE_WEBHOOK_SIGNING_SECRET` is ignored)
+- `STRIPE_ENVIRONMENT`, explicitly `test` or `live`
+- `STRIPE_PORTAL_CONFIGURATION_ID`, an environment-specific `bpc_...` identifier
 - `STRIPE_WEBHOOK_TOLERANCE_SECONDS` defaults to `300`
 - `STRIPE_PRICE_STARTER`, `STRIPE_PRICE_PRO`, and `STRIPE_PRICE_BUSINESS`, the trusted server-side price catalog; price IDs must never come from the browser
 - `PUBLIC_ORDER_TOKEN_SECRET`, a dedicated HMAC secret for public order tokens; do not reuse an authentication secret
@@ -42,9 +45,17 @@ Required variables:
 - `RESEND_TEMPLATE_VERIFY_ACCOUNT`
 - `RESEND_TEMPLATE_RESET_PASSWORD`
 - `EMAIL_FROM`
-- `FRONTEND_URL`
-- `API_PUBLIC_URL`
-- `PAYMENT_TOKEN_ENCRYPTION_KEY`
+- `FRONTEND_URL`, an absolute credential-free HTTPS destination; HTTP localhost is accepted only with `NODE_ENV=development`
+- `API_PUBLIC_URL`, optional unless Mercado Pago is enabled
+- `PAYMENT_TOKEN_ENCRYPTION_KEY`, required only when Mercado Pago is enabled
+
+Stripe billing uses exact `stripe@22.6.2` and API version `2026-08-26.dahlia`.
+Registered Stripe webhook endpoints must use that same API version. The client uses
+the SDK fetch transport and verifies raw webhook bodies asynchronously with Web Crypto,
+preparing portability to Cloudflare Workers without changing the current Fastify runtime.
+Keep preview on Test Mode with Test Mode Prices and Portal configuration. Live keys,
+Prices and the live webhook endpoint remain deferred until the Cloudflare Worker deploy.
+Never place Stripe credentials or provider IDs in browser configuration or API DTOs.
 
 Legacy `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are accepted only by the one-time
 `storage:migrate` script; they are not runtime API configuration.
@@ -77,6 +88,8 @@ Mercado Pago order payments are enabled only when the complete configuration is 
 - `MERCADO_PAGO_CLIENT_SECRET`
 - `MERCADO_PAGO_REDIRECT_URI`
 - `MERCADO_PAGO_WEBHOOK_SECRET`
+- `API_PUBLIC_URL`
+- `PAYMENT_TOKEN_ENCRYPTION_KEY`
 - `MERCADO_PAGO_ENVIRONMENT`, which defaults to `sandbox`
 - `MERCADO_PAGO_TEST_ACCESS_TOKEN` is optional and sandbox-only. Set it to the
   Access Token shown under the application's **Test credentials**. Production
@@ -126,7 +139,7 @@ docker run --rm -p 3000:3000 --env-file .env vapt-api
 - Configure build using the included `Dockerfile`.
 - Set `CORS_ORIGINS` to your allowed frontend origins.
 - Set `API_PUBLIC_URL` to the externally reachable API origin.
-- Set `STRIPE_WEBHOOK_SIGNING_SECRET` before enabling the Stripe webhook route.
+- Set the complete Stripe configuration, including `STRIPE_WEBHOOK_SECRET`, before enabling the Stripe webhook route.
 - Set `MERCADO_PAGO_WEBHOOK_SECRET` to the secret generated for the Mercado Pago Payments webhook.
 - For sandbox validation, set `MERCADO_PAGO_TEST_ACCESS_TOKEN` to the application's test Access Token. Never expose it in the frontend or configure it when `MERCADO_PAGO_ENVIRONMENT=production`.
 - Optionally override `PORT`, `HOST`, `NODE_ENV`, and `LOG_LEVEL` if you need custom infrastructure behavior.

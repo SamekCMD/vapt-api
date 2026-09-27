@@ -21,6 +21,10 @@ const validEnv = {
   N8N_TIMEOUT_MS: "5000",
   VAPT_APP_ENDPOINT_SECRET: "app-secret",
   VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
+  STRIPE_SECRET_KEY: "sk_test_vapt",
+  STRIPE_WEBHOOK_SECRET: "whsec_vapt",
+  STRIPE_ENVIRONMENT: "test",
+  STRIPE_PORTAL_CONFIGURATION_ID: "bpc_vapt",
   STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
   STRIPE_PRICE_STARTER: "price_server_starter",
   STRIPE_PRICE_PRO: "price_server_pro",
@@ -37,6 +41,11 @@ function createConfig(env: NodeJS.ProcessEnv) {
     STRIPE_PRICE_STARTER: "price_server_starter",
     STRIPE_PRICE_PRO: "price_server_pro",
     STRIPE_PRICE_BUSINESS: "price_server_business",
+    STRIPE_SECRET_KEY: "sk_test_vapt",
+    STRIPE_WEBHOOK_SECRET: "whsec_vapt",
+    STRIPE_ENVIRONMENT: "test",
+    STRIPE_PORTAL_CONFIGURATION_ID: "bpc_vapt",
+    FRONTEND_URL: "https://app.vapt.test",
     ...env,
   });
 }
@@ -59,6 +68,29 @@ const requiredStripePriceVariables = [
   "STRIPE_PRICE_BUSINESS",
 ] as const;
 
+const requiredStripeVariables = [
+  "STRIPE_SECRET_KEY",
+  "STRIPE_WEBHOOK_SECRET",
+  "STRIPE_ENVIRONMENT",
+  "STRIPE_PORTAL_CONFIGURATION_ID",
+  "STRIPE_PRICE_STARTER",
+  "STRIPE_PRICE_PRO",
+  "STRIPE_PRICE_BUSINESS",
+  "FRONTEND_URL",
+] as const;
+
+const validStripeEnv = {
+  ...validEnv,
+  FRONTEND_URL: "https://app.vapt.test",
+  API_PUBLIC_URL: "https://api.vapt.test",
+  MERCADO_PAGO_CLIENT_ID: "app-123",
+  MERCADO_PAGO_CLIENT_SECRET: "client-secret",
+  MERCADO_PAGO_REDIRECT_URI:
+    "https://api.vapt.test/payments/mercado-pago/oauth/callback",
+  MERCADO_PAGO_WEBHOOK_SECRET: "webhook-secret",
+  PAYMENT_TOKEN_ENCRYPTION_KEY: Buffer.alloc(32, 4).toString("base64"),
+};
+
 for (const variable of requiredBetterAuthVariables) {
   test(`createConfig requires ${variable}`, () => {
     assert.throws(
@@ -76,6 +108,119 @@ for (const variable of requiredStripePriceVariables) {
     );
   });
 }
+
+for (const variable of requiredStripeVariables) {
+  test(`createConfig requires canonical Stripe variable ${variable}`, () => {
+    const env = variable === "FRONTEND_URL" ? validEnv : validStripeEnv;
+    assert.throws(
+      () => createConfig({ ...env, [variable]: "" }),
+      new RegExp(`Missing required environment variable: ${variable}`),
+    );
+  });
+}
+
+test("createConfig maps the complete Stripe billing runtime", () => {
+  const config = createConfig(validStripeEnv);
+
+  assert.deepEqual(config.stripe, {
+    secretKey: "sk_test_vapt",
+    webhookSecret: "whsec_vapt",
+    webhookToleranceSeconds: 300,
+    environment: "test",
+    portalConfigurationId: "bpc_vapt",
+    prices: {
+      starter: "price_server_starter",
+      pro: "price_server_pro",
+      business: "price_server_business",
+    },
+  });
+  assert.equal(config.frontendUrl.toString(), "https://app.vapt.test/");
+});
+
+test("createConfig rejects an unsupported Stripe environment", () => {
+  assert.throws(
+    () => createConfig({ ...validStripeEnv, STRIPE_ENVIRONMENT: "sandbox" }),
+    /STRIPE_ENVIRONMENT must be one of: test, live/,
+  );
+});
+
+test("createConfig requires a Stripe Portal configuration identifier", () => {
+  assert.throws(
+    () => createConfig({ ...validStripeEnv, STRIPE_PORTAL_CONFIGURATION_ID: "portal_vapt" }),
+    /STRIPE_PORTAL_CONFIGURATION_ID must start with bpc_/,
+  );
+});
+
+test("createConfig rejects a Portal prefix without an identifier", () => {
+  assert.throws(
+    () => createConfig({ ...validStripeEnv, STRIPE_PORTAL_CONFIGURATION_ID: "bpc_" }),
+    /STRIPE_PORTAL_CONFIGURATION_ID/,
+  );
+});
+
+test("createConfig supports live mode without enabling Mercado Pago", () => {
+  const config = createConfig({ ...validEnv, STRIPE_ENVIRONMENT: "live" });
+
+  assert.equal(config.stripe.environment, "live");
+  assert.equal(config.mercadoPago, undefined);
+  assert.equal(config.apiPublicUrl, undefined);
+});
+
+for (const frontendUrl of [
+  "/dashboard",
+  "https://app.vapt.test?return=other",
+  "https://app.vapt.test#fragment",
+  "http://remote.vapt.test",
+]) {
+  test(`createConfig rejects unsafe frontend destination ${frontendUrl}`, () => {
+    assert.throws(
+      () => createConfig({ ...validEnv, NODE_ENV: "development", FRONTEND_URL: frontendUrl }),
+      /FRONTEND_URL/,
+    );
+  });
+}
+
+test("createConfig rejects an insecure frontend URL outside local development", () => {
+  assert.throws(
+    () => createConfig({
+      ...validStripeEnv,
+      NODE_ENV: "production",
+      FRONTEND_URL: "http://app.vapt.test",
+    }),
+    /FRONTEND_URL must use https/,
+  );
+});
+
+test("createConfig rejects credentials in the frontend URL", () => {
+  assert.throws(
+    () => createConfig({
+      ...validStripeEnv,
+      FRONTEND_URL: "https://user:password@app.vapt.test",
+    }),
+    /FRONTEND_URL must not contain credentials/,
+  );
+});
+
+test("createConfig permits an HTTP localhost frontend in development", () => {
+  const config = createConfig({
+    ...validStripeEnv,
+    NODE_ENV: "development",
+    FRONTEND_URL: "http://localhost:5173",
+  });
+
+  assert.equal(config.frontendUrl.toString(), "http://localhost:5173/");
+});
+
+test("createConfig does not accept the retired Stripe signing secret by itself", () => {
+  assert.throws(
+    () => createConfig({
+      ...validStripeEnv,
+      STRIPE_WEBHOOK_SECRET: "",
+      STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_legacy",
+    }),
+    /Missing required environment variable: STRIPE_WEBHOOK_SECRET/,
+  );
+});
 
 test("createConfig requires a Better Auth secret with at least 32 characters", () => {
   assert.throws(
@@ -190,8 +335,8 @@ test("createConfig parses valid environment values", () => {
   assert.equal(config.n8n.baseUrl.toString(), "https://n8n.example.com/");
   assert.equal(config.n8n.timeoutMs, 5000);
   assert.equal(config.n8n.secrets.app, "app-secret");
-  assert.equal(config.webhooks.stripe.signingSecret, "whsec_test");
-  assert.equal(config.webhooks.stripe.toleranceSeconds, 300);
+  assert.equal(config.stripe.webhookSecret, "whsec_vapt");
+  assert.equal(config.stripe.webhookToleranceSeconds, 300);
   assert.deepEqual(config.stripe.prices, {
     starter: "price_server_starter",
     pro: "price_server_pro",
