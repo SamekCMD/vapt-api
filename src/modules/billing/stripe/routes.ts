@@ -8,21 +8,24 @@ import {
 } from "../../../lib/permissions.js";
 import { validateWithSchema } from "../../../lib/validation.js";
 import { requireAuth } from "../../../plugins/auth.js";
-import { createN8nClient } from "../../n8n/client.js";
+import { createStripeClient, createStripeGateway } from "./client.js";
+import type { StripeGateway } from "./types.js";
 import {
   stripeCancelSubscriptionBodySchema,
   stripeChangeSubscriptionBodySchema,
   stripeCheckoutBodySchema,
+  stripePortalBodySchema,
   stripeSubscriptionStatusQuerySchema,
 } from "./schemas.js";
 import { createStripeBillingService } from "./service.js";
-import type { StripeBillingRepository } from "./repository.js";
+import type { StripeBillingStore } from "./repository.js";
 
 export async function registerStripeBillingRoutes(
   app: FastifyInstance,
   config: AppConfig,
   ownershipLookup?: OwnershipLookup,
-  repository?: StripeBillingRepository,
+  repository?: StripeBillingStore,
+  gateway?: StripeGateway,
 ) {
   const resolvedOwnershipLookup =
     ownershipLookup ??
@@ -31,15 +34,14 @@ export async function registerStripeBillingRoutes(
       : (() => {
           throw new AppError(500, "internal_error", "Ownership lookup is not configured");
         })());
-  const client = createN8nClient(config);
   if (!repository) {
     throw new AppError(500, "internal_error", "Stripe billing repository is not configured");
   }
   const service = createStripeBillingService(
-    client,
+    gateway ?? createStripeGateway(createStripeClient(config.stripe)),
     resolvedOwnershipLookup,
     repository,
-    config.stripe.prices,
+    config,
   );
 
   app.post(
@@ -61,6 +63,8 @@ export async function registerStripeBillingRoutes(
           throw new AppError(400, "invalid_request", "Authenticated email is required");
         })(),
         planType: body.planType,
+        idempotencyKey: typeof request.headers["idempotency-key"] === "string"
+          ? request.headers["idempotency-key"] : "",
       });
     },
   );
@@ -77,10 +81,9 @@ export async function registerStripeBillingRoutes(
     async (request) => {
       const body = validateWithSchema(stripeChangeSubscriptionBodySchema, request.body);
 
-      return service.changeSubscription({
+      return service.retiredMutation({
         userId: request.auth!.userId,
         restaurantId: body.restaurantId,
-        targetPlanType: body.targetPlanType,
       });
     },
   );
@@ -97,10 +100,22 @@ export async function registerStripeBillingRoutes(
     async (request) => {
       const body = validateWithSchema(stripeCancelSubscriptionBodySchema, request.body);
 
-      return service.cancelSubscription({
+      return service.retiredMutation({
         userId: request.auth!.userId,
         restaurantId: body.restaurantId,
       });
+    },
+  );
+
+  app.post(
+    "/billing/stripe/portal",
+    {
+      config: { rateLimitGroup: "billing" },
+      preHandler: async (request, reply) => requireAuth(request, reply, app.authSessionResolver),
+    },
+    async (request) => {
+      const body = validateWithSchema(stripePortalBodySchema, request.body);
+      return service.createPortal({ userId: request.auth!.userId, restaurantId: body.restaurantId });
     },
   );
 

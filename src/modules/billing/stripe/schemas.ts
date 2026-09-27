@@ -15,8 +15,10 @@ export const stripeChangeSubscriptionBodySchema = z.object({
 
 export const stripeCancelSubscriptionBodySchema = z.object({
   restaurantId: z.string().trim().min(1),
-});
+}).strict();
+
+export const stripePortalBodySchema = stripeCancelSubscriptionBodySchema;
 
 export const stripeSubscriptionStatusQuerySchema = z.object({
   restaurantId: z.string().trim().min(1),
-});
+}).strict();

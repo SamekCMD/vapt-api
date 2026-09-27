@@ -12,6 +12,7 @@ import {
 } from "./lib/permissions.js";
 import { registerStripeBillingRoutes } from "./modules/billing/stripe/routes.js";
 import { createStripeBillingRepository } from "./modules/billing/stripe/repository.js";
+import type { StripeGateway } from "./modules/billing/stripe/types.js";
 import { createCatalogRepository } from "./modules/catalog/repository.js";
 import { registerCatalogRoutes } from "./modules/catalog/routes.js";
 import { createBetterAuthRuntime } from "./modules/auth/better-auth.js";
@@ -80,6 +81,7 @@ import { registerRawBody } from "./plugins/raw-body.js";
 export type BuildAppDependencies = {
   authRuntime?: AuthRuntime;
   database?: Database;
+  stripeGateway?: StripeGateway;
 };
 
 export async function buildApp(
@@ -187,6 +189,7 @@ export async function buildApp(
     config,
     ownershipLookup,
     createStripeBillingRepository(database),
+    dependencies.stripeGateway,
   );
   await registerOrderRoutes(app, config, orderRepository);
   if (config.r2) {
