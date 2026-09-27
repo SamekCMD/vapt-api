@@ -67,7 +67,7 @@ test("unknown/untrusted non-UUID metadata never becomes a SQL identifier or cast
   }), null);
   assert.equal(calls.length, 0);
 });
-test("canonical reconciliation is parameterized, owner-fenced and excludes stale observations", async () => {
+test("canonical reconciliation is parameterized and owner-fenced without a host-clock ordering predicate", async () => {
   const { database, calls } = scriptedDatabase([[{ id: reconciliationScope.restaurantId }]]);
   const changed = await createStripeWebhookRepository(database).applySubscription(database, reconciliationScope, {
     customerId: "cus_vapt", subscriptionId: "sub_vapt", subscriptionItemId: "si_vapt", planType: "pro",
@@ -77,7 +77,7 @@ test("canonical reconciliation is parameterized, owner-fenced and excludes stale
   });
   assert.equal(changed, true);
   assert.match(calls[0]!.sql, /owner_id = \$2::uuid/);
-  assert.match(calls[0]!.sql, /stripe_state_updated_at <= \$12::timestamptz/);
+  assert.doesNotMatch(calls[0]!.sql, /stripe_state_updated_at <=/);
   assert.match(calls[0]!.sql, /stripe_subscription_item_id = \$5::text/);
   assert.deepEqual(calls[0]!.values?.slice(0, 5), [reconciliationScope.restaurantId, reconciliationScope.userId, "cus_vapt", "sub_vapt", "si_vapt"]);
 });
@@ -124,7 +124,7 @@ test("Stripe event completion and email intent share one transaction and dedupli
   const repository = createStripeWebhookRepository(database, { now: () => now });
   await repository.withClaimedEvent({ providerEventId: "evt_test", attemptCount: 2 }, async (transaction) => {
     const intent = {
-      restaurantId: "restaurant-1", providerEventId: "evt_test",
+      restaurantId: "restaurant-1", providerEventId: "evt_test", billingResourceId: "in_vapt",
       emailKind: "subscription_activated" as const, payload: { planType: "starter" },
     };
     await repository.enqueueEmail(transaction, intent);
@@ -134,7 +134,7 @@ test("Stripe event completion and email intent share one transaction and dedupli
 
   assert.match(calls[0]!.sql, /for update/i);
   for (const call of calls.slice(1, 3)) {
-    assert.match(call.sql, /on conflict \(provider_event_id, email_kind\) do nothing/i);
+    assert.match(call.sql, /on conflict do nothing/i);
     assert.deepEqual(call.values?.slice(0, 3), ["restaurant-1", "evt_test", "subscription_activated"]);
   }
   assert.match(calls.at(-1)!.sql, /attempt_count = \$2::integer/i);
@@ -165,6 +165,17 @@ test("Stripe failure records a safe retry code only for its owned attempt", asyn
   assert.deepEqual(calls[0]!.values, ["evt_test", 2, "stripe_unavailable"]);
 });
 
+test("email insertion includes the business resource key and suppresses either deduplication constraint", async () => {
+  const { database, calls } = scriptedDatabase([[]]);
+  await createStripeWebhookRepository(database).enqueueEmail(database, {
+    restaurantId: "restaurant-1", providerEventId: "evt_one", billingResourceId: "in_same",
+    emailKind: "subscription_activated", payload: {},
+  });
+  assert.match(calls[0]!.sql, /billing_resource_id/);
+  assert.match(calls[0]!.sql, /on conflict do nothing/);
+  assert.ok(calls[0]!.values?.includes("in_same"));
+});
+
 test("Stripe persistence failure rolls back intents and sanitizes details", async () => {
   const { database, operations } = scriptedDatabase([[{ attemptCount: 1, processingStatus: "processing" }]], 2);
   const repository = createStripeWebhookRepository(database);
@@ -172,7 +183,7 @@ test("Stripe persistence failure rolls back intents and sanitizes details", asyn
     { providerEventId: "evt_test", attemptCount: 1 },
     async (transaction) => {
       await repository.enqueueEmail(transaction, {
-        restaurantId: "restaurant-1", providerEventId: "evt_test",
+        restaurantId: "restaurant-1", providerEventId: "evt_test", billingResourceId: "in_vapt",
         emailKind: "payment_failed", payload: {},
       });
       return "processed";

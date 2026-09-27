@@ -21,6 +21,7 @@ export type BillingEmailIntent = {
   restaurantId: string;
   providerEventId: string;
   emailKind: BillingEmailKind;
+  billingResourceId: string;
   payload: Record<string, unknown>;
 };
 export type ReconciliationScope = OwnedBillingScope & {
@@ -93,7 +94,6 @@ export function createStripeWebhookRepository(
             stripe_checkout_expires_at = case when stripe_checkout_session_id = $13::text then null else stripe_checkout_expires_at end,
             updated_at = now()
           where id = $1::uuid and owner_id = $2::uuid
-            and (stripe_state_updated_at is null or stripe_state_updated_at <= $12::timestamptz)
           returning id`, [scope.restaurantId, scope.userId, input.customerId, input.subscriptionId,
           input.subscriptionItemId, input.planType, input.planStatus, input.trialEndsAt, input.currentPeriodEnd,
           input.cancelAtPeriodEnd, input.subscriptionCanceledAt, input.observedAt, input.checkoutSessionId,
@@ -188,10 +188,10 @@ export function createStripeWebhookRepository(
     async enqueueEmail(transaction, input) {
       try {
         await transaction.query(`insert into public.billing_email_outbox (
-          restaurant_id, provider_event_id, email_kind, payload
-        ) values ($1::uuid, $2::text, $3::text, $4::jsonb)
-        on conflict (provider_event_id, email_kind) do nothing`,
-        [input.restaurantId, input.providerEventId, input.emailKind, JSON.stringify(input.payload)]);
+          restaurant_id, provider_event_id, email_kind, payload, billing_resource_id
+        ) values ($1::uuid, $2::text, $3::text, $4::jsonb, $5::text)
+        on conflict do nothing`,
+        [input.restaurantId, input.providerEventId, input.emailKind, JSON.stringify(input.payload), input.billingResourceId]);
       } catch (error) { storageError(error); }
     },
   };

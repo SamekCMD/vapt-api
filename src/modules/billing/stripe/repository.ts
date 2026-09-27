@@ -28,7 +28,7 @@ export type BillingScope = OwnedBillingScope & {
 export type PublicBillingStatus = Pick<BillingScope,
   "planType" | "planStatus" | "trialEndsAt" | "currentPeriodEnd" |
   "cancelAtPeriodEnd" | "subscriptionCanceledAt"
-> & { canManageBilling: boolean; requiresBillingAction: boolean };
+> & { canManageBilling: boolean; canStartCheckout: boolean; requiresBillingAction: boolean };
 
 export type PendingCheckout = { id: string; planType: StripePlanType; expiresAt: string };
 
@@ -125,6 +125,7 @@ export function createStripeBillingRepository(database: Database): StripeBilling
           currentPeriodEnd: scope.currentPeriodEnd, cancelAtPeriodEnd: scope.cancelAtPeriodEnd,
           subscriptionCanceledAt: scope.subscriptionCanceledAt,
           canManageBilling: scope.stripeCustomerId !== null,
+          canStartCheckout: scope.stripeSubscriptionId === null || ["expired", "cancelled"].includes(scope.planStatus),
           requiresBillingAction: ["past_due", "incomplete", "unpaid", "paused"].includes(scope.planStatus),
         };
       } catch (error) { normalizeBillingStorageError(error); }

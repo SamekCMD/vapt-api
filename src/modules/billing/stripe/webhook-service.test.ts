@@ -66,14 +66,16 @@ test("six supported events reconcile current Subscription or only clear matching
 test("terminal duplicate never retrieves provider or enqueues again; initial purchase emits one activation", async () => {
   const f = fixture(); await f.service.handleEvent(event("invoice.paid")); await f.service.handleEvent(event("invoice.paid"));
   assert.equal(f.retrievals(), 1); assert.equal(f.intents.length, 1); assert.equal(f.intents[0]?.emailKind, "subscription_activated");
+  assert.equal(f.intents[0]?.billingResourceId, "in_vapt");
 });
 test("cycle payment owns renewal intent; subscription/Checkout events own none", async () => {
   const f = fixture(); await f.service.handleEvent(event("invoice.paid", { billing_reason: "subscription_cycle" }));
   assert.equal(f.intents[0]?.emailKind, "subscription_renewed");
 });
-test("in-flight event is acknowledged without work", async () => {
+test("in-flight claim stays retryable instead of acknowledging unfinished work", async () => {
   const f = fixture(); f.repository.claimEvent = async () => ({ kind: "in_flight" });
-  assert.equal((await f.service.handleEvent(event("invoice.paid"))).duplicate, true); assert.equal(f.retrievals(), 0);
+  await assert.rejects(f.service.handleEvent(event("invoice.paid")), error => error instanceof AppError && error.statusCode === 503);
+  assert.equal(f.retrievals(), 0);
 });
 test("unsupported event is durably ignored without state or email", async () => {
   const f = fixture(); assert.equal((await f.service.handleEvent(event("customer.created"))).ignored, true);
@@ -130,9 +132,11 @@ test("event audit payload and email intent omit raw URLs, email/card data and un
   const f = fixture(); await f.service.handleEvent(event("invoice.paid", { customer_email: "private@example.com", hosted_invoice_url: "https://secret.example", payment_method: "card_secret" }));
   assert.doesNotMatch(JSON.stringify([...f.claims, ...f.intents, ...f.logs]), /private@example|secret.example|card_secret/);
 });
-test("stale canonical snapshot is ignored without another email", async () => {
+test("host clock skew never discards canonical state read under the restaurant lock", async () => {
   const f = fixture(); f.scope.stateUpdatedAt = "2026-09-27T14:00:00.000Z";
-  assert.equal((await f.service.handleEvent(event("invoice.paid"))).ignored, true); assert.equal(f.intents.length, 0);
+  f.subscription.status = "canceled";
+  assert.equal((await f.service.handleEvent(event("customer.subscription.deleted"))).ignored, false);
+  assert.equal(f.intents.length, 1);
 });
 test("canonical retrieval follows the restaurant lock so concurrent events cannot overwrite a newer snapshot", async () => {
   const f = fixture();

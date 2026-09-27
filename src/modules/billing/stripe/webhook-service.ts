@@ -67,6 +67,10 @@ export function createStripeWebhookService(config: StripeBillingConfig, reposito
         options.logger?.info({ ...fields, outcome: "pending_retry" }, "Stripe billing event");
         throw new AppError(500, "billing_processing_failed", "Billing event will be retried");
       }
+      if (claim.kind === "in_flight") {
+        options.logger?.info({ ...fields, outcome: "in_flight" }, "Stripe billing event");
+        throw new AppError(503, "billing_processing_pending", "Billing event will be retried");
+      }
       if (claim.kind !== "claimed") {
         options.logger?.info({ ...fields, outcome: claim.kind }, "Stripe billing event");
         return response(true, false);
@@ -114,7 +118,6 @@ export function createStripeWebhookService(config: StripeBillingConfig, reposito
             if (previous.id !== scope.stripeSubscriptionId || previous.customerId !== canonical.customerId ||
               !["canceled", "incomplete_expired"].includes(previous.status)) invalidStripeResponse();
           }
-          if (scope.stateUpdatedAt && Date.parse(scope.stateUpdatedAt) > Date.parse(observedAt)) return "ignored";
           if (canonical.items.length !== 1) invalidStripeResponse();
           const item = canonical.items[0]!;
           const plans = (Object.entries(config.prices) as Array<[StripePlanType, string]>).filter(([, price]) => price === item.priceId);
@@ -132,7 +135,7 @@ export function createStripeWebhookService(config: StripeBillingConfig, reposito
           if (!changed) return "ignored";
           const kind = emailKind(event.type, resource.billing_reason, status);
           if (kind) await repository.enqueueEmail(transaction, { restaurantId: scope.restaurantId,
-            providerEventId: event.id, emailKind: kind,
+            providerEventId: event.id, billingResourceId: resourceId!, emailKind: kind,
             payload: { planType, planStatus: status, currentPeriodEnd: item.currentPeriodEnd } });
           ignored = false;
           return "processed";

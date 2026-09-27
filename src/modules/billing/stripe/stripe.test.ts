@@ -47,7 +47,7 @@ test("billing public status is owner-scoped and contains no provider identifiers
   assert.deepEqual(status, {
     planType: "starter", planStatus: "trialing", trialEndsAt: "2026-10-01T00:00:00.000Z",
     currentPeriodEnd: null, cancelAtPeriodEnd: false, subscriptionCanceledAt: null,
-    canManageBilling: true, requiresBillingAction: false,
+    canManageBilling: true, canStartCheckout: true, requiresBillingAction: false,
   });
   assert.doesNotMatch(JSON.stringify(status), /cus_private|stripeCustomerId|stripeSubscriptionId|owner-1/);
 });

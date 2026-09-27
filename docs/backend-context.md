@@ -96,14 +96,14 @@ The app trusts proxy headers and uses `x-forwarded-for` when available.
 Stripe events use provider `stripe` in Neon `billing_provider_events`.
 Lifecycle: received, processing, processed, pending_retry, ignored. Atomic claims
 increment an attempt token, preserve retryability and fence stale workers; processed
-and ignored are terminal. An unexpired in-flight claim is acknowledged as a duplicate.
+and ignored are terminal. An unexpired in-flight claim returns retryable 503; only terminal duplicates are acknowledged.
 
 The SDK verifies the exact raw body before persistence. The event transaction locks
 the restaurant, retrieves the current canonical Subscription, validates mode, tenant,
 Customer and exactly one known recurring Price item, and persists the item period/state.
 Only this path changes entitlement; browser returns are not billing evidence.
 
-Reconciliation, the event-owned deduplicated `billing_email_outbox` intent and terminal
+Reconciliation, the event-audited, business-resource-deduplicated `billing_email_outbox` intent and terminal
 event status commit together. Checkout/subscription updates emit no activation email;
 initial invoice owns activation, cycle invoice owns renewal, payment failure owns its
 intent and subscription deletion owns cancellation. Delivery via Queue/Resend is deferred.

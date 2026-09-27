@@ -44,7 +44,7 @@ function fixture(initial: Partial<BillingScope> = {}, authorized = true) {
   };
   const publicStatus = { planType: scope.planType, planStatus: scope.planStatus, trialEndsAt: scope.trialEndsAt,
     currentPeriodEnd: null, cancelAtPeriodEnd: false, subscriptionCanceledAt: null,
-    canManageBilling: scope.stripeCustomerId !== null, requiresBillingAction: false };
+    canManageBilling: scope.stripeCustomerId !== null, canStartCheckout: scope.stripeSubscriptionId === null, requiresBillingAction: false };
   const store: StripeBillingStore = {
     async getScope() { return scope; }, async getPublicStatus() { return publicStatus; },
     async withBillingLock(value, work) {
