@@ -1,13 +1,8 @@
 import type { FastifyInstance } from "fastify";
-import { z } from "zod";
-
 import { validateWithSchema } from "../../lib/validation.js";
 import type { CatalogRepository } from "./repository.js";
+import { catalogParamsSchema } from "./schemas.js";
 import { createCatalogService } from "./service.js";
-
-const catalogParamsSchema = z.object({
-  slug: z.string().trim().min(1).max(120),
-}).strict();
 
 export async function registerCatalogRoutes(
   app: FastifyInstance,

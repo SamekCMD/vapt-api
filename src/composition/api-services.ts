@@ -9,15 +9,31 @@ import { createBetterAuthRuntime } from "../modules/auth/better-auth.js";
 import type { AuthRuntime, BackgroundTaskRunner } from "../modules/auth/runtime.js";
 import { createStripeClient, createStripeGateway } from "../modules/billing/stripe/client.js";
 import type { StripeGateway } from "../modules/billing/stripe/types.js";
+import { createCatalogRepository } from "../modules/catalog/repository.js";
+import { createCatalogService } from "../modules/catalog/service.js";
+import { createFeedbackRepository } from "../modules/feedback/repository.js";
+import { createFeedbackService } from "../modules/feedback/service.js";
+import { createOrderRepository } from "../modules/orders/repository.js";
+import { createOrderService, type OrderService } from "../modules/orders/service.js";
 import { createPaymentModule } from "../modules/payments/composition.js";
 import type { PaymentProvider } from "../modules/payments/provider.js";
 import { createManualPaymentProvider } from "../modules/payments/providers/manual.js";
 import type { PaymentModule } from "../modules/payments/service.js";
+import { createTableSessionRepository } from "../modules/table-sessions/repository.js";
+import { createTableSessionService } from "../modules/table-sessions/service.js";
+
+export type CatalogService = ReturnType<typeof createCatalogService>;
+export type FeedbackService = ReturnType<typeof createFeedbackService>;
+export type TableSessionService = ReturnType<typeof createTableSessionService>;
 
 export type ApiServiceDependencies = {
   database: Database;
   authRuntime?: AuthRuntime;
   ownershipLookup?: OwnershipLookup;
+  catalog?: CatalogService;
+  orders?: OrderService;
+  feedback?: FeedbackService;
+  tableSessions?: TableSessionService;
   stripeGateway?: StripeGateway;
   paymentProviders?: readonly PaymentProvider[];
   runInBackground?: BackgroundTaskRunner;
@@ -32,6 +48,10 @@ export type ApiServices = {
   database: Database;
   authRuntime: AuthRuntime;
   ownershipLookup: OwnershipLookup;
+  catalog: CatalogService;
+  orders: OrderService;
+  feedback: FeedbackService;
+  tableSessions: TableSessionService;
   stripeGateway: StripeGateway;
   payments: PaymentModule;
 };
@@ -40,6 +60,10 @@ export function createApiServices(config: AppConfig, dependencies: ApiServiceDep
   let authRuntime = dependencies.authRuntime;
   let stripeGateway = dependencies.stripeGateway;
   let payments: PaymentModule | undefined;
+  let catalog = dependencies.catalog;
+  let orders = dependencies.orders;
+  let feedback = dependencies.feedback;
+  let tableSessions = dependencies.tableSessions;
 
   return {
     database: dependencies.database,
@@ -47,6 +71,25 @@ export function createApiServices(config: AppConfig, dependencies: ApiServiceDep
       return dependencies.ownershipLookup ?? (config.nodeEnv === "test"
         ? testOwnershipLookup
         : createOwnershipLookup(dependencies.database));
+    },
+    get catalog() {
+      catalog ??= createCatalogService(createCatalogRepository(dependencies.database));
+      return catalog;
+    },
+    get orders() {
+      orders ??= createOrderService(
+        createOrderRepository(dependencies.database),
+        config.security.publicOrderTokenSecret,
+      );
+      return orders;
+    },
+    get feedback() {
+      feedback ??= createFeedbackService(createFeedbackRepository(dependencies.database), this.orders);
+      return feedback;
+    },
+    get tableSessions() {
+      tableSessions ??= createTableSessionService(createTableSessionRepository(dependencies.database));
+      return tableSessions;
     },
     get authRuntime() {
       authRuntime ??= createBetterAuthRuntime(config.betterAuth, {

@@ -6,6 +6,7 @@ import type { WorkerServicesFactory } from "./services.js";
 import type { ApiServices } from "../composition/api-services.js";
 import type { AuthContext } from "../plugins/auth.js";
 import { registerWorkerAuthRoutes } from "./routes/auth.js";
+import { registerWorkerPublicRoutes } from "./routes/public.js";
 
 export type WorkerHonoEnv = {
   Bindings: WorkerBindings;
@@ -14,13 +15,14 @@ export type WorkerHonoEnv = {
 
 export function createWorkerApp(
   createServices?: WorkerServicesFactory,
-  options: { authRateLimit?: boolean } = {},
+  options: { authRateLimit?: boolean; publicRateLimit?: boolean } = {},
 ): Hono<WorkerHonoEnv> {
   const app = new Hono<WorkerHonoEnv>();
   installWorkerHttpPolicy(app, createServices);
   app.get("/health", (context) => context.json({ status: "ok" }));
   if (createServices) {
     registerWorkerAuthRoutes(app, { rateLimit: options.authRateLimit });
+    registerWorkerPublicRoutes(app, { rateLimit: options.publicRateLimit });
     app.get("/health/ready", async (context) => {
       const services = await createServices(context.env, context.executionCtx);
       return context.json({
