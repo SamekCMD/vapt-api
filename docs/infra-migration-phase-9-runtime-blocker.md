@@ -15,7 +15,19 @@ Status: blocked at Task 4 of `infra-migration-phase-9-api-worker-plan.md`. Tasks
 
 The approved design explicitly says to stop and revise it if the Fastify bridge cannot run in `workerd`; it does not authorize silently replacing the API route framework. There is no evidence yet that the current lazy Fastify composition can satisfy Workers' dynamic-code restrictions. Cloudflare documents `allow_eval_during_startup`, but startup-only evaluation is a different lifecycle from the approved per-isolate lazy initialization and has not been proved with this API or its bindings.
 
-Before Task 4 resumes, choose and approve a revised design. The least disruptive research path is a bounded spike testing eager app initialization during Worker startup with `allow_eval_during_startup` and a minimal real route. If that fails, the remaining options include a Worker-native route layer or retaining Fastify on Coolify longer. Any route-layer rewrite needs a new parity and migration plan, especially for Better Auth and signed payment webhooks.
+Before Task 4 resumes, choose and approve a revised design. The bounded startup-initialization spike described below did not establish a working Fastify Worker. The remaining options include a Worker-native route layer or retaining Fastify on Coolify longer. Any route-layer rewrite needs a new parity and migration plan, especially for Better Auth and signed payment webhooks.
+
+## Authorized startup spike (2026-09-29)
+
+The same Wrangler 4.138.0 and `workerd` runtime were used with a throwaway Worker containing Fastify, a static health route, a parameterized order route, a synthetic variable, and the documented `allow_eval_during_startup` flag. There was no deploy, live binding, database, provider call, or change to the serving API.
+
+| Initialization strategy | Observed result |
+| --- | --- |
+| Create Fastify and register routes inside `fetch` | `EvalError: Code generation from strings disallowed for this context` at `find-my-way/lib/node.js:220` (`new Function`). |
+| Register routes globally and `await app.ready()` at module startup | Worker failed to start: `Top-level await in module is unsettled`. |
+| Register routes globally and call `await app.ready()` inside `fetch` | Minimal Fastify boot timed out on Avvio's `bound _after` plugin callback before a response. |
+
+The startup flag addresses the route-code-generation phase but does not, by itself, establish a usable HTTP runtime for this Fastify version. These observations do not prove every possible Fastify adaptation impossible; they rule out the straightforward eager-initialization variant tested here. The throwaway Worker, test, and Wrangler config were removed after the spike. Do not resume Tasks 4–6 against the current design without a new approved architecture and fresh `workerd` parity tests.
 
 ## Current branch limitation
 
