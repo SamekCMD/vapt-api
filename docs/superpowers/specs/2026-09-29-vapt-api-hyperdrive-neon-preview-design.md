@@ -1,6 +1,6 @@
 # Vapt API Stage 10: preview Hyperdrive → Neon design
 
-Status: draft for owner review. This design follows the approved Stage 9 native Worker handoff and the Vapt migration plan's Stage 10. It does not authorize production traffic or a DNS cutover.
+Status: approved by owner on 2026-09-29. This design follows the approved Stage 9 native Worker handoff and the Vapt migration plan's Stage 10. It does not authorize production traffic or a DNS cutover.
 
 ## Intent and success boundary
 
