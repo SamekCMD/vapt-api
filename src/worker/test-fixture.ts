@@ -9,7 +9,7 @@ import type { StripeGateway } from "../modules/billing/stripe/types.js";
 import type { OrderService } from "../modules/orders/service.js";
 import type { MenuRepository } from "../modules/menu/repository.js";
 import { createMenuService } from "../modules/menu/service.js";
-import type { CatalogService, FeedbackService, TableSessionService } from "../composition/api-services.js";
+import type { CatalogService, FeedbackService, StripeBillingService, StripeWebhookService, TableSessionService } from "../composition/api-services.js";
 import { parseWorkerJson, requireWorkerAuth, trustedRateLimitKey, workerRateLimit } from "./http.js";
 
 type FixtureBindings = WorkerBindings & { TEST_GREETING: string };
@@ -100,11 +100,55 @@ const fakeMenu = createMenuService({
     return userId === "user-1" && itemId === "10000000-0000-4000-8000-000000000021";
   },
 } satisfies MenuRepository, { publicBaseUrl: null });
+const fakeStripeBilling = {
+  async createCheckout(input: { userId: string; restaurantId: string; email: string; idempotencyKey: string }) {
+    if (input.userId !== "user-1" || input.restaurantId !== "10000000-0000-4000-8000-000000000001") {
+      throw new AppError(403, "forbidden", "Forbidden");
+    }
+    if (!input.idempotencyKey) throw new AppError(400, "invalid_request", "A valid Idempotency-Key is required");
+    return { checkoutSessionId: "cs_synthetic", url: "https://checkout.stripe.com/synthetic" };
+  },
+  async createPortal(input: { userId: string; restaurantId: string }) {
+    if (input.userId !== "user-1" || input.restaurantId !== "10000000-0000-4000-8000-000000000001") {
+      throw new AppError(403, "forbidden", "Forbidden");
+    }
+    return { url: "https://billing.stripe.com/synthetic" };
+  },
+  async getSubscriptionStatus(input: { userId: string; restaurantId: string }) {
+    if (input.userId !== "user-1" || input.restaurantId !== "10000000-0000-4000-8000-000000000001") {
+      throw new AppError(403, "forbidden", "Forbidden");
+    }
+    return { planType: "pro", planStatus: "active" };
+  },
+} as unknown as StripeBillingService;
+let stripeWebhookCalls = 0;
+let stripeSideEffects = 0;
+const processedStripeEvents = new Set<string>();
+const fakeStripeWebhooks = {
+  async handleEvent(event: unknown) {
+    stripeWebhookCalls++;
+    const id = (event as { id: string }).id;
+    const duplicate = processedStripeEvents.has(id);
+    if (!duplicate) {
+      processedStripeEvents.add(id);
+      stripeSideEffects++;
+    }
+    return { received: true, duplicate, ignored: true, providerEventId: id };
+  },
+} satisfies StripeWebhookService;
 let serviceFactoryCalls = 0;
 const app = createWorkerApp((env, context) => {
   serviceFactoryCalls++;
   return createWorkerServices(env, context, {
-    config: { nodeEnv: "test", paymentEffects: { pollIntervalMs: 5_000, batchSize: 25, leaseMs: 60_000, maxAttempts: 5, retryBaseMs: 30_000 } } as AppConfig,
+    config: {
+      nodeEnv: "test",
+      stripe: {
+        secretKey: "sk_test_synthetic", webhookSecret: "whsec_synthetic",
+        webhookToleranceSeconds: 300, environment: "test", portalConfigurationId: "bpc_synthetic",
+        prices: { starter: "price_starter", pro: "price_pro", business: "price_business" },
+      },
+      paymentEffects: { pollIntervalMs: 5_000, batchSize: 25, leaseMs: 60_000, maxAttempts: 5, retryBaseMs: 30_000 },
+    } as AppConfig,
     database: fakeDatabase,
     authRuntime: fakeAuthRuntime,
     stripeGateway: {} as StripeGateway,
@@ -113,11 +157,14 @@ const app = createWorkerApp((env, context) => {
     feedback: fakeFeedback,
     tableSessions: fakeTableSessions,
     menu: fakeMenu,
+    stripeWebhooks: fakeStripeWebhooks,
+    stripeBilling: fakeStripeBilling,
     ownershipLookup: async ({ userId, restaurantId }) =>
       userId === "user-1" && restaurantId === "10000000-0000-4000-8000-000000000001",
   });
-}, { authRateLimit: false, publicRateLimit: false, privateRateLimit: false });
+}, { authRateLimit: false, publicRateLimit: false, privateRateLimit: false, stripeRateLimit: false });
 app.get("/_test/composition-counts", (context) => context.json({ serviceFactoryCalls }));
+app.get("/_test/stripe-counts", (context) => context.json({ stripeWebhookCalls, stripeSideEffects }));
 app.get("/_test/missing-ingress", (context) => {
   trustedRateLimitKey(new Headers({ "x-forwarded-for": "1.2.3.4" }), "auth");
   return context.json({ unexpected: true });

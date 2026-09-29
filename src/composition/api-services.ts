@@ -8,7 +8,11 @@ import { createOwnershipLookup, testOwnershipLookup, type OwnershipLookup } from
 import { createBetterAuthRuntime } from "../modules/auth/better-auth.js";
 import type { AuthRuntime, BackgroundTaskRunner } from "../modules/auth/runtime.js";
 import { createStripeClient, createStripeGateway } from "../modules/billing/stripe/client.js";
+import { createStripeBillingRepository } from "../modules/billing/stripe/repository.js";
+import { createStripeBillingService } from "../modules/billing/stripe/service.js";
 import type { StripeGateway } from "../modules/billing/stripe/types.js";
+import { createStripeWebhookRepository } from "../modules/billing/stripe/webhook-repository.js";
+import { createStripeWebhookService } from "../modules/billing/stripe/webhook-service.js";
 import { createCatalogRepository } from "../modules/catalog/repository.js";
 import { createCatalogService } from "../modules/catalog/service.js";
 import { createFeedbackRepository } from "../modules/feedback/repository.js";
@@ -37,6 +41,8 @@ export type RestaurantService = ReturnType<typeof createRestaurantService>;
 export type MenuService = ReturnType<typeof createMenuService>;
 export type KitchenService = ReturnType<typeof createKitchenService>;
 export type OverviewService = ReturnType<typeof createOverviewService>;
+export type StripeBillingService = ReturnType<typeof createStripeBillingService>;
+export type StripeWebhookService = ReturnType<typeof createStripeWebhookService>;
 
 export type ApiServiceDependencies = {
   database: Database;
@@ -50,6 +56,8 @@ export type ApiServiceDependencies = {
   menu?: MenuService;
   kitchen?: KitchenService;
   overview?: OverviewService;
+  stripeBilling?: StripeBillingService;
+  stripeWebhooks?: StripeWebhookService;
   stripeGateway?: StripeGateway;
   paymentProviders?: readonly PaymentProvider[];
   runInBackground?: BackgroundTaskRunner;
@@ -61,6 +69,7 @@ export type ApiServiceDependencies = {
 };
 
 export type ApiServices = {
+  config: AppConfig;
   database: Database;
   authRuntime: AuthRuntime;
   ownershipLookup: OwnershipLookup;
@@ -72,6 +81,8 @@ export type ApiServices = {
   menu: MenuService;
   kitchen: KitchenService;
   overview: OverviewService;
+  stripeBilling: StripeBillingService;
+  stripeWebhooks: StripeWebhookService;
   stripeGateway: StripeGateway;
   payments: PaymentModule;
 };
@@ -88,8 +99,11 @@ export function createApiServices(config: AppConfig, dependencies: ApiServiceDep
   let menu = dependencies.menu;
   let kitchen = dependencies.kitchen;
   let overview = dependencies.overview;
+  let stripeBilling = dependencies.stripeBilling;
+  let stripeWebhooks = dependencies.stripeWebhooks;
 
   return {
+    config,
     database: dependencies.database,
     get ownershipLookup() {
       return dependencies.ownershipLookup ?? (config.nodeEnv === "test"
@@ -132,6 +146,24 @@ export function createApiServices(config: AppConfig, dependencies: ApiServiceDep
     get overview() {
       overview ??= createOverviewService(createOverviewRepository(dependencies.database));
       return overview;
+    },
+    get stripeBilling() {
+      stripeBilling ??= createStripeBillingService(
+        this.stripeGateway,
+        this.ownershipLookup,
+        createStripeBillingRepository(dependencies.database),
+        config,
+      );
+      return stripeBilling;
+    },
+    get stripeWebhooks() {
+      stripeWebhooks ??= createStripeWebhookService(
+        config.stripe,
+        createStripeWebhookRepository(dependencies.database),
+        this.stripeGateway,
+        { logger: { info: dependencies.onInfo ?? (() => undefined) } },
+      );
+      return stripeWebhooks;
     },
     get authRuntime() {
       authRuntime ??= createBetterAuthRuntime(config.betterAuth, {

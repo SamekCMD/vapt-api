@@ -8,6 +8,7 @@ import type { AuthContext } from "../plugins/auth.js";
 import { registerWorkerAuthRoutes } from "./routes/auth.js";
 import { registerWorkerPublicRoutes } from "./routes/public.js";
 import { registerWorkerRestaurantRoutes } from "./routes/restaurant.js";
+import { registerWorkerStripeRoutes } from "./routes/stripe.js";
 
 export type WorkerHonoEnv = {
   Bindings: WorkerBindings;
@@ -16,7 +17,7 @@ export type WorkerHonoEnv = {
 
 export function createWorkerApp(
   createServices?: WorkerServicesFactory,
-  options: { authRateLimit?: boolean; publicRateLimit?: boolean; privateRateLimit?: boolean } = {},
+  options: { authRateLimit?: boolean; publicRateLimit?: boolean; privateRateLimit?: boolean; stripeRateLimit?: boolean } = {},
 ): Hono<WorkerHonoEnv> {
   const app = new Hono<WorkerHonoEnv>();
   installWorkerHttpPolicy(app, createServices);
@@ -25,6 +26,7 @@ export function createWorkerApp(
     registerWorkerAuthRoutes(app, { rateLimit: options.authRateLimit });
     registerWorkerPublicRoutes(app, { rateLimit: options.publicRateLimit });
     registerWorkerRestaurantRoutes(app, { rateLimit: options.privateRateLimit });
+    registerWorkerStripeRoutes(app, { rateLimit: options.stripeRateLimit });
     app.get("/health/ready", async (context) => {
       const services = await createServices(context.env, context.executionCtx);
       return context.json({
