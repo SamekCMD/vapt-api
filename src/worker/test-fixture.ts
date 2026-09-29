@@ -9,7 +9,9 @@ import type { StripeGateway } from "../modules/billing/stripe/types.js";
 import type { OrderService } from "../modules/orders/service.js";
 import type { MenuRepository } from "../modules/menu/repository.js";
 import { createMenuService } from "../modules/menu/service.js";
-import type { CatalogService, FeedbackService, StripeBillingService, StripeWebhookService, TableSessionService } from "../composition/api-services.js";
+import type { CatalogService, FeedbackService, MercadoPagoServices, StripeBillingService, StripeWebhookService, TableSessionService } from "../composition/api-services.js";
+import { createPaymentModule } from "../modules/payments/composition.js";
+import type { PaymentTransactionRecord } from "../modules/payments/repository.js";
 import { parseWorkerJson, requireWorkerAuth, trustedRateLimitKey, workerRateLimit } from "./http.js";
 
 type FixtureBindings = WorkerBindings & { TEST_GREETING: string };
@@ -62,7 +64,7 @@ const fakeOrders: OrderService = {
     }
     return {
       orderId, displayId: "11", restaurantId: "synthetic-restaurant-id",
-      tableSessionId: fixtureSessionId, totalPrice: "12.00", status: "pending",
+      tableSessionId: fixtureSessionId, totalPrice: "12.00", status: "waiting_payment",
       paymentStatus: null, idempotentReplay: false, channel: "local", tableNumber: "1",
       createdAt: "2026-09-29T00:00:00.000Z", items: [],
     };
@@ -136,18 +138,73 @@ const fakeStripeWebhooks = {
     return { received: true, duplicate, ignored: true, providerEventId: id };
   },
 } satisfies StripeWebhookService;
+const fakePaymentModule = createPaymentModule({ nodeEnv: "test" } as AppConfig, fakeDatabase, [], {
+  workerId: "synthetic-payments", onError() {},
+});
+const fakeTransaction: PaymentTransactionRecord = {
+  id: "10000000-0000-4000-8000-000000000031",
+  restaurantId: "synthetic-restaurant-id", orderId: fixtureOrderId,
+  providerAccountId: "synthetic-account-id", provider: "mercado_pago", externalPaymentId: null,
+  idempotencyKey: "synthetic-checkout", requestFingerprint: "synthetic-fingerprint",
+  amount: { amount: "12.00", currency: "BRL" }, status: "pending", providerStatus: null,
+  paymentMethod: null, processingMode: "online", providerPayload: { checkoutDiagnostics: null },
+  manuallyConfirmedBy: null, checkoutUrl: "https://www.mercadopago.com.br/checkout/synthetic",
+  expiresAt: "2030-01-01T00:00:00.000Z", version: 1,
+  createdAt: "2026-09-29T00:00:00.000Z", updatedAt: "2026-09-29T00:00:00.000Z",
+};
+fakePaymentModule.service = {
+  async startPayment() { return fakeTransaction; },
+  async getTransaction() { return fakeTransaction; },
+};
+let mercadoPagoWebhookCalls = 0;
+let mercadoPagoSideEffects = 0;
+let mercadoPagoRawBody = "";
+const processedMercadoPagoEvents = new Set<string>();
+const fakeMercadoPago = {
+  oauth: {
+    async beginConnection() { return { authorizationUrl: "https://auth.mercadopago.com/authorization?synthetic=1" }; },
+    async handleCallback() { return { status: "connected", returnOrigin: "https://app.vapt.test" }; },
+    async getStatus() { return { status: "active" }; },
+    async disconnect() { return { status: "disconnected" }; },
+  },
+  returnReconciliation: { async reconcile() { return { ...fakeTransaction, status: "paid" }; } },
+  diagnostics: { async inspect() { return { found: false }; } },
+  webhook: {
+    async handle(input: { rawBody: string }) {
+      mercadoPagoWebhookCalls++;
+      mercadoPagoRawBody = input.rawBody;
+      const id = String((JSON.parse(input.rawBody) as { id: string }).id);
+      const duplicate = processedMercadoPagoEvents.has(id);
+      if (!duplicate) {
+        processedMercadoPagoEvents.add(id);
+        mercadoPagoSideEffects++;
+      }
+      return duplicate ? { received: true, duplicate: true } : { received: true, duplicate: false, ignored: true };
+    },
+  },
+} as unknown as MercadoPagoServices;
 let serviceFactoryCalls = 0;
 const app = createWorkerApp((env, context) => {
   serviceFactoryCalls++;
+  const mercadoPagoEnabled = Boolean(env.MERCADO_PAGO_CLIENT_ID);
   return createWorkerServices(env, context, {
     config: {
       nodeEnv: "test",
+      corsOrigins: ["https://app.vapt.test"],
+      frontendUrl: new URL("https://app.vapt.test"),
+      apiPublicUrl: new URL("https://api.vapt.test"),
+      security: { publicOrderTokenSecret: "synthetic-public-order-secret" },
       stripe: {
         secretKey: "sk_test_synthetic", webhookSecret: "whsec_synthetic",
         webhookToleranceSeconds: 300, environment: "test", portalConfigurationId: "bpc_synthetic",
         prices: { starter: "price_starter", pro: "price_pro", business: "price_business" },
       },
       paymentEffects: { pollIntervalMs: 5_000, batchSize: 25, leaseMs: 60_000, maxAttempts: 5, retryBaseMs: 30_000 },
+      mercadoPago: mercadoPagoEnabled ? {
+        clientId: "synthetic", clientSecret: "synthetic", redirectUri: new URL("https://api.vapt.test/payments/mercado-pago/oauth/callback"),
+        webhookSecret: "synthetic-webhook-secret", tokenEncryptionKey: Buffer.alloc(32), credentialKeyId: "synthetic",
+        environment: "sandbox", testAccessToken: "synthetic-test-token",
+      } : undefined,
     } as AppConfig,
     database: fakeDatabase,
     authRuntime: fakeAuthRuntime,
@@ -159,12 +216,16 @@ const app = createWorkerApp((env, context) => {
     menu: fakeMenu,
     stripeWebhooks: fakeStripeWebhooks,
     stripeBilling: fakeStripeBilling,
+    ...(mercadoPagoEnabled ? { mercadoPago: fakeMercadoPago, payments: fakePaymentModule } : {}),
     ownershipLookup: async ({ userId, restaurantId }) =>
       userId === "user-1" && restaurantId === "10000000-0000-4000-8000-000000000001",
   });
-}, { authRateLimit: false, publicRateLimit: false, privateRateLimit: false, stripeRateLimit: false });
+}, { authRateLimit: false, publicRateLimit: false, privateRateLimit: false, stripeRateLimit: false, paymentRateLimit: false });
 app.get("/_test/composition-counts", (context) => context.json({ serviceFactoryCalls }));
 app.get("/_test/stripe-counts", (context) => context.json({ stripeWebhookCalls, stripeSideEffects }));
+app.get("/_test/mercado-pago-counts", (context) => context.json({
+  mercadoPagoWebhookCalls, mercadoPagoSideEffects, mercadoPagoRawBody,
+}));
 app.get("/_test/missing-ingress", (context) => {
   trustedRateLimitKey(new Headers({ "x-forwarded-for": "1.2.3.4" }), "auth");
   return context.json({ unexpected: true });

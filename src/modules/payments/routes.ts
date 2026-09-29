@@ -10,7 +10,11 @@ import { validateWithSchema } from "../../lib/validation.js";
 import type { OrderRepository } from "../orders/repository.js";
 import { createOrderService } from "../orders/service.js";
 import { requireAuth } from "../../plugins/auth.js";
-import { isAllowedOrigin } from "../../plugins/cors.js";
+import {
+  createMercadoPagoBrowserReturnUrl,
+  createMercadoPagoReturnUrls,
+  queryStringValue,
+} from "./return-urls.js";
 import {
   hostedCheckoutBodySchema,
   hostedCheckoutHeadersSchema,
@@ -37,66 +41,7 @@ export type MercadoPagoPaymentDiagnosticsService = {
   }): Promise<Readonly<Record<string, unknown>>>;
 };
 
-const SAFE_MERCADO_PAGO_RETURN_PARAMS = [
-  "payment_id",
-  "status",
-  "external_reference",
-  "merchant_order_id",
-  "preference_id",
-] as const;
-
-function queryStringValue(value: unknown): string | null {
-  return typeof value === "string" && value.length <= 256 ? value : null;
-}
-
-function resolveHostedCheckoutReturnOrigin(
-  requestedOrigin: string | null | undefined,
-  config: AppConfig,
-): string {
-  const fallbackOrigin = config.frontendUrl!.origin;
-
-  if (!requestedOrigin) return fallbackOrigin;
-
-  try {
-    const url = new URL(requestedOrigin);
-    const isOriginOnly =
-      url.origin === requestedOrigin &&
-      url.pathname === "/" &&
-      url.search === "" &&
-      url.hash === "" &&
-      url.username === "" &&
-      url.password === "";
-
-    return isOriginOnly && isAllowedOrigin(url.origin, config.corsOrigins)
-      ? url.origin
-      : fallbackOrigin;
-  } catch {
-    return fallbackOrigin;
-  }
-}
-
-export function createMercadoPagoReturnUrls(
-  config: AppConfig,
-  requestedOrigin?: string,
-) {
-  if (!config.apiPublicUrl) {
-    throw new AppError(503, "mercado_pago_not_configured", "Mercado Pago return URL is not configured");
-  }
-
-  const returnOrigin = resolveHostedCheckoutReturnOrigin(requestedOrigin, config);
-  const createUrl = (result: "success" | "pending" | "failure") => {
-    const url = new URL("/payments/mercado-pago/return", config.apiPublicUrl);
-    url.searchParams.set("result", result);
-    url.searchParams.set("return_origin", returnOrigin);
-    return url;
-  };
-
-  return {
-    success: createUrl("success"),
-    pending: createUrl("pending"),
-    failure: createUrl("failure"),
-  };
-}
+export { createMercadoPagoReturnUrls } from "./return-urls.js";
 
 export async function registerMercadoPagoReturnRoutes(
   app: FastifyInstance,
@@ -112,7 +57,7 @@ export async function registerMercadoPagoReturnRoutes(
     async (request, reply: FastifyReply) => {
       const query = request.query as Record<string, unknown>;
       const requestedResult = queryStringValue(query.result);
-      let result = requestedResult === "success" || requestedResult === "pending"
+      let result: "success" | "pending" | "failure" = requestedResult === "success" || requestedResult === "pending"
         ? requestedResult
         : "failure";
       const paymentId = queryStringValue(query.payment_id);
@@ -141,17 +86,7 @@ export async function registerMercadoPagoReturnRoutes(
         }
       }
 
-      const returnOrigin = resolveHostedCheckoutReturnOrigin(
-        queryStringValue(query.return_origin),
-        config,
-      );
-      const destination = new URL("/payment/return", returnOrigin);
-      destination.searchParams.set("result", result);
-
-      for (const parameter of SAFE_MERCADO_PAGO_RETURN_PARAMS) {
-        const value = queryStringValue(query[parameter]);
-        if (value !== null) destination.searchParams.set(parameter, value);
-      }
+      const destination = createMercadoPagoBrowserReturnUrl(config, query, result);
 
       request.log.info({
         result,

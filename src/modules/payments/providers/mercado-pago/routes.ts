@@ -1,100 +1,24 @@
 import type { FastifyInstance } from "fastify";
-import { z } from "zod";
-
 import type { AppConfig } from "../../../../lib/config.js";
-import { createSecretCipher } from "../../../../lib/crypto.js";
-import type { Queryable } from "../../../../lib/database.js";
 import { AppError } from "../../../../lib/errors.js";
-import {
-  type OwnershipLookup,
-} from "../../../../lib/permissions.js";
 import { validateWithSchema } from "../../../../lib/validation.js";
 import { requireAuth } from "../../../../plugins/auth.js";
-import { isAllowedOrigin } from "../../../../plugins/cors.js";
-import { createMercadoPagoOAuthClient } from "./client.js";
+import type { MercadoPagoOAuthService } from "./oauth.js";
 import {
-  createMercadoPagoOAuthRepository,
-  createMercadoPagoOAuthService,
-  type MercadoPagoOAuthService,
-} from "./oauth.js";
-
-const restaurantParamsSchema = z.object({
-  restaurantId: z.string().uuid(),
-}).strict();
-
-const environmentSchema = z.enum(["sandbox", "production"]);
-
-const connectBodySchema = z.object({
-  environment: environmentSchema,
-  returnOrigin: z.string().trim().min(1).max(255).optional(),
-}).strict();
-
-const environmentQuerySchema = z.object({
-  environment: environmentSchema,
-}).strict();
-
-const callbackQuerySchema = z.object({
-  state: z.string().min(16).max(512),
-  code: z.string().min(1).max(2048).optional(),
-  error: z.string().min(1).max(128).optional(),
-  error_description: z.string().max(512).optional(),
-}).strict().refine((value) => Boolean(value.code || value.error));
+  callbackQuerySchema,
+  connectBodySchema,
+  createMercadoPagoOAuthRedirect,
+  environmentQuerySchema,
+  resolveReturnOrigin,
+  restaurantParamsSchema,
+} from "./http-contract.js";
+export { createMercadoPagoOAuthServiceFromConfig } from "./composition.js";
+export { resolveReturnOrigin } from "./http-contract.js";
 
 export type MercadoPagoOAuthRouteService = Pick<
   MercadoPagoOAuthService,
   "beginConnection" | "handleCallback" | "getStatus" | "disconnect"
 >;
-
-function resolveReturnOrigin(value: string | undefined, config: AppConfig): string {
-  const fallbackOrigin = config.frontendUrl!.origin;
-  if (!value) return fallbackOrigin;
-
-  let origin: string;
-  try {
-    const parsed = new URL(value);
-    origin = parsed.origin;
-    if (value !== origin) throw new Error("origin_only");
-  } catch {
-    throw new AppError(400, "oauth_return_origin_invalid", "OAuth return origin is invalid");
-  }
-
-  if (origin !== fallbackOrigin && !isAllowedOrigin(origin, config.corsOrigins)) {
-    throw new AppError(400, "oauth_return_origin_invalid", "OAuth return origin is not allowed");
-  }
-
-  return origin;
-}
-
-export function createMercadoPagoOAuthServiceFromConfig(
-  config: AppConfig,
-  database: Queryable,
-  ownershipLookup: OwnershipLookup,
-): MercadoPagoOAuthService {
-  if (!config.mercadoPago || !config.frontendUrl) {
-    throw new AppError(
-      503,
-      "mercado_pago_not_configured",
-      "Mercado Pago OAuth is not configured",
-    );
-  }
-
-  return createMercadoPagoOAuthService({
-    repository: createMercadoPagoOAuthRepository(database),
-    client: createMercadoPagoOAuthClient({
-      clientId: config.mercadoPago.clientId,
-      clientSecret: config.mercadoPago.clientSecret,
-    }),
-    cipher: createSecretCipher(config.mercadoPago.tokenEncryptionKey),
-    ownershipLookup,
-    config: {
-      clientId: config.mercadoPago.clientId,
-      redirectUri: config.mercadoPago.redirectUri,
-      frontendUrl: config.frontendUrl,
-      credentialKeyId: config.mercadoPago.credentialKeyId,
-      stateTtlMs: 10 * 60 * 1000,
-    },
-  });
-}
 
 export async function registerMercadoPagoOAuthRoutes(
   app: FastifyInstance,
@@ -143,12 +67,7 @@ export async function registerMercadoPagoOAuthRoutes(
         error: query.error,
         errorDescription: query.error_description,
       });
-      const redirect = new URL(
-        "/dashboard/settings",
-        result.returnOrigin ?? config.frontendUrl,
-      );
-      redirect.searchParams.set("payment_provider", "mercado_pago");
-      redirect.searchParams.set("connection", result.status);
+      const redirect = createMercadoPagoOAuthRedirect(config, result.status, result.returnOrigin);
       return reply.redirect(redirect.toString());
     },
   );

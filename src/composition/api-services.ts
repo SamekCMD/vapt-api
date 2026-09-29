@@ -28,7 +28,21 @@ import { createOverviewService } from "../modules/overview/service.js";
 import { createPaymentModule } from "../modules/payments/composition.js";
 import type { PaymentProvider } from "../modules/payments/provider.js";
 import { createManualPaymentProvider } from "../modules/payments/providers/manual.js";
-import type { PaymentModule } from "../modules/payments/service.js";
+import { createMercadoPagoCheckoutClient } from "../modules/payments/providers/mercado-pago/client.js";
+import { createMercadoPagoOAuthServiceFromConfig } from "../modules/payments/providers/mercado-pago/composition.js";
+import type { MercadoPagoOAuthService } from "../modules/payments/providers/mercado-pago/oauth.js";
+import { createMercadoPagoPaymentClient } from "../modules/payments/providers/mercado-pago/payment-client.js";
+import {
+  createMercadoPagoEnvironmentAccessTokenResolver,
+  createMercadoPagoPaymentProvider,
+} from "../modules/payments/providers/mercado-pago/payment.js";
+import { createMercadoPagoWebhookService, type MercadoPagoWebhookService } from "../modules/payments/providers/mercado-pago/webhook.js";
+import {
+  createMercadoPagoPaymentDiagnosticsService,
+  createMercadoPagoReturnReconciliationService,
+  type MercadoPagoReturnReconciliationService,
+} from "../modules/payments/service.js";
+import { createManualPaymentService, type ManualPaymentService, type PaymentModule } from "../modules/payments/service.js";
 import { createRestaurantRepository } from "../modules/restaurants/repository.js";
 import { createRestaurantService } from "../modules/restaurants/service.js";
 import { createTableSessionRepository } from "../modules/table-sessions/repository.js";
@@ -43,6 +57,12 @@ export type KitchenService = ReturnType<typeof createKitchenService>;
 export type OverviewService = ReturnType<typeof createOverviewService>;
 export type StripeBillingService = ReturnType<typeof createStripeBillingService>;
 export type StripeWebhookService = ReturnType<typeof createStripeWebhookService>;
+export type MercadoPagoServices = {
+  oauth: MercadoPagoOAuthService;
+  returnReconciliation: MercadoPagoReturnReconciliationService;
+  diagnostics: ReturnType<typeof createMercadoPagoPaymentDiagnosticsService>;
+  webhook: MercadoPagoWebhookService;
+};
 
 export type ApiServiceDependencies = {
   database: Database;
@@ -58,6 +78,9 @@ export type ApiServiceDependencies = {
   overview?: OverviewService;
   stripeBilling?: StripeBillingService;
   stripeWebhooks?: StripeWebhookService;
+  manualPayments?: ManualPaymentService;
+  mercadoPago?: MercadoPagoServices;
+  payments?: PaymentModule;
   stripeGateway?: StripeGateway;
   paymentProviders?: readonly PaymentProvider[];
   runInBackground?: BackgroundTaskRunner;
@@ -83,6 +106,8 @@ export type ApiServices = {
   overview: OverviewService;
   stripeBilling: StripeBillingService;
   stripeWebhooks: StripeWebhookService;
+  manualPayments: ManualPaymentService;
+  mercadoPago: MercadoPagoServices | null;
   stripeGateway: StripeGateway;
   payments: PaymentModule;
 };
@@ -90,7 +115,7 @@ export type ApiServices = {
 export function createApiServices(config: AppConfig, dependencies: ApiServiceDependencies): ApiServices {
   let authRuntime = dependencies.authRuntime;
   let stripeGateway = dependencies.stripeGateway;
-  let payments: PaymentModule | undefined;
+  let payments = dependencies.payments;
   let catalog = dependencies.catalog;
   let orders = dependencies.orders;
   let feedback = dependencies.feedback;
@@ -101,6 +126,36 @@ export function createApiServices(config: AppConfig, dependencies: ApiServiceDep
   let overview = dependencies.overview;
   let stripeBilling = dependencies.stripeBilling;
   let stripeWebhooks = dependencies.stripeWebhooks;
+  let manualPayments = dependencies.manualPayments;
+  let mercadoPago = dependencies.mercadoPago;
+  let mercadoPagoCore: {
+    oauth: MercadoPagoOAuthService;
+    paymentClient: ReturnType<typeof createMercadoPagoPaymentClient>;
+    checkoutClient: ReturnType<typeof createMercadoPagoCheckoutClient>;
+    resolveAccessToken: ReturnType<typeof createMercadoPagoEnvironmentAccessTokenResolver>;
+  } | null | undefined;
+  const getMercadoPagoCore = () => {
+    if (mercadoPagoCore !== undefined) return mercadoPagoCore;
+    if (!config.mercadoPago || !config.frontendUrl || !config.apiPublicUrl) {
+      mercadoPagoCore = null;
+      return null;
+    }
+    const oauth = createMercadoPagoOAuthServiceFromConfig(
+      config, dependencies.database, dependencies.ownershipLookup ??
+        (config.nodeEnv === "test" ? testOwnershipLookup : createOwnershipLookup(dependencies.database)),
+    );
+    mercadoPagoCore = {
+      oauth,
+      paymentClient: createMercadoPagoPaymentClient(),
+      checkoutClient: createMercadoPagoCheckoutClient(),
+      resolveAccessToken: createMercadoPagoEnvironmentAccessTokenResolver({
+        environment: config.mercadoPago.environment,
+        sandboxAccessToken: config.mercadoPago.testAccessToken,
+        oauthResolver: (input) => oauth.resolveAccessToken(input),
+      }),
+    };
+    return mercadoPagoCore;
+  };
 
   return {
     config,
@@ -165,6 +220,45 @@ export function createApiServices(config: AppConfig, dependencies: ApiServiceDep
       );
       return stripeWebhooks;
     },
+    get manualPayments() {
+      manualPayments ??= createManualPaymentService({
+        repository: this.payments.repository,
+        paymentService: this.payments.service,
+        ownershipLookup: this.ownershipLookup,
+      });
+      return manualPayments;
+    },
+    get mercadoPago() {
+      if (mercadoPago) return mercadoPago;
+      const core = getMercadoPagoCore();
+      if (!core || !config.mercadoPago) return null;
+      const resolveProviderAccountDiagnostics = (input: { providerAccountId: string; restaurantId: string }) =>
+        core.oauth.getSafeAccountDiagnostics(input);
+      mercadoPago = {
+        oauth: core.oauth,
+        returnReconciliation: createMercadoPagoReturnReconciliationService({
+          repository: this.payments.repository,
+          resolveAccessToken: core.resolveAccessToken,
+          resolveProviderAccountDiagnostics,
+          client: core.paymentClient,
+        }),
+        diagnostics: createMercadoPagoPaymentDiagnosticsService({
+          orderService: this.orders,
+          paymentService: this.payments.service,
+          resolveAccessToken: core.resolveAccessToken,
+          resolveProviderAccountDiagnostics,
+          paymentClient: core.paymentClient,
+          checkoutClient: core.checkoutClient,
+        }),
+        webhook: createMercadoPagoWebhookService({
+          webhookSecret: config.mercadoPago.webhookSecret,
+          repository: this.payments.repository,
+          resolveAccessToken: core.resolveAccessToken,
+          client: core.paymentClient,
+        }),
+      };
+      return mercadoPago;
+    },
     get authRuntime() {
       authRuntime ??= createBetterAuthRuntime(config.betterAuth, {
         pool: dependencies.database as Pool,
@@ -184,10 +278,20 @@ export function createApiServices(config: AppConfig, dependencies: ApiServiceDep
       return stripeGateway;
     },
     get payments() {
+      if (payments) return payments;
+      const core = dependencies.paymentProviders ? null : getMercadoPagoCore();
+      const providers = dependencies.paymentProviders ?? [
+        createManualPaymentProvider(),
+        ...(core && config.apiPublicUrl ? [createMercadoPagoPaymentProvider({
+          client: core.checkoutClient,
+          resolveAccessToken: core.resolveAccessToken,
+          notificationUrl: new URL("/webhooks/payments/mercado-pago", config.apiPublicUrl),
+        })] : []),
+      ];
       payments ??= createPaymentModule(
         config,
         dependencies.database,
-        dependencies.paymentProviders ?? [createManualPaymentProvider()],
+        providers,
         {
           workerId: dependencies.workerId ?? "payment-effects-manual",
           onError: dependencies.onError ?? (() => undefined),

@@ -9,6 +9,7 @@ import { registerWorkerAuthRoutes } from "./routes/auth.js";
 import { registerWorkerPublicRoutes } from "./routes/public.js";
 import { registerWorkerRestaurantRoutes } from "./routes/restaurant.js";
 import { registerWorkerStripeRoutes } from "./routes/stripe.js";
+import { registerWorkerMercadoPagoRoutes } from "./routes/mercado-pago.js";
 
 export type WorkerHonoEnv = {
   Bindings: WorkerBindings;
@@ -17,7 +18,7 @@ export type WorkerHonoEnv = {
 
 export function createWorkerApp(
   createServices?: WorkerServicesFactory,
-  options: { authRateLimit?: boolean; publicRateLimit?: boolean; privateRateLimit?: boolean; stripeRateLimit?: boolean } = {},
+  options: { authRateLimit?: boolean; publicRateLimit?: boolean; privateRateLimit?: boolean; stripeRateLimit?: boolean; paymentRateLimit?: boolean } = {},
 ): Hono<WorkerHonoEnv> {
   const app = new Hono<WorkerHonoEnv>();
   installWorkerHttpPolicy(app, createServices);
@@ -27,6 +28,7 @@ export function createWorkerApp(
     registerWorkerPublicRoutes(app, { rateLimit: options.publicRateLimit });
     registerWorkerRestaurantRoutes(app, { rateLimit: options.privateRateLimit });
     registerWorkerStripeRoutes(app, { rateLimit: options.stripeRateLimit });
+    registerWorkerMercadoPagoRoutes(app, { rateLimit: options.paymentRateLimit });
     app.get("/health/ready", async (context) => {
       const services = await createServices(context.env, context.executionCtx);
       return context.json({

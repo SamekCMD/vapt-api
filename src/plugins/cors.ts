@@ -3,10 +3,9 @@ import type { FastifyInstance } from "fastify";
 
 import { AppError } from "../lib/errors.js";
 import type { AppConfig } from "../lib/config.js";
+import { isAllowedOrigin } from "../lib/origins.js";
 
-export function isAllowedOrigin(origin: string, allowedOrigins: string[]): boolean {
-  return allowedOrigins.includes(origin);
-}
+export { isAllowedOrigin } from "../lib/origins.js";
 
 export async function registerCors(app: FastifyInstance, config: AppConfig) {
   await app.register(cors, {
