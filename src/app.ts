@@ -1,8 +1,8 @@
+import { randomUUID } from "node:crypto";
 import Fastify from "fastify";
 import { Pool } from "pg";
 
-import { createResendAuthEmailService } from "./email/email.service.js";
-import { createResendEmailClient } from "./email/resend.client.js";
+import { createApiServices } from "./composition/api-services.js";
 import type { AppConfig } from "./lib/config.js";
 import type { Database } from "./lib/database.js";
 import {
@@ -13,13 +13,11 @@ import {
 import { registerStripeBillingRoutes } from "./modules/billing/stripe/routes.js";
 import { createStripeBillingRepository } from "./modules/billing/stripe/repository.js";
 import type { StripeGateway } from "./modules/billing/stripe/types.js";
-import { createStripeClient, createStripeGateway } from "./modules/billing/stripe/client.js";
 import { createStripeWebhookRepository } from "./modules/billing/stripe/webhook-repository.js";
 import { createStripeWebhookService } from "./modules/billing/stripe/webhook-service.js";
 import { registerStripeWebhookRoutes } from "./modules/billing/stripe/webhook-routes.js";
 import { createCatalogRepository } from "./modules/catalog/repository.js";
 import { registerCatalogRoutes } from "./modules/catalog/routes.js";
-import { createBetterAuthRuntime } from "./modules/auth/better-auth.js";
 import { registerBetterAuthHandler } from "./modules/auth/fastify-handler.js";
 import { registerAuthRoutes } from "./modules/auth/routes.js";
 import type { AuthRuntime, BackgroundTaskRunner } from "./modules/auth/runtime.js";
@@ -104,28 +102,20 @@ export async function buildApp(
     ? null
     : new Pool({ connectionString: config.betterAuth.databaseUrl });
   const database = dependencies.database ?? ownedDatabase!;
-  const stripeGateway = dependencies.stripeGateway ?? createStripeGateway(createStripeClient(config.stripe));
-
-  const authRuntime = dependencies.authRuntime ?? createBetterAuthRuntime(
-    config.betterAuth,
-    {
-      emailService: createResendAuthEmailService(
-        createResendEmailClient(config.betterAuth.email.resendApiKey),
-        config.betterAuth.email,
-        {
-          info(fields, message) {
-            app.log.info(fields, message);
-          },
-        },
-      ),
-      runInBackground: dependencies.runInBackground ?? ((task) => {
-        void task.catch((error: unknown) => {
-          app.log.error({ err: error }, "Better Auth background task failed");
-        });
-      }),
-      pool: database as Pool,
-    },
-  );
+  const paymentProviders: PaymentProvider[] = [createManualPaymentProvider()];
+  const services = createApiServices(config, {
+    database,
+    authRuntime: dependencies.authRuntime,
+    stripeGateway: dependencies.stripeGateway,
+    paymentProviders,
+    runInBackground: dependencies.runInBackground,
+    workerId: dependencies.workerId ?? `payment-effects-${process.pid}-${randomUUID()}`,
+    onError: (error) => app.log.error({ err: error }, "Payment effect reconciliation failed"),
+    onBackgroundError: (error) => app.log.error({ err: error }, "Better Auth background task failed"),
+    onInfo: (fields, message) => app.log.info(fields, message),
+  });
+  const authRuntime = services.authRuntime;
+  const stripeGateway = services.stripeGateway;
   const sessionResolver = createSessionResolver(authRuntime);
 
   registerAuthDecorator(app, sessionResolver);
@@ -148,7 +138,6 @@ export async function buildApp(
     config.security.publicOrderTokenSecret,
   );
 
-  const paymentProviders: PaymentProvider[] = [createManualPaymentProvider()];
   const mercadoPagoOAuth = config.mercadoPago && config.frontendUrl && config.apiPublicUrl
     ? createMercadoPagoOAuthServiceFromConfig(config, database, ownershipLookup)
     : null;
@@ -175,6 +164,7 @@ export async function buildApp(
   const paymentModule = registerPaymentModule(app, config, database, paymentProviders, {
     startPaymentReconciliation: dependencies.startPaymentReconciliation,
     workerId: dependencies.workerId,
+    module: services.payments,
   });
   await registerRawBody(app);
   await registerCors(app, config);

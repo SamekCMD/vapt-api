@@ -12,24 +12,22 @@ import type {
   MercadoPagoCheckoutClient,
   MercadoPagoPersistedPreferenceDiagnostics,
 } from "./providers/mercado-pago/client.js";
-import { createPaymentEffectProcessor, type PaymentEffectProcessor } from "./effects.js";
+import type { PaymentEffectProcessor } from "./effects.js";
 import {
-  createPaymentEffectReconciliation,
   type PaymentEffectReconciliation,
 } from "./reconciliation.js";
 import {
   PaymentTransactionConflictError,
-  createPaymentRepository,
   type ManualPaymentOrderRecord,
   type PaymentProviderAccountRecord,
   type PaymentRepository,
   type PaymentTransactionRecord,
 } from "./repository.js";
 import {
-  createPaymentProviderRegistry,
   PaymentProviderNotFoundError,
   type PaymentProviderRegistry,
 } from "./registry.js";
+import { createPaymentModule } from "./composition.js";
 import { assertPaymentTransition, isPaymentTransitionAllowed } from "./state-machine.js";
 import type {
   CreatePaymentResult,
@@ -778,37 +776,17 @@ export function registerPaymentModule(
   config: AppConfig,
   database: Queryable,
   providers: readonly PaymentProvider[] = [],
-  options: { startPaymentReconciliation?: boolean; workerId?: string } = {},
+  options: { startPaymentReconciliation?: boolean; workerId?: string; module?: PaymentModule } = {},
 ): PaymentModule {
-  const registry = createPaymentProviderRegistry(providers);
-  const repository = createPaymentRepository(database);
-  const service = createPaymentService(registry, repository);
-  const effectsConfig = config.paymentEffects ?? {
-    pollIntervalMs: 5_000,
-    batchSize: 25,
-    leaseMs: 60_000,
-    maxAttempts: 5,
-    retryBaseMs: 30_000,
-  };
-  const effects = createPaymentEffectProcessor({
-    repository,
+  const module = options.module ?? createPaymentModule(config, database, providers, {
     workerId: options.workerId ?? ("payment-effects-" + process.pid + "-" + randomUUID()),
-    maxAttempts: effectsConfig.maxAttempts,
-    leaseMs: effectsConfig.leaseMs,
-    baseRetryDelayMs: effectsConfig.retryBaseMs,
-  });
-  const reconciliation = createPaymentEffectReconciliation({
-    processor: effects,
-    batchSize: effectsConfig.batchSize,
-    pollIntervalMs: effectsConfig.pollIntervalMs,
     onError: (error) => app.log.error({ err: error }, "Payment effect reconciliation failed"),
   });
-  const module = { registry, repository, service, effects, reconciliation };
 
   app.decorate("payments", module);
   app.addHook("onReady", () => {
-    if (options.startPaymentReconciliation ?? config.nodeEnv !== "test") reconciliation.start();
+    if (options.startPaymentReconciliation ?? config.nodeEnv !== "test") module.reconciliation.start();
   });
-  app.addHook("onClose", () => reconciliation.stop());
+  app.addHook("onClose", () => module.reconciliation.stop());
   return module;
 }
