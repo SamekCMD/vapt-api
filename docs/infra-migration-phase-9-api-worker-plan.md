@@ -10,6 +10,8 @@
 
 **Spec:** `docs/infra-migration-phase-9-api-worker-design.md`
 
+**Execution status (2026-09-29):** Tasks 1–3 completed. Task 4 hit a `workerd` runtime compatibility gate; Tasks 4–6 are paused. See `docs/infra-migration-phase-9-runtime-blocker.md`. The Worker is not deployed or ready to merge.
+
 ## Global Constraints
 
 - Stage 9 is code and local-runtime verification only. Do not deploy a Worker, create Hyperdrive or secrets, change DNS, modify Coolify, or send real provider requests.
