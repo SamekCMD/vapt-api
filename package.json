@@ -9,8 +9,10 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc -p tsconfig.json",
+    "build:worker": "wrangler deploy --dry-run --config wrangler.worker.jsonc",
     "start": "node dist/server.js",
     "test": "tsx --test src/**/*.test.ts",
+    "test:worker": "tsx --test src/worker/*.workerd.ts",
     "storage:migrate": "tsx src/scripts/migrate-menu-images-to-r2.ts",
     "generate:supabase-keys": "node scripts/generate-supabase-jwt-keys.mjs"
   },
@@ -29,10 +31,12 @@
     "zod": "^4.1.12"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "5.20260929.1",
     "@types/node": "^22.14.1",
     "@types/pg": "8.20.0",
     "pino-pretty": "^13.0.0",
     "tsx": "^4.23.15",
-    "typescript": "^5.8.3"
+    "typescript": "^5.8.3",
+    "wrangler": "4.138.0"
   }
 }

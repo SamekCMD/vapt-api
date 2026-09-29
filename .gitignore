@@ -7,3 +7,4 @@ dist
 .dev.vars.*
 docs/superpowers/
 .worktrees/
+.wrangler/
