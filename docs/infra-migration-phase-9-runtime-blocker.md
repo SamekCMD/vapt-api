@@ -1,5 +1,7 @@
 # Stage 9 Worker runtime compatibility gate
 
+The approved replacement direction is a Worker-native Hono HTTP layer. Design: `docs/superpowers/specs/2026-09-29-vapt-api-worker-native-routing-design.md`. This file preserves the evidence that blocked the prior Fastify bridge.
+
 Status: blocked at Task 4 of `infra-migration-phase-9-api-worker-plan.md`. Tasks 1–3 are committed and tested. No Worker was deployed, no Hyperdrive or secret was created, and Coolify remains the serving API.
 
 ## What was verified

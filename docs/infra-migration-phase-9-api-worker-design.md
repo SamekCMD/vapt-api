@@ -1,5 +1,7 @@
 # Vapt API Worker Runtime — Design
 
+**Superseded (2026-09-29):** The Fastify HTTP bridge failed in `workerd`. The approved replacement design is `docs/superpowers/specs/2026-09-29-vapt-api-worker-native-routing-design.md`. This document remains as decision history, not implementation guidance.
+
 ## Intent and success
 
 Port the existing Vapt API from its current Coolify/Docker runtime to a Cloudflare Workers-compatible artifact without changing public API behavior. This is Stage 9 of `vaptmesaflow/docs/infra-migration-plan.md`: preserve the current Fastify routes, services, validation, Better Auth, Stripe, Mercado Pago and Neon persistence boundaries. Coolify remains the serving runtime and rollback path. Success in this stage means the Worker bundle builds and its critical HTTP behavior passes tests in `workerd`; it does **not** mean a public Worker is deployed or `api.vapt.app.br` is changed.

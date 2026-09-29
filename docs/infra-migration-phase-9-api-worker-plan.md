@@ -1,5 +1,7 @@
 # Vapt API Worker Runtime Implementation Plan
 
+**Partially superseded (2026-09-29):** Tasks 1–3 were completed; do not resume the Fastify bridge Tasks 4–6. See the replacement design in `docs/superpowers/specs/2026-09-29-vapt-api-worker-native-routing-design.md`. A new implementation plan is pending review of that design.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Produce a Cloudflare Workers-compatible build of the existing Fastify API and prove critical HTTP behavior in `workerd`, without public deployment or changing the Coolify API.
