@@ -24,6 +24,7 @@ Run from this API checkout:
 | `git diff --check` | exit 0 |
 
 These checks prove local route registration and synthetic-runtime behavior, not connectivity to production services or readiness for a public cutover.
+The Mercado Pago `workerd` fixture substitutes the downstream webhook service: it proves HMAC verification and unchanged body forwarding at the HTTP boundary, while the real service's body-ID cross-check, event reservation, and retry behavior remain covered by Node tests rather than an end-to-end Worker/database run.
 
 ## Remaining gates
 
