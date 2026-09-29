@@ -11,6 +11,15 @@ type RateLimitPolicy = {
 
 type RateLimitOptions = {
   policies?: Partial<Record<RateLimitGroup, RateLimitPolicy>>;
+  backend?: RateLimitBackend;
+};
+
+export type RateLimitBackend = {
+  limit(group: RateLimitGroup, actorKey: string): Promise<{
+    allowed: boolean;
+    remaining?: number;
+    resetAt?: number;
+  }>;
 };
 
 type Bucket = {
@@ -75,6 +84,23 @@ export function registerRateLimit(app: FastifyInstance, options: RateLimitOption
 
     const policy = policies[rateLimitGroup];
     const key = `${rateLimitGroup}:${getClientKey(request)}`;
+    if (options.backend) {
+      if (rateLimitGroup === "health") {
+        return;
+      }
+      const decision = await options.backend.limit(rateLimitGroup, key);
+      reply.header("x-ratelimit-limit", policy.maxRequests);
+      if (decision.remaining !== undefined) {
+        reply.header("x-ratelimit-remaining", decision.remaining);
+      }
+      if (decision.resetAt !== undefined) {
+        reply.header("x-ratelimit-reset", Math.ceil(decision.resetAt / 1000));
+      }
+      if (!decision.allowed) {
+        throw new AppError(429, "rate_limit_exceeded", "Too many requests");
+      }
+      return;
+    }
     const now = Date.now();
     const existingBucket = buckets.get(key);
     const bucket =

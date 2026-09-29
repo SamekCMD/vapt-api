@@ -21,6 +21,16 @@ const workerVariables = [
 export type WorkerBindings = Partial<Record<(typeof workerVariables)[number], string>> & {
   ENVIRONMENT: "preview" | "production";
   HYPERDRIVE?: { connectionString: string };
+  AUTH_RATE_LIMIT?: WorkerRateLimitBinding;
+  BILLING_RATE_LIMIT?: WorkerRateLimitBinding;
+  ORDERS_RATE_LIMIT?: WorkerRateLimitBinding;
+  STORAGE_RATE_LIMIT?: WorkerRateLimitBinding;
+  WEBHOOKS_RATE_LIMIT?: WorkerRateLimitBinding;
+  PUBLIC_RATE_LIMIT?: WorkerRateLimitBinding;
+};
+
+export type WorkerRateLimitBinding = {
+  limit(input: { key: string }): Promise<{ success: boolean }>;
 };
 
 export function configFromWorkerBindings(env: WorkerBindings): AppConfig {

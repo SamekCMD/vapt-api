@@ -78,13 +78,14 @@ import { registerCors } from "./plugins/cors.js";
 import { registerAuthDecorator } from "./plugins/auth.js";
 import { registerErrorHandler } from "./plugins/error-handler.js";
 import { createLoggerConfig } from "./plugins/logger.js";
-import { registerRateLimit } from "./plugins/rate-limit.js";
+import { registerRateLimit, type RateLimitBackend } from "./plugins/rate-limit.js";
 import { registerRawBody } from "./plugins/raw-body.js";
 
 export type BuildAppDependencies = {
   authRuntime?: AuthRuntime;
   database?: Database;
   stripeGateway?: StripeGateway;
+  rateLimitBackend?: RateLimitBackend;
 };
 
 export async function buildApp(
@@ -133,7 +134,7 @@ export async function buildApp(
     }
   });
   registerErrorHandler(app);
-  registerRateLimit(app);
+  registerRateLimit(app, { backend: dependencies.rateLimitBackend });
 
   const ownershipLookup = config.nodeEnv === "test"
     ? testOwnershipLookup
