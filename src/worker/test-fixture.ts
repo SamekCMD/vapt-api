@@ -12,6 +12,8 @@ import { createMenuService } from "../modules/menu/service.js";
 import type { CatalogService, FeedbackService, MercadoPagoServices, StripeBillingService, StripeWebhookService, TableSessionService } from "../composition/api-services.js";
 import { createPaymentModule } from "../modules/payments/composition.js";
 import type { PaymentTransactionRecord } from "../modules/payments/repository.js";
+import { createWorkerMenuImageGateway } from "../modules/storage/r2-worker.js";
+import { createMenuImageService } from "../modules/storage/service.js";
 import { parseWorkerJson, requireWorkerAuth, trustedRateLimitKey, workerRateLimit } from "./http.js";
 
 type FixtureBindings = WorkerBindings & { TEST_GREETING: string };
@@ -156,6 +158,33 @@ fakePaymentModule.service = {
   async startPayment() { return fakeTransaction; },
   async getTransaction() { return fakeTransaction; },
 };
+let adminRunCalls = 0;
+let adminRequestedLimit: number | undefined;
+fakePaymentModule.reconciliation.runOnce = async (limit) => {
+  adminRunCalls++;
+  adminRequestedLimit = limit;
+  return { claimed: 0, completed: 0, failed: 0, deadLettered: 0, pending: 0 };
+};
+let bucketDeletedKey: string | null = null;
+const syntheticR2 = {
+  accountId: "synthetic-account", accessKeyId: "synthetic-access-key", secretAccessKey: "synthetic-secret-key",
+  bucketName: "synthetic-bucket", publicBaseUrl: new URL("https://images.vapt.test/"),
+  uploadUrlTtlSeconds: 300,
+};
+const fakeMenuImages = createMenuImageService({
+  assertRestaurantAccess: async ({ userId, restaurantId }) => {
+    if (userId !== "user-1" || restaurantId !== "10000000-0000-4000-8000-000000000001") {
+      throw new AppError(403, "forbidden", "Forbidden");
+    }
+  },
+  menuItemExists: async ({ itemId }) => itemId === "10000000-0000-4000-8000-000000000041",
+  gateway: createWorkerMenuImageGateway(syntheticR2, {
+    async delete(key) { bucketDeletedKey = key; },
+  }),
+  publicBaseUrl: syntheticR2.publicBaseUrl,
+  uploadUrlTtlSeconds: syntheticR2.uploadUrlTtlSeconds,
+});
+let realR2Calls = 0;
 let mercadoPagoWebhookCalls = 0;
 let mercadoPagoSideEffects = 0;
 let mercadoPagoRawBody = "";
@@ -187,13 +216,14 @@ let serviceFactoryCalls = 0;
 const app = createWorkerApp((env, context) => {
   serviceFactoryCalls++;
   const mercadoPagoEnabled = Boolean(env.MERCADO_PAGO_CLIENT_ID);
+  const miscEnabled = (env as WorkerBindings & { TEST_MISC?: string }).TEST_MISC === "enabled";
   return createWorkerServices(env, context, {
     config: {
       nodeEnv: "test",
       corsOrigins: ["https://app.vapt.test"],
       frontendUrl: new URL("https://app.vapt.test"),
       apiPublicUrl: new URL("https://api.vapt.test"),
-      security: { publicOrderTokenSecret: "synthetic-public-order-secret" },
+      security: { publicOrderTokenSecret: "synthetic-public-order-secret", paymentEffectsAdminSecret: "synthetic-admin-secret" },
       stripe: {
         secretKey: "sk_test_synthetic", webhookSecret: "whsec_synthetic",
         webhookToleranceSeconds: 300, environment: "test", portalConfigurationId: "bpc_synthetic",
@@ -205,6 +235,7 @@ const app = createWorkerApp((env, context) => {
         webhookSecret: "synthetic-webhook-secret", tokenEncryptionKey: Buffer.alloc(32), credentialKeyId: "synthetic",
         environment: "sandbox", testAccessToken: "synthetic-test-token",
       } : undefined,
+      r2: miscEnabled ? syntheticR2 : undefined,
     } as AppConfig,
     database: fakeDatabase,
     authRuntime: fakeAuthRuntime,
@@ -217,14 +248,23 @@ const app = createWorkerApp((env, context) => {
     stripeWebhooks: fakeStripeWebhooks,
     stripeBilling: fakeStripeBilling,
     ...(mercadoPagoEnabled ? { mercadoPago: fakeMercadoPago, payments: fakePaymentModule } : {}),
+    ...(miscEnabled ? { menuImages: fakeMenuImages, payments: fakePaymentModule } : {}),
+    ...(miscEnabled ? { pushSubscriptions: {
+      async upsertOwnedSubscription(userId: string, input: { endpoint: string }) {
+        return { restaurantId: userId, endpoint: input.endpoint, status: "subscribed" as const };
+      },
+    } } : {}),
     ownershipLookup: async ({ userId, restaurantId }) =>
       userId === "user-1" && restaurantId === "10000000-0000-4000-8000-000000000001",
   });
-}, { authRateLimit: false, publicRateLimit: false, privateRateLimit: false, stripeRateLimit: false, paymentRateLimit: false });
+}, { authRateLimit: false, publicRateLimit: false, privateRateLimit: false, stripeRateLimit: false, paymentRateLimit: false, miscRateLimit: false });
 app.get("/_test/composition-counts", (context) => context.json({ serviceFactoryCalls }));
 app.get("/_test/stripe-counts", (context) => context.json({ stripeWebhookCalls, stripeSideEffects }));
 app.get("/_test/mercado-pago-counts", (context) => context.json({
   mercadoPagoWebhookCalls, mercadoPagoSideEffects, mercadoPagoRawBody,
+}));
+app.get("/_test/misc-counts", (context) => context.json({
+  adminRunCalls, adminRequestedLimit, bucketDeletedKey, realR2Calls,
 }));
 app.get("/_test/missing-ingress", (context) => {
   trustedRateLimitKey(new Headers({ "x-forwarded-for": "1.2.3.4" }), "auth");

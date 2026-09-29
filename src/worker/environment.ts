@@ -1,4 +1,5 @@
 import { ConfigError, createConfig, type AppConfig } from "../lib/config.js";
+import type { WorkerR2Bucket } from "../modules/storage/r2-worker.js";
 
 const workerVariables = [
   "CORS_ORIGINS", "FRONTEND_URL", "API_PUBLIC_URL", "LOG_LEVEL",
@@ -21,6 +22,7 @@ const workerVariables = [
 export type WorkerBindings = Partial<Record<(typeof workerVariables)[number], string>> & {
   ENVIRONMENT: "preview" | "production";
   HYPERDRIVE?: { connectionString: string };
+  R2_BUCKET?: WorkerR2Bucket;
   AUTH_RATE_LIMIT?: WorkerRateLimitBinding;
   BILLING_RATE_LIMIT?: WorkerRateLimitBinding;
   ORDERS_RATE_LIMIT?: WorkerRateLimitBinding;

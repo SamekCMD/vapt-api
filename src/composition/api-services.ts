@@ -17,6 +17,7 @@ import { createCatalogRepository } from "../modules/catalog/repository.js";
 import { createCatalogService } from "../modules/catalog/service.js";
 import { createFeedbackRepository } from "../modules/feedback/repository.js";
 import { createFeedbackService } from "../modules/feedback/service.js";
+import { createPushSubscriptionRepository, type PushSubscriptionRepository } from "../modules/ingest/repository.js";
 import { createKitchenRepository } from "../modules/kitchen/repository.js";
 import { createKitchenService } from "../modules/kitchen/service.js";
 import { createMenuRepository } from "../modules/menu/repository.js";
@@ -45,6 +46,7 @@ import {
 import { createManualPaymentService, type ManualPaymentService, type PaymentModule } from "../modules/payments/service.js";
 import { createRestaurantRepository } from "../modules/restaurants/repository.js";
 import { createRestaurantService } from "../modules/restaurants/service.js";
+import type { MenuImageService } from "../modules/storage/service.js";
 import { createTableSessionRepository } from "../modules/table-sessions/repository.js";
 import { createTableSessionService } from "../modules/table-sessions/service.js";
 
@@ -81,6 +83,8 @@ export type ApiServiceDependencies = {
   manualPayments?: ManualPaymentService;
   mercadoPago?: MercadoPagoServices;
   payments?: PaymentModule;
+  menuImages?: MenuImageService;
+  pushSubscriptions?: PushSubscriptionRepository;
   stripeGateway?: StripeGateway;
   paymentProviders?: readonly PaymentProvider[];
   runInBackground?: BackgroundTaskRunner;
@@ -108,6 +112,8 @@ export type ApiServices = {
   stripeWebhooks: StripeWebhookService;
   manualPayments: ManualPaymentService;
   mercadoPago: MercadoPagoServices | null;
+  menuImages: MenuImageService | null;
+  pushSubscriptions: PushSubscriptionRepository;
   stripeGateway: StripeGateway;
   payments: PaymentModule;
 };
@@ -128,6 +134,7 @@ export function createApiServices(config: AppConfig, dependencies: ApiServiceDep
   let stripeWebhooks = dependencies.stripeWebhooks;
   let manualPayments = dependencies.manualPayments;
   let mercadoPago = dependencies.mercadoPago;
+  let pushSubscriptions = dependencies.pushSubscriptions;
   let mercadoPagoCore: {
     oauth: MercadoPagoOAuthService;
     paymentClient: ReturnType<typeof createMercadoPagoPaymentClient>;
@@ -160,6 +167,11 @@ export function createApiServices(config: AppConfig, dependencies: ApiServiceDep
   return {
     config,
     database: dependencies.database,
+    menuImages: dependencies.menuImages ?? null,
+    get pushSubscriptions() {
+      pushSubscriptions ??= createPushSubscriptionRepository(dependencies.database);
+      return pushSubscriptions;
+    },
     get ownershipLookup() {
       return dependencies.ownershipLookup ?? (config.nodeEnv === "test"
         ? testOwnershipLookup

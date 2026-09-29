@@ -1,16 +1,8 @@
-import { timingSafeEqual } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 
 import type { AppConfig } from "../../lib/config.js";
 import type { PaymentEffectReconciliation } from "./reconciliation.js";
-
-function validAdminSecret(provided: unknown, expected: string | undefined): boolean {
-  if (typeof provided !== "string" || !expected) return false;
-  const providedBuffer = Buffer.from(provided);
-  const expectedBuffer = Buffer.from(expected);
-  if (providedBuffer.length !== expectedBuffer.length) return false;
-  return timingSafeEqual(providedBuffer, expectedBuffer);
-}
+import { validAdminSecret } from "./effects-admin.js";
 
 export async function registerPaymentEffectRoutes(
   app: FastifyInstance,
