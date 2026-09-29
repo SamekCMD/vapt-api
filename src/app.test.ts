@@ -53,6 +53,22 @@ function buildApp(config: AppConfig) {
   return buildVaptApp(config, { authRuntime: testAuthRuntime });
 }
 
+test("Worker app composition skips the payment timer while Node production retains it", async () => {
+  const database = { async query() { return { rows: [] }; } } as unknown as Database;
+  for (const [startPaymentReconciliation, expectedStarts] of [[false, 0], [undefined, 1]] as const) {
+    const app = await buildVaptApp({ ...validConfig, nodeEnv: "production" }, {
+      authRuntime: testAuthRuntime,
+      database,
+      startPaymentReconciliation,
+    });
+    let starts = 0;
+    app.payments.reconciliation.start = () => { starts += 1; };
+    await app.ready();
+    assert.equal(starts, expectedStarts);
+    await app.close();
+  }
+});
+
 test("buildApp composes SDK-verified billing webhooks into the injected Neon event transaction", async () => {
   const operations: string[] = [];
   const query = async (sql: string) => {

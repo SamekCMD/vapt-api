@@ -778,6 +778,7 @@ export function registerPaymentModule(
   config: AppConfig,
   database: Queryable,
   providers: readonly PaymentProvider[] = [],
+  options: { startPaymentReconciliation?: boolean; workerId?: string } = {},
 ): PaymentModule {
   const registry = createPaymentProviderRegistry(providers);
   const repository = createPaymentRepository(database);
@@ -791,7 +792,7 @@ export function registerPaymentModule(
   };
   const effects = createPaymentEffectProcessor({
     repository,
-    workerId: "payment-effects-" + process.pid + "-" + randomUUID(),
+    workerId: options.workerId ?? ("payment-effects-" + process.pid + "-" + randomUUID()),
     maxAttempts: effectsConfig.maxAttempts,
     leaseMs: effectsConfig.leaseMs,
     baseRetryDelayMs: effectsConfig.retryBaseMs,
@@ -806,7 +807,7 @@ export function registerPaymentModule(
 
   app.decorate("payments", module);
   app.addHook("onReady", () => {
-    if (config.nodeEnv !== "test") reconciliation.start();
+    if (options.startPaymentReconciliation ?? config.nodeEnv !== "test") reconciliation.start();
   });
   app.addHook("onClose", () => reconciliation.stop());
   return module;

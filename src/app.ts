@@ -22,7 +22,7 @@ import { registerCatalogRoutes } from "./modules/catalog/routes.js";
 import { createBetterAuthRuntime } from "./modules/auth/better-auth.js";
 import { registerBetterAuthHandler } from "./modules/auth/fastify-handler.js";
 import { registerAuthRoutes } from "./modules/auth/routes.js";
-import type { AuthRuntime } from "./modules/auth/runtime.js";
+import type { AuthRuntime, BackgroundTaskRunner } from "./modules/auth/runtime.js";
 import { createSessionResolver } from "./modules/auth/session-resolver.js";
 import { registerIngestRoutes } from "./modules/ingest/routes.js";
 import { createPushSubscriptionRepository } from "./modules/ingest/repository.js";
@@ -86,6 +86,9 @@ export type BuildAppDependencies = {
   database?: Database;
   stripeGateway?: StripeGateway;
   rateLimitBackend?: RateLimitBackend;
+  runInBackground?: BackgroundTaskRunner;
+  startPaymentReconciliation?: boolean;
+  workerId?: string;
 };
 
 export async function buildApp(
@@ -115,11 +118,11 @@ export async function buildApp(
           },
         },
       ),
-      runInBackground(task) {
+      runInBackground: dependencies.runInBackground ?? ((task) => {
         void task.catch((error: unknown) => {
           app.log.error({ err: error }, "Better Auth background task failed");
         });
-      },
+      }),
       pool: database as Pool,
     },
   );
@@ -169,7 +172,10 @@ export async function buildApp(
       notificationUrl: new URL("/webhooks/payments/mercado-pago", config.apiPublicUrl),
     }));
   }
-  const paymentModule = registerPaymentModule(app, config, database, paymentProviders);
+  const paymentModule = registerPaymentModule(app, config, database, paymentProviders, {
+    startPaymentReconciliation: dependencies.startPaymentReconciliation,
+    workerId: dependencies.workerId,
+  });
   await registerRawBody(app);
   await registerCors(app, config);
   await registerBetterAuthHandler(app, config.betterAuth.url, authRuntime.handler);
