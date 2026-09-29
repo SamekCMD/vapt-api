@@ -1,4 +1,4 @@
-# Vapt API Stage 10: Hyperdrive → Neon preview implementation plan
+# Vapt API Stage 10: Hyperdrive → Neon Preview Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-29-vapt-api-hyperdrive-neon-preview-design.md` (approved 2026-09-29). Source migration plan: parent repository `docs/infra-migration-plan.md`, Stage 10.
 
-## Global constraints
+## Global Constraints
 
 - API repository/worktree: `D:/Projetos/vaptmesaflow/.worktrees/vapt-api-infra-foundation`. Parent repository: `D:/Projetos/vaptmesaflow`. Preserve the parent's pre-existing untracked `docs/implementation-references/`. Commit changes in the correct repository; do not copy SQL into the API repo merely to make one commit.
 - Only Neon project `dawn-morning-27332079`, branch `preview` (`br-rough-dew-b6ydeygb`), database `vapt` may receive Stage 10 changes. Check identity before every remote mutation. Production branch `br-odd-term-b6j2n9ms` is read-only for this stage. Coolify remains live; do not change DNS, routes, Cron, Vercel, R2, provider credentials, Stripe Live, or the production Hyperdrive binding.
@@ -20,14 +20,15 @@
 - Before each remote test, confirm Hyperdrive target is the *direct* preview endpoint, not Neon `-pooler`, caching is disabled, and the dedicated preview role cannot create schema objects. Stop if identity cannot be proven. Synthetic writes are preview-only, have bounded cleanup, and cannot trigger provider calls.
 - Work in small TDD increments: record the failing assertion, run focused tests red, implement minimally, run focused and cumulative tests green, inspect diff, commit. Test doubles and local workerd tests are preparation, not proof of a live Hyperdrive connection.
 
-## Review focus
+## Review Focus
 
-1. Binding target: the deployed Hyperdrive config must point to `preview.vapt` with the dedicated role and query cache disabled; production must have no fallback.
-2. Privileges: API role can perform application DML and required function calls in `public` and `better_auth`, but cannot own/create/alter/drop schema objects or reach production.
-3. Connection lifetime: no module-global pool, leaked checkout, hanging event, or unbounded origin connection after repeated and limited concurrent remote invocations.
-4. Authentication: Better Auth session survives a new Worker invocation through Kysely's `PostgresDialect({ pool })`, then disappears after revocation/expiry; no real email or Turnstile dependency.
-5. Diagnostic containment: unauthorized requests touch no database; no arbitrary query, permanent URL, provider side effect, secret leak, or public full-API route.
-6. Evidence: a dry-run, local direct database test, or synthetic workerd binding alone must not be reported as Stage 10 acceptance.
+1. Wrong/missing binding or target must fail closed, not reach production: Task 1's `rejects missing Hyperdrive` test and Tasks 5–6's preview identity assertions.
+2. A low-privilege role must support normal API/auth DML but deny DDL and unintended function access: Task 2's positive/negative SQL verifier.
+3. Repeated/concurrent invocations must not reuse a stale global client, hang, or exhaust origin connections: Task 1's distinct-pool test and Task 7's remote lifetime check.
+4. A synthetic Better Auth session must resolve across invocations, then disappear after revocation, without email/Turnstile contact: Task 4's focused tests and Task 7's remote check.
+5. Unauthenticated/unsupported diagnostic input must cause zero database or provider calls and reveal no secrets: Task 3's contract tests and Task 8's scheduled guard test.
+
+---
 
 ### Task 1: Establish local baseline and request-scoped pool factory
 
@@ -36,9 +37,11 @@
 **Interfaces:** `createWorkerDatabase(env: Pick<WorkerBindings, "HYPERDRIVE">): Pool` validates the binding before constructing `new Pool({ connectionString, max: 1 })`; `createWorkerServices` calls it only when no database override is provided. No global variable stores the pool. The existing `Database` interface and Better Auth pool contract stay unchanged.
 
 - [ ] **Step 1: Baseline:** In the API repo run `git status --short`, `npm test`, `npm run test:worker`, `npm run build`, `npm run build:worker`, and `git diff --check`. Record counts and failures; do not disguise a pre-existing failure as Stage 10 work.
-- [ ] **Step 2: RED:** Test missing `HYPERDRIVE` rejects without including binding values; two calls return distinct `Pool` instances; each has `options.max === 1`; service composition uses the factory and continues honoring an injected database. Run `npx tsx --test src/worker/database.test.ts` and retain the failing assertion.
-- [ ] **Step 3: GREEN:** Implement the small factory and wire `createWorkerServices`; do not add a global singleton or change request/scheduled entrypoints. Run the focused test, `npm test`, `npm run test:worker`, `npm run build`, and `npm run build:worker`.
-- [ ] **Step 4: Commit** only the pool boundary and tests in the API repo.
+- [ ] **Step 2: Write failing tests** named `rejects missing Hyperdrive without secret echo`, `creates distinct max-one pools`, and `honors injected database`. Assert a missing binding throws `/HYPERDRIVE/` but not a sentinel password; `createWorkerDatabase(env)` twice yields `notStrictEqual` and each `pool.options.max === 1`; the injected `database` is returned unchanged by `createWorkerServices`.
+- [ ] **Step 3: Run RED:** `npx tsx --test src/worker/database.test.ts`; expect the new factory import/assertion to fail, not a network error.
+- [ ] **Step 4: Implement** `createWorkerDatabase(env: Pick<WorkerBindings, "HYPERDRIVE">): Pool` and wire `createWorkerServices` to it only without an override. Do not add a global singleton or change request/scheduled entrypoints.
+- [ ] **Step 5: Run GREEN:** Focused test, `npm test`, `npm run test:worker`, `npm run build`, and `npm run build:worker` all exit 0.
+- [ ] **Step 6: Commit** only the pool boundary and tests in the API repo.
 
 ### Task 2: Version preview-only SQL grants and negative verification
 
@@ -55,11 +58,13 @@
 
 **Files (API repo):** Create `src/worker/hyperdrive-probe.ts`, `src/worker/hyperdrive-probe.test.ts`, `src/worker/hyperdrive-probe.workerd.ts`, `wrangler.worker-probe-test.jsonc`, `wrangler.worker-probe-preview.jsonc`; modify `src/worker/environment.ts` only if a typed probe-only secret binding is required. Do not modify production route registration.
 
-**Interfaces:** A separate `fetch` entrypoint accepts only an allowlist of fixed operations (`identity`, `query`, `transaction`, `auth`, `reconcile` as implemented in later tasks). It requires a constant-time comparison against `PROBE_TOKEN` or equivalent random secret before constructing the pool; it rejects absent/invalid token, method, operation and environment with sanitized 4xx/5xx. The preview config contains only non-secret environment metadata and, once provisioned, a Hyperdrive binding ID; no `localConnectionString`, routes, triggers or `workers_dev` deployment. Avoid embedding fake production credentials in the remote config.
+**Interfaces:** `handleHyperdriveProbe(request: Request, env: ProbeBindings, dependencies: ProbeDependencies): Promise<Response>` dispatches an allowlist of fixed operations (`identity`, `query`, `transaction`, `auth/create`, `auth/read`, `auth/revoke`, `reconcile`). `ProbeBindings = Pick<WorkerBindings, "ENVIRONMENT" | "HYPERDRIVE"> & { PROBE_TOKEN?: string }`; `ProbeDependencies` injects the database factory and fixed operation runner for tests. It requires a constant-time comparison against `PROBE_TOKEN` or equivalent random secret before constructing the pool; it rejects absent/invalid token, method, operation and environment with sanitized 4xx/5xx. The preview config contains only non-secret environment metadata and, once provisioned, a Hyperdrive binding ID; no `localConnectionString`, routes, triggers or `workers_dev` deployment. Avoid embedding fake production credentials in the remote config.
 
-- [ ] **Step 1: RED:** Unit/workerd tests assert unauthorized/missing-secret and unsupported-operation requests make zero database-factory calls, reject non-preview environment, return no credential fragments, and expose neither SQL input nor provider hooks. Run `npx tsx --test src/worker/hyperdrive-probe.test.ts src/worker/hyperdrive-probe.workerd.ts`; expect the new assertions to fail.
-- [ ] **Step 2: GREEN:** Implement authentication and operation dispatch with injected database/probe dependencies for tests. Keep the real entrypoint separate from `src/worker/index.ts`; add `no-store` responses and fixed error shapes. Run focused tests, `npm run test:worker`, and a probe-config Wrangler dry-run.
-- [ ] **Step 3: Commit** the contained scaffold and tests. The remote config must remain inoperable without its out-of-Git secret and later Hyperdrive ID.
+- [ ] **Step 1: Write failing tests** named `denies before database creation`, `rejects unsupported operation`, and `requires preview environment`. For a missing/wrong token, unsupported operation, or `ENVIRONMENT=production`, assert 4xx/5xx, `databaseFactoryCalls === 0`, no sentinel secret in response, and `cache-control === "no-store"`. In workerd, assert the diagnostic entrypoint does not serve `/auth/me` or another production route.
+- [ ] **Step 2: Run RED:** `npx tsx --test src/worker/hyperdrive-probe.test.ts src/worker/hyperdrive-probe.workerd.ts`; expect the new assertions to fail.
+- [ ] **Step 3: Implement** `handleHyperdriveProbe(request: Request, env: ProbeBindings, dependencies: ProbeDependencies): Promise<Response>`; define `ProbeBindings` as preview environment, `HYPERDRIVE`, and optional `PROBE_TOKEN`. Dispatch only fixed operation names after token comparison. Keep the real entrypoint separate from `src/worker/index.ts`; add `no-store` and sanitized errors.
+- [ ] **Step 4: Run GREEN:** Focused tests, `npm run test:worker`, and `npx wrangler deploy --dry-run --config wrangler.worker-probe-test.jsonc` exit 0.
+- [ ] **Step 5: Commit** the contained scaffold and tests. The remote config must remain inoperable without its out-of-Git secret and later Hyperdrive ID.
 
 ### Task 4: Implement fixed SQL, transaction and Better Auth probes locally
 
@@ -67,9 +72,11 @@
 
 **Interfaces:** The fixed operations use `createWorkerDatabase`, existing `withTransaction`, and the existing `createBetterAuthRuntime`/`AuthRuntime`, not a second driver. `identity` reports only expected database/user; `query` includes a parameterized query; `transaction` tests rollback absence and commit/read-after-write followed by cleanup. `auth` uses a synthetic preview-only identity/session, injected no-op email and synthetic Turnstile context, carries its opaque test token only in memory across distinct invocations, resolves with `getSession`, then revokes/cleans it. Each operation has a bounded timeout/cleanup path and no raw DB error in HTTP responses.
 
-- [ ] **Step 1: RED:** Write tests for parameter binding, rollback, committed read-after-write, cleanup after success/failure, Better Auth resolution from a second invocation, and rejection after revocation. Include a test that no email/provider call is made. Run focused tests and retain the new red result.
-- [ ] **Step 2: GREEN:** Implement only fixed statements and synthetic records. If Better Auth cannot resolve a seeded session through its real runtime, stop and determine the actual session contract rather than bypassing `AuthRuntime` or weakening production auth. Run focused Node/workerd tests, full `npm test`, `npm run test:worker`, and builds.
-- [ ] **Step 3: Commit** probe operations and tests. No live resource or production code route is enabled by this commit.
+- [ ] **Step 1: Write failing tests** named `uses bound parameters`, `rollback leaves no row`, `commit is visible then cleaned`, `session survives fresh runtime`, and `revoked session is absent`. Assert the query passes values separately from SQL text, both cleanup paths leave zero tagged rows, a second `AuthRuntime.getSession` returns the synthetic user, a third returns `null` after revocation, and fake email/provider call counts stay zero.
+- [ ] **Step 2: Run RED:** `npx tsx --test src/worker/hyperdrive-probe-operations.test.ts`; retain the first relevant failing assertion.
+- [ ] **Step 3: Implement** fixed operations using `createWorkerDatabase`, `withTransaction(database: Database, work)`, and `createBetterAuthRuntime(config, dependencies)`. Use an ephemeral synthetic test token held only in memory; never return it in logs. If Better Auth cannot resolve a seeded session through its real runtime, stop and determine the actual session contract rather than bypassing `AuthRuntime` or weakening production auth.
+- [ ] **Step 4: Run GREEN:** Focused Node/workerd tests, full `npm test`, `npm run test:worker`, `npm run build`, and `npm run build:worker` exit 0.
+- [ ] **Step 5: Commit** probe operations and tests. No live resource or production code route is enabled by this commit.
 
 ### Task 5: Provision and verify the preview Hyperdrive binding
 
@@ -88,10 +95,11 @@
 
 **Interfaces:** A temporary `wrangler dev --remote` session runs the diagnostic entrypoint. A verifier retains `PROBE_TOKEN` only in memory, emits sanitized pass/fail and non-sensitive identity metadata, and stops the session in `finally`.
 
-- [ ] **Step 1: RED:** Write verifier tests that reject an unexpected database/user, missing cache-disabled metadata, unsuccessful parameterized query, failed rollback/commit/cleanup, and accidental secret echo. Run the focused test red before implementation.
-- [ ] **Step 2: GREEN:** Implement the minimal verifier and run its focused test green. Verify the production Worker still fails closed without its own binding and the probe config has no route/Cron.
-- [ ] **Step 3: Remote:** Start the diagnostic with an out-of-Git secret. Verify unauthorized access fails before DB use; then prove real Hyperdrive identity, parameterized query, rollback absence, commit/read-after-write and cleanup. Stop on first unexplained failure. Local `wrangler dev` and dry-run do not satisfy this step.
-- [ ] **Step 4: Commit** sanitized verifier code/results in the API repo; keep the session token, credential and raw connection string out of the commit.
+- [ ] **Step 1: Write failing verifier tests** named `rejects wrong preview identity`, `rejects failed transaction`, and `redacts secret`. Assert database `!== "vapt"` or user `!== "vapt_api_preview"` fails; `rollbackAbsent !== true`, `committedVisible !== true`, or `cleaned !== true` fails; output excludes sentinel token. Assert missing cache-disabled resource metadata fails preflight.
+- [ ] **Step 2: Run RED:** `npx tsx --test scripts/verify-hyperdrive-preview.test.mjs`; expect the new assertion to fail.
+- [ ] **Step 3: Implement** `scripts/verify-hyperdrive-preview.mjs` as a fixed-response validator with no credential printing; run the focused test green. Verify production Worker still fails closed without its own binding and probe config has no route/Cron.
+- [ ] **Step 4: Remote:** Start the diagnostic with an out-of-Git secret. Verify unauthorized access fails before DB use; then prove real Hyperdrive identity, parameterized query, rollback absence, commit/read-after-write and cleanup. Stop on first unexplained failure. Local `wrangler dev` and dry-run do not satisfy this step.
+- [ ] **Step 5: Commit** sanitized verifier code/results in the API repo; keep the session token, credential and raw connection string out of the commit.
 
 ### Task 7: Remote Better Auth and connection-lifetime proof
 
@@ -109,11 +117,13 @@
 
 **Interfaces:** One fixed diagnostic `reconcile` operation invokes the existing `runScheduledReconciliation` for a single bounded pass only after verifying no eligible payment-effect work exists in preview; no provider calls or interval start. Full production entrypoint remote smoke is optional and is skipped unless its temporary URL can be restricted *before* any request. Coolify stays the serving API.
 
-- [ ] **Step 1: RED:** Add a focused test that the diagnostic refuses reconciliation when eligible effects exist, otherwise calls `runScheduledReconciliation` exactly once with a bound of at most 25/100 as configured, starts no interval, and touches no provider. Run it red, then implement and run green.
-- [ ] **Step 2: Remote scheduled-equivalent:** Recheck preview identity and empty eligible outbox. Execute one bounded pass via the authenticated diagnostic; confirm no side effect or timer and inspect sanitized result. Do not install a Cron trigger.
-- [ ] **Step 3: Cleanup:** Revoke/delete synthetic Better Auth session/user and transaction rows, verify their absence, stop the remote-dev process, clear the temporary probe secret, and record whether the preview Hyperdrive/role are retained for Stage 11. If target or grants are wrong, disable/revoke preview resources only; never touch production.
-- [ ] **Step 4: Final verification:** In API repo run focused tests, `npm test`, `npm run test:worker`, `npm run build`, `npm run build:worker`, probe dry-run, `git diff --check`, and inspect `git status`. In parent repo run SQL verifier and `git diff --check`; document any unrun gate explicitly. Scan tracked diff for credentials/connection strings and confirm no route, DNS, Cron, provider, Coolify or production resource mutation.
-- [ ] **Step 5: Handoff and review:** Document non-secret project/branch/database/role/Hyperdrive IDs, exact tests and results, remote lifecycle observations, cleanup, limitations and Stage 11 prerequisite. Review the whole branch against this plan and spec, fix P0/P1 findings with focused tests, then commit the final handoff separately in the owning repo.
+- [ ] **Step 1: Write failing tests** named `refuses nonempty eligible outbox` and `runs one bounded reconciliation`. Assert nonempty eligible count returns a denied result with zero `runOnce`/provider calls; empty count yields exactly one `runOnce` call with a limit between 1 and 100, zero `start`/interval calls, and zero provider calls.
+- [ ] **Step 2: Run RED:** `npx tsx --test src/worker/hyperdrive-probe-operations.test.ts`; expect the new reconciliation assertion to fail.
+- [ ] **Step 3: Implement and run GREEN:** Add the fixed `reconcile` operation, using existing `runScheduledReconciliation(services: ApiServices)`, after the eligible-outbox guard. Run the focused test plus `npm test` and `npm run test:worker`; require exit 0.
+- [ ] **Step 4: Remote scheduled-equivalent:** Recheck preview identity and empty eligible outbox. Execute one bounded pass via the authenticated diagnostic; confirm no side effect or timer and inspect sanitized result. Do not install a Cron trigger.
+- [ ] **Step 5: Cleanup:** Revoke/delete synthetic Better Auth session/user and transaction rows, verify their absence, stop the remote-dev process, clear the temporary probe secret, and record whether the preview Hyperdrive/role are retained for Stage 11. If target or grants are wrong, disable/revoke preview resources only; never touch production.
+- [ ] **Step 6: Final verification:** In API repo run focused tests, `npm test`, `npm run test:worker`, `npm run build`, `npm run build:worker`, probe dry-run, `git diff --check`, and inspect `git status`. In parent repo run SQL verifier and `git diff --check`; document any unrun gate explicitly. Scan tracked diff for credentials/connection strings and confirm no route, DNS, Cron, provider, Coolify or production resource mutation.
+- [ ] **Step 7: Handoff and review:** Document non-secret project/branch/database/role/Hyperdrive IDs, exact tests and results, remote lifecycle observations, cleanup, limitations and Stage 11 prerequisite. Review the whole branch against this plan and spec, fix P0/P1 findings with focused tests, then commit the final handoff separately in the owning repo.
 
 ## Completion gate
 
