@@ -13,18 +13,30 @@ import { createCatalogRepository } from "../modules/catalog/repository.js";
 import { createCatalogService } from "../modules/catalog/service.js";
 import { createFeedbackRepository } from "../modules/feedback/repository.js";
 import { createFeedbackService } from "../modules/feedback/service.js";
+import { createKitchenRepository } from "../modules/kitchen/repository.js";
+import { createKitchenService } from "../modules/kitchen/service.js";
+import { createMenuRepository } from "../modules/menu/repository.js";
+import { createMenuService } from "../modules/menu/service.js";
 import { createOrderRepository } from "../modules/orders/repository.js";
 import { createOrderService, type OrderService } from "../modules/orders/service.js";
+import { createOverviewRepository } from "../modules/overview/repository.js";
+import { createOverviewService } from "../modules/overview/service.js";
 import { createPaymentModule } from "../modules/payments/composition.js";
 import type { PaymentProvider } from "../modules/payments/provider.js";
 import { createManualPaymentProvider } from "../modules/payments/providers/manual.js";
 import type { PaymentModule } from "../modules/payments/service.js";
+import { createRestaurantRepository } from "../modules/restaurants/repository.js";
+import { createRestaurantService } from "../modules/restaurants/service.js";
 import { createTableSessionRepository } from "../modules/table-sessions/repository.js";
 import { createTableSessionService } from "../modules/table-sessions/service.js";
 
 export type CatalogService = ReturnType<typeof createCatalogService>;
 export type FeedbackService = ReturnType<typeof createFeedbackService>;
 export type TableSessionService = ReturnType<typeof createTableSessionService>;
+export type RestaurantService = ReturnType<typeof createRestaurantService>;
+export type MenuService = ReturnType<typeof createMenuService>;
+export type KitchenService = ReturnType<typeof createKitchenService>;
+export type OverviewService = ReturnType<typeof createOverviewService>;
 
 export type ApiServiceDependencies = {
   database: Database;
@@ -34,6 +46,10 @@ export type ApiServiceDependencies = {
   orders?: OrderService;
   feedback?: FeedbackService;
   tableSessions?: TableSessionService;
+  restaurants?: RestaurantService;
+  menu?: MenuService;
+  kitchen?: KitchenService;
+  overview?: OverviewService;
   stripeGateway?: StripeGateway;
   paymentProviders?: readonly PaymentProvider[];
   runInBackground?: BackgroundTaskRunner;
@@ -52,6 +68,10 @@ export type ApiServices = {
   orders: OrderService;
   feedback: FeedbackService;
   tableSessions: TableSessionService;
+  restaurants: RestaurantService;
+  menu: MenuService;
+  kitchen: KitchenService;
+  overview: OverviewService;
   stripeGateway: StripeGateway;
   payments: PaymentModule;
 };
@@ -64,6 +84,10 @@ export function createApiServices(config: AppConfig, dependencies: ApiServiceDep
   let orders = dependencies.orders;
   let feedback = dependencies.feedback;
   let tableSessions = dependencies.tableSessions;
+  let restaurants = dependencies.restaurants;
+  let menu = dependencies.menu;
+  let kitchen = dependencies.kitchen;
+  let overview = dependencies.overview;
 
   return {
     database: dependencies.database,
@@ -90,6 +114,24 @@ export function createApiServices(config: AppConfig, dependencies: ApiServiceDep
     get tableSessions() {
       tableSessions ??= createTableSessionService(createTableSessionRepository(dependencies.database));
       return tableSessions;
+    },
+    get restaurants() {
+      restaurants ??= createRestaurantService(createRestaurantRepository(dependencies.database));
+      return restaurants;
+    },
+    get menu() {
+      menu ??= createMenuService(createMenuRepository(dependencies.database), {
+        publicBaseUrl: config.r2?.publicBaseUrl ?? null,
+      });
+      return menu;
+    },
+    get kitchen() {
+      kitchen ??= createKitchenService(createKitchenRepository(dependencies.database));
+      return kitchen;
+    },
+    get overview() {
+      overview ??= createOverviewService(createOverviewRepository(dependencies.database));
+      return overview;
     },
     get authRuntime() {
       authRuntime ??= createBetterAuthRuntime(config.betterAuth, {

@@ -7,6 +7,8 @@ import { AppError } from "../lib/errors.js";
 import type { AuthRuntime } from "../modules/auth/runtime.js";
 import type { StripeGateway } from "../modules/billing/stripe/types.js";
 import type { OrderService } from "../modules/orders/service.js";
+import type { MenuRepository } from "../modules/menu/repository.js";
+import { createMenuService } from "../modules/menu/service.js";
 import type { CatalogService, FeedbackService, TableSessionService } from "../composition/api-services.js";
 import { parseWorkerJson, requireWorkerAuth, trustedRateLimitKey, workerRateLimit } from "./http.js";
 
@@ -90,6 +92,14 @@ const fakeTableSessions = {
     return { sessionId, status: "check_requested" as const };
   },
 } as TableSessionService;
+const fakeMenu = createMenuService({
+  async listOwnedMenuItems() { return []; },
+  async createOwnedMenuItem() { return null; },
+  async updateOwnedMenuItem() { return null; },
+  async deleteOwnedMenuItem(userId: string, itemId: string) {
+    return userId === "user-1" && itemId === "10000000-0000-4000-8000-000000000021";
+  },
+} satisfies MenuRepository, { publicBaseUrl: null });
 let serviceFactoryCalls = 0;
 const app = createWorkerApp((env, context) => {
   serviceFactoryCalls++;
@@ -102,10 +112,11 @@ const app = createWorkerApp((env, context) => {
     orders: fakeOrders,
     feedback: fakeFeedback,
     tableSessions: fakeTableSessions,
+    menu: fakeMenu,
     ownershipLookup: async ({ userId, restaurantId }) =>
       userId === "user-1" && restaurantId === "10000000-0000-4000-8000-000000000001",
   });
-}, { authRateLimit: false, publicRateLimit: false });
+}, { authRateLimit: false, publicRateLimit: false, privateRateLimit: false });
 app.get("/_test/composition-counts", (context) => context.json({ serviceFactoryCalls }));
 app.get("/_test/missing-ingress", (context) => {
   trustedRateLimitKey(new Headers({ "x-forwarded-for": "1.2.3.4" }), "auth");
