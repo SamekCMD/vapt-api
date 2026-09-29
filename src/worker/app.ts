@@ -1,12 +1,19 @@
 import { Hono } from "hono";
 
 import type { WorkerBindings } from "./environment.js";
+import { installWorkerHttpPolicy } from "./http.js";
 import type { WorkerServicesFactory } from "./services.js";
+import type { ApiServices } from "../composition/api-services.js";
+import type { AuthContext } from "../plugins/auth.js";
 
-export type WorkerHonoEnv = { Bindings: WorkerBindings };
+export type WorkerHonoEnv = {
+  Bindings: WorkerBindings;
+  Variables: { getServices: () => Promise<ApiServices>; auth: AuthContext };
+};
 
 export function createWorkerApp(createServices?: WorkerServicesFactory): Hono<WorkerHonoEnv> {
   const app = new Hono<WorkerHonoEnv>();
+  installWorkerHttpPolicy(app, createServices);
   app.get("/health", (context) => context.json({ status: "ok" }));
   if (createServices) {
     app.get("/health/ready", async (context) => {

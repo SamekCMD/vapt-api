@@ -8,6 +8,7 @@
   "preview_urls": false,
   "vars": {
     "ENVIRONMENT": "preview",
+    "CORS_ORIGINS": "https://app.vapt.test",
     "TEST_GREETING": "synthetic"
   }
 }
