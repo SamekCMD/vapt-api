@@ -73,7 +73,7 @@ test("misc Worker routes fail closed and preserve admin and image contracts", as
     assert.equal(foreignDelete.status, 403);
     const counts = await enabled.fetch(`${base}/_test/misc-counts`);
     assert.deepEqual(await counts.json(), {
-      adminRunCalls: 1, adminRequestedLimit: 2,
+      adminRunCalls: 1, adminRequestedLimit: 2, intervalStarts: 0,
       bucketDeletedKey: `${restaurantId}/${itemId}`, realR2Calls: 0,
     });
   } finally {

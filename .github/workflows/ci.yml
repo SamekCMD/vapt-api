@@ -32,5 +32,11 @@ jobs:
       - name: Test
         run: npm test
 
+      - name: Test Worker in workerd
+        run: npm run test:worker
+
       - name: Build
         run: npm run build
+
+      - name: Bundle Worker without deploying
+        run: npm run build:worker

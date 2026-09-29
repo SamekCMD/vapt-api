@@ -15,6 +15,8 @@ import type { PaymentTransactionRecord } from "../modules/payments/repository.js
 import { createWorkerMenuImageGateway } from "../modules/storage/r2-worker.js";
 import { createMenuImageService } from "../modules/storage/service.js";
 import { parseWorkerJson, requireWorkerAuth, trustedRateLimitKey, workerRateLimit } from "./http.js";
+import { runScheduledReconciliation } from "./scheduled.js";
+import type { ExecutionContext } from "hono";
 
 type FixtureBindings = WorkerBindings & { TEST_GREETING: string };
 
@@ -160,11 +162,15 @@ fakePaymentModule.service = {
 };
 let adminRunCalls = 0;
 let adminRequestedLimit: number | undefined;
+let intervalStarts = 0;
+let scheduledShouldFail = false;
 fakePaymentModule.reconciliation.runOnce = async (limit) => {
   adminRunCalls++;
   adminRequestedLimit = limit;
+  if (scheduledShouldFail) throw new Error("synthetic scheduled failure");
   return { claimed: 0, completed: 0, failed: 0, deadLettered: 0, pending: 0 };
 };
+fakePaymentModule.reconciliation.start = () => { intervalStarts++; };
 let bucketDeletedKey: string | null = null;
 const syntheticR2 = {
   accountId: "synthetic-account", accessKeyId: "synthetic-access-key", secretAccessKey: "synthetic-secret-key",
@@ -213,10 +219,12 @@ const fakeMercadoPago = {
   },
 } as unknown as MercadoPagoServices;
 let serviceFactoryCalls = 0;
-const app = createWorkerApp((env, context) => {
+const createFixtureServices = (env: WorkerBindings, context: ExecutionContext) => {
   serviceFactoryCalls++;
   const mercadoPagoEnabled = Boolean(env.MERCADO_PAGO_CLIENT_ID);
-  const miscEnabled = (env as WorkerBindings & { TEST_MISC?: string }).TEST_MISC === "enabled";
+  const fixtureEnv = env as WorkerBindings & { TEST_MISC?: string; TEST_SCHEDULED_FAIL?: string };
+  const miscEnabled = fixtureEnv.TEST_MISC === "enabled";
+  scheduledShouldFail = fixtureEnv.TEST_SCHEDULED_FAIL === "enabled";
   return createWorkerServices(env, context, {
     config: {
       nodeEnv: "test",
@@ -257,15 +265,23 @@ const app = createWorkerApp((env, context) => {
     ownershipLookup: async ({ userId, restaurantId }) =>
       userId === "user-1" && restaurantId === "10000000-0000-4000-8000-000000000001",
   });
-}, { authRateLimit: false, publicRateLimit: false, privateRateLimit: false, stripeRateLimit: false, paymentRateLimit: false, miscRateLimit: false });
+};
+const app = createWorkerApp(createFixtureServices, {
+  authRateLimit: false, publicRateLimit: false, privateRateLimit: false,
+  stripeRateLimit: false, paymentRateLimit: false, miscRateLimit: false,
+});
 app.get("/_test/composition-counts", (context) => context.json({ serviceFactoryCalls }));
 app.get("/_test/stripe-counts", (context) => context.json({ stripeWebhookCalls, stripeSideEffects }));
 app.get("/_test/mercado-pago-counts", (context) => context.json({
   mercadoPagoWebhookCalls, mercadoPagoSideEffects, mercadoPagoRawBody,
 }));
 app.get("/_test/misc-counts", (context) => context.json({
-  adminRunCalls, adminRequestedLimit, bucketDeletedKey, realR2Calls,
+  adminRunCalls, adminRequestedLimit, intervalStarts, bucketDeletedKey, realR2Calls,
 }));
+app.get("/_test/route-inventory", (context) => context.json(Array.from(new Set(app.routes
+  .filter(({ method, path }) => method !== "ALL" && !path.startsWith("/_test"))
+  .map(({ method, path }) => JSON.stringify({ method, path }))))
+  .map((value) => JSON.parse(value) as { method: string; path: string })));
 app.get("/_test/missing-ingress", (context) => {
   trustedRateLimitKey(new Headers({ "x-forwarded-for": "1.2.3.4" }), "auth");
   return context.json({ unexpected: true });
@@ -281,4 +297,9 @@ app.get("/_test/echo/:value", (context) => context.json({
   greeting: (context.env as FixtureBindings).TEST_GREETING,
 }));
 
-export default { fetch: app.fetch };
+export default {
+  fetch: app.fetch,
+  async scheduled(_event: unknown, env: WorkerBindings, context: ExecutionContext): Promise<void> {
+    await runScheduledReconciliation(await createFixtureServices(env, context));
+  },
+};
