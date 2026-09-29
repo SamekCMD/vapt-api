@@ -115,6 +115,14 @@ test("enabled Mercado Pago preserves redirects, checkout, and both signed webhoo
       method: "POST", headers: { ...signedHeaders, "content-type": "text/plain" }, body: raw,
     });
     assert.equal(wrongType.status, 400);
+    const oversized = await fixture.fetch(`${base}/webhooks/payments/mercado-pago?data.id=12345`, {
+      method: "POST", headers: signedHeaders,
+      body: JSON.stringify({ filler: "x".repeat(1_048_576) }),
+    });
+    assert.equal(oversized.status, 500);
+    assert.deepEqual(await oversized.json(), {
+      error: { code: "internal_error", message: "Internal server error" },
+    });
     const counts = await fixture.fetch(`${base}/_test/mercado-pago-counts`);
     assert.deepEqual(await counts.json(), {
       mercadoPagoWebhookCalls: 2, mercadoPagoSideEffects: 1, mercadoPagoRawBody: raw,

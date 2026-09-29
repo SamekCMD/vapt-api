@@ -107,6 +107,20 @@ test("GET /health returns ok", async () => {
   await app.close();
 });
 
+test("Fastify body parser rejects non-JSON and oversized public order bodies", async () => {
+  const app = await buildApp(validConfig);
+  const cases = [
+    { name: "text/plain", headers: { "content-type": "text/plain" }, payload: "{}", expected: 400 },
+    { name: "missing type", headers: {}, payload: "{}", expected: 500 },
+    { name: "oversized", headers: { "content-type": "application/json" }, payload: JSON.stringify({ filler: "x".repeat(1_048_576) }), expected: 500 },
+  ];
+  for (const input of cases) {
+    const response = await app.inject({ method: "POST", url: "/public/orders", headers: input.headers, payload: input.payload });
+    assert.equal(response.statusCode, input.expected, input.name);
+  }
+  await app.close();
+});
+
 test("payment module registers the manual provider", async () => {
   const app = await buildApp(validConfig);
 

@@ -37,8 +37,30 @@ test("Worker HTTP policy preserves safe errors, CORS and fail-closed ingress lim
     assert.equal(malformed.status, 400);
     assert.equal(JSON.stringify(await malformed.json()).includes("never-log"), false);
 
+    const validOrder = JSON.stringify({ restaurantSlug: "synthetic-restaurant", channel: "local",
+      tableNumber: 1, items: [{ menuItemId: "10000000-0000-4000-8000-000000000013", quantity: 1 }] });
+    const wrongType = await fixture.fetch(`${base}/public/orders`, {
+      method: "POST", headers: { "content-type": "text/plain", "idempotency-key": "synthetic-body-type" },
+      body: validOrder,
+    });
+    assert.equal(wrongType.status, 400);
+    const missingType = await fixture.fetch(`${base}/public/orders`, {
+      method: "POST", headers: { "idempotency-key": "synthetic-missing-type" },
+      body: new TextEncoder().encode(validOrder),
+    });
+    assert.equal(missingType.status, 500);
+    const oversized = await fixture.fetch(`${base}/public/orders`, {
+      method: "POST", headers: { "content-type": "application/json", "idempotency-key": "synthetic-oversized" },
+      body: JSON.stringify({ filler: "x".repeat(1_048_576) }),
+    });
+    assert.equal(oversized.status, 500);
+
     const missingIp = await fixture.fetch(`${base}/_test/missing-ingress`);
     assert.equal(missingIp.status, 429);
+    const malformedIp = await fixture.fetch(`${base}/_test/protected`, {
+      headers: { "cf-connecting-ip": "not-an-ip" },
+    });
+    assert.equal(malformedIp.status, 429);
     const missingLimiter = await fixture.fetch(`${base}/_test/protected`, { headers: { "cf-connecting-ip": "203.0.113.1" } });
     assert.equal(missingLimiter.status, 503);
 

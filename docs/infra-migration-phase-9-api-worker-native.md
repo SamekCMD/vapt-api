@@ -8,6 +8,7 @@ Status (2026-09-29): local implementation and verification only. The Hono Worker
 - Routes reuse the existing domain services, repositories, validation schemas, ownership checks, Better Auth runtime, Stripe signature verification, Mercado Pago HMAC verification, and payment-effect reconciliation. The Node/Fastify entrypoint, Docker path, and existing tests remain available.
 - The scheduled handler performs one bounded reconciliation pass per event, with no process interval. A failed pass rejects so the failure is visible for retry; no Cron trigger is configured yet.
 - Production Worker imports contain no Fastify runtime or Coolify proxy. Missing required bindings fail closed with a sanitized 503. The Worker config has `workers_dev: false`, `preview_urls: false`, and no public routes or triggers. The committed Wrangler test configurations contain only synthetic values.
+- A synthetic `workerd` test also boots the production entrypoint with valid preview configuration, serves `/health`, and observes denial from a native Cloudflare rate-limit binding. The HTTP adapter validates the ingress IP and enforces the Fastify 1 MiB body limit, including signed webhooks.
 - CI now runs the Node tests, the `workerd` suite, TypeScript build, and Worker bundle dry-run. This is a CI configuration change; no remote CI result is claimed here.
 
 ## Local verification
@@ -16,8 +17,8 @@ Run from this API checkout:
 
 | Command | Result |
 | --- | --- |
-| `npm test` | 416 passed, 0 failed |
-| `npm run test:worker` | 13 passed, 0 failed in `workerd` |
+| `npm test` | 417 passed, 0 failed |
+| `npm run test:worker` | 14 passed, 0 failed in `workerd` |
 | `npm run build` | exit 0 |
 | `npm run build:worker` | exit 0; Wrangler dry-run only |
 | `git diff --check` | exit 0 |

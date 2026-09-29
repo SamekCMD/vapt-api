@@ -24,7 +24,7 @@ import {
 } from "../../modules/payments/schemas.js";
 import { createHostedCheckoutService } from "../../modules/payments/service.js";
 import type { WorkerHonoEnv } from "../app.js";
-import { parseWorkerJson, requireWorkerAuth, workerRateLimit } from "../http.js";
+import { parseWorkerJson, readWorkerBody, requireWorkerAuth, workerRateLimit } from "../http.js";
 
 export function registerWorkerMercadoPagoRoutes(
   app: Hono<WorkerHonoEnv>,
@@ -198,7 +198,7 @@ export function registerWorkerMercadoPagoRoutes(
     if (!/^application\/json(?:\s*;|$)/i.test(context.req.header("content-type") ?? "")) {
       throw new AppError(400, "invalid_request", "Invalid Mercado Pago webhook payload");
     }
-    const rawBody = await context.req.raw.text();
+    const rawBody = await readWorkerBody(context.req.raw);
     const { mercadoPago, config } = await marketplace(context);
     if (!verifyMercadoPagoWebhookSignature({
       dataId, requestId, signatureHeader, secret: config.mercadoPago!.webhookSecret,

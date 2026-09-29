@@ -9,7 +9,7 @@ import {
   stripeSubscriptionStatusQuerySchema,
 } from "../../modules/billing/stripe/schemas.js";
 import type { WorkerHonoEnv } from "../app.js";
-import { parseWorkerJson, requireWorkerAuth, workerRateLimit } from "../http.js";
+import { parseWorkerJson, readWorkerBody, requireWorkerAuth, workerRateLimit } from "../http.js";
 
 export function registerWorkerStripeRoutes(
   app: Hono<WorkerHonoEnv>,
@@ -59,7 +59,8 @@ export function registerWorkerStripeRoutes(
     if (!/^application\/json(?:\s*;|$)/i.test(context.req.header("content-type") ?? "")) {
       throw new AppError(400, "invalid_webhook_body", "Invalid billing event body");
     }
-    const rawBody = await context.req.raw.text();
+    const rawBody = await readWorkerBody(context.req.raw,
+      new AppError(500, "billing_processing_failed", "Billing event will be retried"));
     if (!rawBody) throw new AppError(400, "invalid_webhook_body", "Invalid billing event body");
     const services = await context.get("getServices")();
     let event: unknown;

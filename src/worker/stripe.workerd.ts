@@ -67,6 +67,14 @@ test("Stripe Worker routes protect billing and verify the untouched webhook body
       body: malformedRaw,
     });
     assert.equal(malformed.status, 400);
+    const oversized = await fixture.fetch(`${base}/webhooks/stripe`, {
+      method: "POST", headers: { "content-type": "application/json", "stripe-signature": signature },
+      body: JSON.stringify({ filler: "x".repeat(1_048_576) }),
+    });
+    assert.equal(oversized.status, 500);
+    assert.deepEqual(await oversized.json(), { error: {
+      code: "billing_processing_failed", message: "Billing event will be retried",
+    } });
     const counts = await fixture.fetch(`${base}/_test/stripe-counts`);
     assert.deepEqual(await counts.json(), { stripeWebhookCalls: 2, stripeSideEffects: 1 });
   } finally {

@@ -1,4 +1,5 @@
 import type { Context, Hono, MiddlewareHandler } from "hono";
+import { isIP } from "node:net";
 
 import { ConfigError } from "../lib/config.js";
 import { AppError } from "../lib/errors.js";
@@ -11,6 +12,7 @@ import type { WorkerServicesFactory } from "./services.js";
 
 const allowedMethods = "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS";
 const allowedHeaders = "Content-Type, X-Captcha-Response, Idempotency-Key, X-Vapt-Order-Token";
+const maxBodyBytes = 1_048_576;
 const limits: Record<RateLimitGroup, number> = {
   auth: 20, billing: 60, orders: 30, storage: 30, webhooks: 300, public: 120,
   health: Number.MAX_SAFE_INTEGER,
@@ -97,13 +99,45 @@ export function workerRateLimit(group: RateLimitGroup): MiddlewareHandler<Worker
 
 export function trustedRateLimitKey(headers: Headers, group: RateLimitGroup): string {
   const ip = headers.get("cf-connecting-ip")?.trim();
-  if (!ip) throw new AppError(429, "rate_limit_exceeded", "Too many requests");
+  if (!ip || isIP(ip) === 0) throw new AppError(429, "rate_limit_exceeded", "Too many requests");
   return `${group}:${ip}`;
 }
 
+export async function readWorkerBody(request: Request, tooLargeError = new AppError(500, "internal_error", "Internal server error")): Promise<string> {
+  const declaredLength = Number(request.headers.get("content-length"));
+  if (declaredLength > maxBodyBytes) throw tooLargeError;
+  const reader = request.body?.getReader();
+  if (!reader) return "";
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    length += value.byteLength;
+    if (length > maxBodyBytes) {
+      await reader.cancel();
+      throw tooLargeError;
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(bytes);
+}
+
 export async function parseWorkerJson(request: Request): Promise<unknown> {
+  const contentType = request.headers.get("content-type") ?? "";
+  if (!/^application\/json(?:\s*;|$)/i.test(contentType)) {
+    if (/^text\/plain(?:\s*;|$)/i.test(contentType)) return readWorkerBody(request);
+    throw new AppError(500, "internal_error", "Internal server error");
+  }
+  const raw = await readWorkerBody(request);
   try {
-    return await request.json();
+    return JSON.parse(raw) as unknown;
   } catch {
     throw new AppError(400, "invalid_request", "Invalid request");
   }
