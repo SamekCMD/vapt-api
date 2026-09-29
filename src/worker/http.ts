@@ -3,6 +3,7 @@ import type { Context, Hono, MiddlewareHandler } from "hono";
 import { ConfigError } from "../lib/config.js";
 import { AppError } from "../lib/errors.js";
 import type { AuthContext } from "../plugins/auth.js";
+import { createSessionResolver } from "../modules/auth/session-resolver.js";
 import type { RateLimitGroup } from "../plugins/rate-limit.js";
 import type { WorkerHonoEnv } from "./app.js";
 import { createWorkerRateLimitBackend } from "./rate-limit.js";
@@ -69,13 +70,8 @@ export async function requireWorkerAuth(context: Context<WorkerHonoEnv>): Promis
   const getServices = context.get("getServices");
   if (!getServices) throw new AppError(503, "service_unavailable", "Service unavailable");
   const services = await getServices();
-  const session = await services.authRuntime.getSession(context.req.raw.headers);
-  if (!session) throw new AppError(401, "unauthorized", "Unauthorized");
-  const auth: AuthContext = {
-    userId: session.user.id,
-    email: session.user.email ?? null,
-    role: "authenticated",
-  };
+  const auth = await createSessionResolver(services.authRuntime, "fetch")(context.req.raw.headers);
+  if (!auth) throw new AppError(401, "unauthorized", "Unauthorized");
   context.set("auth", auth);
   return auth;
 }

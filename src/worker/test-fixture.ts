@@ -14,8 +14,23 @@ const fakeDatabase = {
   async connect() { return { async query() { return { rows: [] }; }, release() {} }; },
 } as unknown as Database;
 const fakeAuthRuntime: AuthRuntime = {
-  async handler() { return new Response(null, { status: 404 }); },
-  async getSession() { return null; },
+  async handler(request) {
+    const headers = new Headers({ "content-type": "application/json" });
+    headers.append("set-cookie", "session=one; Secure; HttpOnly; SameSite=Lax; Path=/");
+    headers.append("set-cookie", "session=two; Secure; HttpOnly; SameSite=Lax; Path=/");
+    return new Response(JSON.stringify({
+      method: request.method,
+      search: new URL(request.url).search,
+      body: request.method === "POST" ? await request.text() : null,
+    }), { headers });
+  },
+  async getSession(headers) {
+    if (!headers.get("cookie")?.includes("session=owner")) return null;
+    return {
+      user: { id: "user-1", email: "owner@vapt.test", name: "Owner" },
+      session: { id: "session-1", userId: "user-1", expiresAt: new Date("2030-01-01") },
+    };
+  },
   async close() {},
 };
 let serviceFactoryCalls = 0;
@@ -26,8 +41,10 @@ const app = createWorkerApp((env, context) => {
     database: fakeDatabase,
     authRuntime: fakeAuthRuntime,
     stripeGateway: {} as StripeGateway,
+    ownershipLookup: async ({ userId, restaurantId }) =>
+      userId === "user-1" && restaurantId === "10000000-0000-4000-8000-000000000001",
   });
-});
+}, { authRateLimit: false });
 app.get("/_test/composition-counts", (context) => context.json({ serviceFactoryCalls }));
 app.get("/_test/missing-ingress", (context) => {
   trustedRateLimitKey(new Headers({ "x-forwarded-for": "1.2.3.4" }), "auth");

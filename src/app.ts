@@ -6,9 +6,7 @@ import { createApiServices } from "./composition/api-services.js";
 import type { AppConfig } from "./lib/config.js";
 import type { Database } from "./lib/database.js";
 import {
-  createOwnershipLookup,
   createRestaurantAccessChecker,
-  testOwnershipLookup,
 } from "./lib/permissions.js";
 import { registerStripeBillingRoutes } from "./modules/billing/stripe/routes.js";
 import { createStripeBillingRepository } from "./modules/billing/stripe/repository.js";
@@ -129,9 +127,7 @@ export async function buildApp(
   registerErrorHandler(app);
   registerRateLimit(app, { backend: dependencies.rateLimitBackend });
 
-  const ownershipLookup = config.nodeEnv === "test"
-    ? testOwnershipLookup
-    : createOwnershipLookup(database);
+  const ownershipLookup = services.ownershipLookup;
   const orderRepository = createOrderRepository(database);
   const publicOrderService = createOrderService(
     orderRepository,

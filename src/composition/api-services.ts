@@ -4,6 +4,7 @@ import { createResendAuthEmailService } from "../email/email.service.js";
 import { createResendEmailClient } from "../email/resend.client.js";
 import type { AppConfig } from "../lib/config.js";
 import type { Database } from "../lib/database.js";
+import { createOwnershipLookup, testOwnershipLookup, type OwnershipLookup } from "../lib/permissions.js";
 import { createBetterAuthRuntime } from "../modules/auth/better-auth.js";
 import type { AuthRuntime, BackgroundTaskRunner } from "../modules/auth/runtime.js";
 import { createStripeClient, createStripeGateway } from "../modules/billing/stripe/client.js";
@@ -16,6 +17,7 @@ import type { PaymentModule } from "../modules/payments/service.js";
 export type ApiServiceDependencies = {
   database: Database;
   authRuntime?: AuthRuntime;
+  ownershipLookup?: OwnershipLookup;
   stripeGateway?: StripeGateway;
   paymentProviders?: readonly PaymentProvider[];
   runInBackground?: BackgroundTaskRunner;
@@ -29,6 +31,7 @@ export type ApiServiceDependencies = {
 export type ApiServices = {
   database: Database;
   authRuntime: AuthRuntime;
+  ownershipLookup: OwnershipLookup;
   stripeGateway: StripeGateway;
   payments: PaymentModule;
 };
@@ -40,6 +43,11 @@ export function createApiServices(config: AppConfig, dependencies: ApiServiceDep
 
   return {
     database: dependencies.database,
+    get ownershipLookup() {
+      return dependencies.ownershipLookup ?? (config.nodeEnv === "test"
+        ? testOwnershipLookup
+        : createOwnershipLookup(dependencies.database));
+    },
     get authRuntime() {
       authRuntime ??= createBetterAuthRuntime(config.betterAuth, {
         pool: dependencies.database as Pool,
