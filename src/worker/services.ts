@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import type { ExecutionContext } from "hono";
-import { Pool } from "pg";
 
 import { createApiServices, type ApiServiceDependencies, type ApiServices } from "../composition/api-services.js";
 import type { AppConfig } from "../lib/config.js";
@@ -9,6 +8,7 @@ import { createOwnershipLookup, createRestaurantAccessChecker } from "../lib/per
 import { createMenuItemExists } from "../modules/storage/repository.js";
 import { createWorkerMenuImageGateway } from "../modules/storage/r2-worker.js";
 import { createMenuImageService } from "../modules/storage/service.js";
+import { createWorkerDatabase } from "./database.js";
 import { configFromWorkerBindings, type WorkerBindings } from "./environment.js";
 
 export type ApiServiceOverrides = Partial<ApiServiceDependencies> & { config?: AppConfig };
@@ -20,7 +20,7 @@ export async function createWorkerServices(
   overrides: ApiServiceOverrides = {},
 ): Promise<ApiServices> {
   const config = overrides.config ?? configFromWorkerBindings(env);
-  const database = overrides.database ?? new Pool({ connectionString: env.HYPERDRIVE!.connectionString });
+  const database = overrides.database ?? createWorkerDatabase(env);
   const ownershipLookup = overrides.ownershipLookup ?? createOwnershipLookup(database);
   const menuImages = overrides.menuImages ?? (config.r2 ? (() => {
     if (!env.R2_BUCKET) throw new AppError(503, "service_unavailable", "Service unavailable");
