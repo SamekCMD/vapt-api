@@ -84,7 +84,10 @@ test("authenticated fixed operation gets one request-scoped database", async () 
 
 test("default probe runner executes the fixed query through its database", async () => {
   const database = {
-    async query(sql: string, values: unknown[]) {
+    async query(sql: string, values?: unknown[]) {
+      if (sql.includes("current_database()")) {
+        return { rows: [{ database: "vapt", username: "vapt_api_preview" }] };
+      }
       assert.match(sql, /\$1/);
       assert.deepEqual(values, ["vapt-stage10"]);
       return { rows: [{ marker: "vapt-stage10" }] };

@@ -18,7 +18,7 @@ export type ProbeDependencies = {
 };
 
 const defaultDependencies: ProbeDependencies = {
-  createDatabase: createWorkerDatabase,
+  createDatabase: (env) => createWorkerDatabase(env, { diagnostic: true }),
   runOperation: runProbeOperation,
 };
 

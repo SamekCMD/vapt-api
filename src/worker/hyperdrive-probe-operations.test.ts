@@ -17,6 +17,9 @@ test("uses bound parameters for the fixed query", async () => {
   const database = {
     async query(sql: string, values?: unknown[]) {
       calls.push({ sql, values });
+      if (sql.includes("current_database()")) {
+        return { rows: [{ database: "vapt", username: "vapt_api_preview" }] };
+      }
       return { rows: [{ marker: "vapt-stage10" }] };
     },
   } as unknown as Pool;
@@ -25,10 +28,10 @@ test("uses bound parameters for the fixed query", async () => {
 
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), { ok: true, parameterized: true });
-  assert.equal(calls.length, 1);
-  assert.match(calls[0]!.sql, /\$1/);
-  assert.doesNotMatch(calls[0]!.sql, /vapt-stage10/);
-  assert.deepEqual(calls[0]!.values, ["vapt-stage10"]);
+  const parameterized = calls.find((call) => call.sql.includes("$1"));
+  assert.ok(parameterized);
+  assert.doesNotMatch(parameterized.sql, /vapt-stage10/);
+  assert.deepEqual(parameterized.values, ["vapt-stage10"]);
 });
 
 test("identity reports only the expected preview database and role", async () => {
@@ -59,12 +62,47 @@ test("identity rejects a wrong database without exposing it", async () => {
   assert.doesNotMatch(await response.text(), /wrong_database/);
 });
 
+for (const operation of ["transaction", "auth/create", "auth/revoke", "reconcile"]) {
+  for (const identity of [
+    { database: "wrong_database", username: "vapt_api_preview" },
+    { database: "vapt", username: "wrong_role" },
+  ]) {
+    test(`${operation} rejects wrong preview identity before writes: ${identity.database}/${identity.username}`, async () => {
+      let writes = 0;
+      const database = {
+        async query(sql: string) {
+          if (sql.includes("current_database()")) return { rows: [identity] };
+          writes += 1;
+          throw new Error("Unexpected SQL after failed identity");
+        },
+        async connect() {
+          writes += 1;
+          throw new Error("Unexpected connection after failed identity");
+        },
+      } as unknown as Pool;
+      const response = await runProbeOperation(operation, database, preview, {
+        createReconciliationServices() {
+          writes += 1;
+          throw new Error("Unexpected reconciliation after failed identity");
+        },
+      });
+
+      assert.equal(response.status, 503);
+      assert.deepEqual(await response.json(), { ok: false });
+      assert.equal(writes, 0);
+    });
+  }
+}
+
 function transactionalDatabase() {
   let persisted = new Map<string, string>();
   let pending: Map<string, string> | null = null;
   const calls: string[] = [];
   const query = async (sql: string, values: unknown[] = []) => {
     calls.push(sql);
+    if (sql.includes("current_database()")) {
+      return { rows: [{ database: "vapt", username: "vapt_api_preview" }], rowCount: 1 };
+    }
     if (sql === "BEGIN") {
       pending = new Map(persisted);
       return { rows: [], rowCount: 0 };
@@ -133,6 +171,9 @@ function authFixture() {
   };
   let runtimeCreations = 0;
   const query = async (sql: string, values: unknown[] = []) => {
+    if (sql.includes("current_database()")) {
+      return { rows: [{ database: "vapt", username: "vapt_api_preview" }], rowCount: 1 };
+    }
     if (["BEGIN", "COMMIT", "ROLLBACK"].includes(sql)) return { rows: [], rowCount: 0 };
     if (sql.startsWith('INSERT INTO better_auth."user"')) {
       state.userId = "00000000-0000-4000-8000-000000000010";
@@ -216,11 +257,15 @@ test("revoked session is absent in another fresh auth runtime", async () => {
 
 test("refuses nonempty eligible outbox before constructing reconciliation", async () => {
   let serviceCreations = 0;
+  const query = async (sql: string) => {
+    if (sql.includes("current_database()")) return { rows: [{ database: "vapt", username: "vapt_api_preview" }] };
+    if (sql === "BEGIN" || sql === "ROLLBACK") return { rows: [] };
+    assert.match(sql, /count_pending_payment_effects/);
+    return { rows: [{ count: 1 }] };
+  };
   const database = {
-    async query(sql: string) {
-      assert.match(sql, /count_pending_payment_effects/);
-      return { rows: [{ count: 1 }] };
-    },
+    query,
+    async connect() { return { query, release() {} }; },
   } as unknown as Pool;
 
   const response = await runProbeOperation("reconcile", database, preview, {
@@ -237,11 +282,15 @@ test("refuses nonempty eligible outbox before constructing reconciliation", asyn
 
 test("runs one bounded reconciliation without starting an interval or provider", async () => {
   const calls = { runOnce: 0, start: 0, provider: 0, limit: 0 };
+  const query = async (sql: string) => {
+    if (sql.includes("current_database()")) return { rows: [{ database: "vapt", username: "vapt_api_preview" }] };
+    if (sql === "BEGIN" || sql === "COMMIT") return { rows: [] };
+    assert.match(sql, /count_pending_payment_effects/);
+    return { rows: [{ count: 0 }] };
+  };
   const database = {
-    async query(sql: string) {
-      assert.match(sql, /count_pending_payment_effects/);
-      return { rows: [{ count: 0 }] };
-    },
+    query,
+    async connect() { return { query, release() {} }; },
   } as unknown as Pool;
 
   const response = await runProbeOperation("reconcile", database, preview, {
@@ -266,4 +315,38 @@ test("runs one bounded reconciliation without starting an interval or provider",
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), { ok: true, ranOnce: true, claimed: 0, pending: 0 });
   assert.deepEqual(calls, { runOnce: 1, start: 0, provider: 0, limit: 100 });
+});
+
+test("rolls back reconciliation if work becomes eligible after the empty check", async () => {
+  let committedSideEffect = false;
+  let pendingSideEffect = false;
+  const calls: string[] = [];
+  const query = async (sql: string) => {
+    calls.push(sql);
+    if (sql.includes("current_database()")) return { rows: [{ database: "vapt", username: "vapt_api_preview" }] };
+    if (sql === "BEGIN") return { rows: [] };
+    if (sql === "COMMIT") { committedSideEffect = pendingSideEffect; return { rows: [] }; }
+    if (sql === "ROLLBACK") { pendingSideEffect = false; return { rows: [] }; }
+    if (sql.includes("count_pending_payment_effects")) return { rows: [{ count: 0 }] };
+    throw new Error(`Unexpected SQL: ${sql}`);
+  };
+  const database = { query, async connect() { return { query, release() {} }; } } as unknown as Pool;
+
+  const response = await runProbeOperation("reconcile", database, preview, {
+    createReconciliationServices() {
+      return {
+        config: { paymentEffects: { batchSize: 1 } },
+        payments: { reconciliation: { async runOnce() {
+          pendingSideEffect = true;
+          return { claimed: 1, completed: 1, failed: 0, deadLettered: 0, pending: 0 };
+        } } },
+      };
+    },
+  } as unknown as ProbeOperationDependencies);
+
+  assert.equal(response.status, 409);
+  assert.deepEqual(await response.json(), { ok: false, blocked: true });
+  assert.ok(calls.includes("ROLLBACK"));
+  assert.equal(committedSideEffect, false);
+  assert.equal(pendingSideEffect, false);
 });

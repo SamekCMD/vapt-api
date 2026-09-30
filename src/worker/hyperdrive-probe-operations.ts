@@ -5,7 +5,7 @@ import type { Pool } from "pg";
 import type { AuthEmailService } from "../email/types.js";
 import type { ApiServices } from "../composition/api-services.js";
 import type { AppConfig, BetterAuthConfig } from "../lib/config.js";
-import { withTransaction } from "../lib/database.js";
+import { withTransaction, type Queryable } from "../lib/database.js";
 import { createBetterAuthRuntime } from "../modules/auth/better-auth.js";
 import { createPaymentModule } from "../modules/payments/composition.js";
 import type { ProbeBindings } from "./hyperdrive-probe.js";
@@ -17,7 +17,7 @@ const deleteVerification = 'DELETE FROM better_auth."verification" WHERE "identi
 
 export type ProbeOperationDependencies = {
   createAuthRuntime?: typeof createBetterAuthRuntime;
-  createReconciliationServices?: (database: Pool) => ApiServices;
+  createReconciliationServices?: (database: Queryable) => ApiServices;
 };
 
 const defaultDependencies: ProbeOperationDependencies = {};
@@ -93,7 +93,7 @@ async function authProbe(
   return Response.json({ ok: true, sessionPresent: session?.user.email === email });
 }
 
-function createReconciliationServices(database: Pool): ApiServices {
+function createReconciliationServices(database: Queryable): ApiServices {
   const config = {
     paymentEffects: {
       pollIntervalMs: 5000,
@@ -111,17 +111,28 @@ function createReconciliationServices(database: Pool): ApiServices {
 }
 
 async function reconcileProbe(database: Pool, dependencies: ProbeOperationDependencies): Promise<Response> {
-  const pending = Number((await database.query("SELECT public.count_pending_payment_effects() AS count")).rows[0]?.count);
-  if (pending !== 0) return Response.json({ ok: false, blocked: true }, { status: 409 });
-  const services = (dependencies.createReconciliationServices ?? createReconciliationServices)(database);
-  const result = await runScheduledReconciliation(services);
-  const ok = result.claimed === 0 && result.pending === 0;
-  return Response.json({
-    ok,
-    ranOnce: true,
-    claimed: result.claimed,
-    pending: result.pending,
-  }, { status: ok ? 200 : 503 });
+  const blocked = new Error("Preview reconciliation is not empty");
+  try {
+    const result = await withTransaction(database, async (client) => {
+      const pending = Number((await client.query("SELECT public.count_pending_payment_effects() AS count")).rows[0]?.count);
+      if (pending !== 0) throw blocked;
+      const services = (dependencies.createReconciliationServices ?? createReconciliationServices)(client);
+      const pass = await runScheduledReconciliation(services);
+      // The processor uses this same transaction-bound client. A newly eligible
+      // effect may be claimed after the count; never commit its DB effects.
+      if (pass.claimed !== 0 || pass.pending !== 0) throw blocked;
+      return pass;
+    });
+    return Response.json({
+      ok: true,
+      ranOnce: true,
+      claimed: result.claimed,
+      pending: result.pending,
+    });
+  } catch (error) {
+    if (error !== blocked) throw error;
+    return Response.json({ ok: false, blocked: true }, { status: 409 });
+  }
 }
 
 async function transactionProbe(database: Pool): Promise<Response> {
@@ -160,11 +171,11 @@ export async function runProbeOperation(
   env: ProbeBindings,
   dependencies: ProbeOperationDependencies = defaultDependencies,
 ): Promise<Response> {
+  const identity = await database.query("SELECT current_database() AS database, current_user AS username");
+  if (identity.rows[0]?.database !== "vapt" || identity.rows[0]?.username !== "vapt_api_preview") {
+    return Response.json({ ok: false }, { status: 503 });
+  }
   if (operation === "identity") {
-    const result = await database.query("SELECT current_database() AS database, current_user AS username");
-    if (result.rows[0]?.database !== "vapt" || result.rows[0]?.username !== "vapt_api_preview") {
-      return Response.json({ ok: false }, { status: 503 });
-    }
     return Response.json({ ok: true, database: "vapt", user: "vapt_api_preview" });
   }
   if (operation === "query") {

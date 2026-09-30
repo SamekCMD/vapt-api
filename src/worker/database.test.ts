@@ -38,6 +38,20 @@ test("creates distinct max-one pools", async () => {
   }
 });
 
+test("bounds diagnostic checkout, statement, read and lock waits", async () => {
+  const pool = createWorkerDatabase(preview, { diagnostic: true });
+  try {
+    const statementTimeout = Number(pool.options.statement_timeout ?? 0);
+    assert.ok((pool.options.connectionTimeoutMillis ?? 0) > 0);
+    assert.ok(statementTimeout > 0);
+    assert.ok((pool.options.query_timeout ?? 0) > statementTimeout);
+    assert.ok(Number(pool.options.lock_timeout ?? 0) > 0);
+    assert.ok(Number(pool.options.lock_timeout ?? 0) < statementTimeout);
+  } finally {
+    await pool.end();
+  }
+});
+
 test("service composition uses a max-one pool", async () => {
   const services = await createWorkerServices(preview, context, { config: {} as AppConfig });
   assert.ok(services.database instanceof Pool);
