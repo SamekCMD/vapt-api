@@ -8,5 +8,11 @@
   "preview_urls": false,
   "vars": {
     "ENVIRONMENT": "preview"
-  }
+  },
+  "hyperdrive": [
+    {
+      "binding": "HYPERDRIVE",
+      "id": "0c05fec2924b4f3b9225f3d689ba7ea9"
+    }
+  ]
 }
