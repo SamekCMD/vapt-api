@@ -1,6 +1,6 @@
 # Vapt API Stage 11: protected parallel Worker and production database readiness
 
-Status: design approved in conversation on 2026-09-30; written specification awaiting owner review. This follows the completed Stage 10 preview Hyperdrive handoff. The Vapt migration plan's Stage 11 is parallel operation, not the Stage 13 public API cutover. Coolify remains the serving API at `api.vapt.app.br`. Vercel and Easypanel are legacy and are not migration targets. No customer accounts or production billing events need preservation.
+Status: written specification approved by the owner in conversation on 2026-09-30; implementation plan awaiting review. This follows the completed Stage 10 preview Hyperdrive handoff. The Vapt migration plan's Stage 11 is parallel operation, not the Stage 13 public API cutover. Coolify remains the serving API at `api.vapt.app.br`. Vercel and Easypanel are legacy and are not migration targets. No customer accounts or production billing events need preservation.
 
 ## Intent and success boundary
 
