@@ -3,20 +3,24 @@ import { makeSignature } from "better-auth/crypto";
 import type { Pool } from "pg";
 
 import type { AuthEmailService } from "../email/types.js";
-import type { BetterAuthConfig } from "../lib/config.js";
+import type { ApiServices } from "../composition/api-services.js";
+import type { AppConfig, BetterAuthConfig } from "../lib/config.js";
 import { withTransaction } from "../lib/database.js";
 import { createBetterAuthRuntime } from "../modules/auth/better-auth.js";
+import { createPaymentModule } from "../modules/payments/composition.js";
 import type { ProbeBindings } from "./hyperdrive-probe.js";
+import { runScheduledReconciliation } from "./scheduled.js";
 
 const insertVerification = 'INSERT INTO better_auth."verification" ("identifier", "value", "expiresAt") VALUES ($1, $2, now() + interval \'5 minutes\')';
 const countVerification = 'SELECT count(*)::integer AS count FROM better_auth."verification" WHERE "identifier" = $1';
 const deleteVerification = 'DELETE FROM better_auth."verification" WHERE "identifier" = $1';
 
 export type ProbeOperationDependencies = {
-  createAuthRuntime: typeof createBetterAuthRuntime;
+  createAuthRuntime?: typeof createBetterAuthRuntime;
+  createReconciliationServices?: (database: Pool) => ApiServices;
 };
 
-const defaultDependencies: ProbeOperationDependencies = { createAuthRuntime: createBetterAuthRuntime };
+const defaultDependencies: ProbeOperationDependencies = {};
 
 const forbiddenEmail: AuthEmailService = {
   async sendVerification() { throw new Error("Diagnostic email is forbidden"); },
@@ -76,7 +80,7 @@ async function authProbe(
     return Response.json({ ok: true, revoked: true });
   }
 
-  const runtime = dependencies.createAuthRuntime(authConfig(env.PROBE_TOKEN!), {
+  const runtime = (dependencies.createAuthRuntime ?? createBetterAuthRuntime)(authConfig(env.PROBE_TOKEN!), {
     pool: database,
     emailService: forbiddenEmail,
     runInBackground() { throw new Error("Diagnostic background task is forbidden"); },
@@ -87,6 +91,37 @@ async function authProbe(
   });
   const session = await runtime.getSession(headers);
   return Response.json({ ok: true, sessionPresent: session?.user.email === email });
+}
+
+function createReconciliationServices(database: Pool): ApiServices {
+  const config = {
+    paymentEffects: {
+      pollIntervalMs: 5000,
+      batchSize: 1,
+      leaseMs: 30000,
+      maxAttempts: 1,
+      retryBaseMs: 30000,
+    },
+  } as AppConfig;
+  const payments = createPaymentModule(config, database, [], {
+    workerId: "vapt-stage10-reconcile-preview",
+    onError() {},
+  });
+  return { config, payments } as ApiServices;
+}
+
+async function reconcileProbe(database: Pool, dependencies: ProbeOperationDependencies): Promise<Response> {
+  const pending = Number((await database.query("SELECT public.count_pending_payment_effects() AS count")).rows[0]?.count);
+  if (pending !== 0) return Response.json({ ok: false, blocked: true }, { status: 409 });
+  const services = (dependencies.createReconciliationServices ?? createReconciliationServices)(database);
+  const result = await runScheduledReconciliation(services);
+  const ok = result.claimed === 0 && result.pending === 0;
+  return Response.json({
+    ok,
+    ranOnce: true,
+    claimed: result.claimed,
+    pending: result.pending,
+  }, { status: ok ? 200 : 503 });
 }
 
 async function transactionProbe(database: Pool): Promise<Response> {
@@ -143,5 +178,6 @@ export async function runProbeOperation(
   if (operation === "auth/create" || operation === "auth/read" || operation === "auth/revoke") {
     return authProbe(operation, database, env, dependencies);
   }
+  if (operation === "reconcile") return reconcileProbe(database, dependencies);
   return Response.json({ ok: false }, { status: 503 });
 }

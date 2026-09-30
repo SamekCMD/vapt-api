@@ -213,3 +213,57 @@ test("revoked session is absent in another fresh auth runtime", async () => {
   assert.equal(fixture.state.userId, null);
   assert.equal(fixture.state.token, null);
 });
+
+test("refuses nonempty eligible outbox before constructing reconciliation", async () => {
+  let serviceCreations = 0;
+  const database = {
+    async query(sql: string) {
+      assert.match(sql, /count_pending_payment_effects/);
+      return { rows: [{ count: 1 }] };
+    },
+  } as unknown as Pool;
+
+  const response = await runProbeOperation("reconcile", database, preview, {
+    createReconciliationServices() {
+      serviceCreations += 1;
+      throw new Error("No provider service should be constructed");
+    },
+  } as unknown as ProbeOperationDependencies);
+
+  assert.equal(response.status, 409);
+  assert.deepEqual(await response.json(), { ok: false, blocked: true });
+  assert.equal(serviceCreations, 0);
+});
+
+test("runs one bounded reconciliation without starting an interval or provider", async () => {
+  const calls = { runOnce: 0, start: 0, provider: 0, limit: 0 };
+  const database = {
+    async query(sql: string) {
+      assert.match(sql, /count_pending_payment_effects/);
+      return { rows: [{ count: 0 }] };
+    },
+  } as unknown as Pool;
+
+  const response = await runProbeOperation("reconcile", database, preview, {
+    createReconciliationServices() {
+      return {
+        config: { paymentEffects: { batchSize: 250 } },
+        payments: {
+          reconciliation: {
+            async runOnce(limit: number) {
+              calls.runOnce += 1;
+              calls.limit = limit;
+              return { claimed: 0, completed: 0, failed: 0, deadLettered: 0, pending: 0 };
+            },
+            start() { calls.start += 1; },
+          },
+          registry: { get() { calls.provider += 1; throw new Error("Provider forbidden"); } },
+        },
+      };
+    },
+  } as unknown as ProbeOperationDependencies);
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { ok: true, ranOnce: true, claimed: 0, pending: 0 });
+  assert.deepEqual(calls, { runOnce: 1, start: 0, provider: 0, limit: 100 });
+});
