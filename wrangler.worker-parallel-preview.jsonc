@@ -1,0 +1,29 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "vapt-api-parallel",
+  "main": "src/worker/parallel-preview.ts",
+  "compatibility_date": "2026-09-28",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "previews": {
+    "vars": {
+      "ENVIRONMENT": "preview",
+      "STRIPE_ENVIRONMENT": "test"
+    },
+    "hyperdrive": [
+      { "binding": "HYPERDRIVE", "id": "0c05fec2924b4f3b9225f3d689ba7ea9" }
+    ],
+    "r2_buckets": [
+      { "binding": "R2_BUCKET", "bucket_name": "vapt-assets-preview" }
+    ],
+    "ratelimits": [
+      { "name": "AUTH_RATE_LIMIT", "namespace_id": "11011", "simple": { "limit": 20, "period": 60 } },
+      { "name": "BILLING_RATE_LIMIT", "namespace_id": "11012", "simple": { "limit": 60, "period": 60 } },
+      { "name": "ORDERS_RATE_LIMIT", "namespace_id": "11013", "simple": { "limit": 30, "period": 60 } },
+      { "name": "STORAGE_RATE_LIMIT", "namespace_id": "11014", "simple": { "limit": 30, "period": 60 } },
+      { "name": "WEBHOOKS_RATE_LIMIT", "namespace_id": "11015", "simple": { "limit": 300, "period": 60 } },
+      { "name": "PUBLIC_RATE_LIMIT", "namespace_id": "11016", "simple": { "limit": 120, "period": 60 } }
+    ]
+  }
+}
