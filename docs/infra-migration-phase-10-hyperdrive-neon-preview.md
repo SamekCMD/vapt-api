@@ -37,9 +37,9 @@ Verificações locais finais:
 
 | Comando / verificação | Resultado |
 | --- | --- |
-| `npx tsx --test src/worker/hyperdrive-probe-operations.test.ts` | 9/9 |
+| `npx tsx --test src/worker/database.test.ts src/worker/hyperdrive-probe-operations.test.ts` | 23/23 |
 | `node --test scripts/verify-hyperdrive-preview.test.mjs` | 4/4 |
-| `npm test` | 436/436 |
+| `npm test` | 446/446 |
 | `npm run test:worker` | 15/15 |
 | `npm run build` | exit 0 |
 | `npm run build:worker` | exit 0 |
@@ -50,7 +50,8 @@ Um ensaio direto com a role limitada, antes do Hyperdrive, já havia confirmado
 permitida e rejeição de DDL/leitura alheia com SQLSTATE `42501`. Esse ensaio
 **não** foi contabilizado como prova do Hyperdrive.
 
-Três sessões temporárias de `wrangler dev --remote` usaram o Hyperdrive real:
+Na primeira rodada, três sessões temporárias de `wrangler dev --remote` usaram
+o Hyperdrive real:
 
 1. SQL: POST sem token retornou `401` com `no-store`; o autenticado confirmou
    database `vapt`, usuário `vapt_api_preview`, query parametrizada, ausência
@@ -68,6 +69,18 @@ Três sessões temporárias de `wrangler dev --remote` usaram o Hyperdrive real:
    operação fixa `reconcile` chamou `runScheduledReconciliation` uma vez.
    O resultado reclamou zero efeitos, e a outbox terminou com zero linhas;
    nenhum provider foi chamado e nenhum intervalo ou Cron foi iniciado.
+
+A revisão independente detectou três lacunas no diagnóstico, corrigidas após
+testes de regressão RED→GREEN: todas as operações agora checam database e role
+antes de ler ou escrever; o passe de reconciliação usa o mesmo cliente e uma
+transação que sofre rollback se algum efeito surgir entre a contagem e o claim;
+e o pool **somente do diagnóstico** tem limites de aquisição (5 s), lock
+(2 s), statement (8 s) e leitura (10 s). Erros continuam sanitizados na resposta.
+Depois dessas correções, as três provas remotas foram repetidas com sucesso:
+SQL/transação e limpeza, Better Auth entre invocações e passe agendado único
+com outbox vazia. No segundo ensaio, cinco invocações seriais levaram 959 ms e
+três concorrentes, 420 ms; as conexões observadas foram de 4 para 5. Esses
+tempos são observações, não metas de desempenho. Não houve provider nem email.
 
 A auditoria final repetiu o verificador SQL na preview, confirmou zero
 usuários/sessões/linhas de verificação sintéticos e zero efeitos de pagamento,
