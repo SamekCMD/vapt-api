@@ -2,6 +2,7 @@ import type { Pool } from "pg";
 
 import { createWorkerDatabase } from "./database.js";
 import type { WorkerBindings } from "./environment.js";
+import { runProbeOperation } from "./hyperdrive-probe-operations.js";
 
 const operations = new Set([
   "identity", "query", "transaction", "auth/create", "auth/read", "auth/revoke", "reconcile",
@@ -16,11 +17,9 @@ export type ProbeDependencies = {
   runOperation(operation: string, database: Pool, env: ProbeBindings): Promise<Response>;
 };
 
-const unavailable: ProbeDependencies = {
+const defaultDependencies: ProbeDependencies = {
   createDatabase: createWorkerDatabase,
-  async runOperation() {
-    return Response.json({ ok: false }, { status: 503 });
-  },
+  runOperation: runProbeOperation,
 };
 
 function response(status: number): Response {
@@ -50,7 +49,7 @@ async function sameToken(expected: string | undefined, supplied: string | null):
 export async function handleHyperdriveProbe(
   request: Request,
   env: ProbeBindings,
-  dependencies: ProbeDependencies = unavailable,
+  dependencies: Partial<ProbeDependencies> = {},
 ): Promise<Response> {
   if (env.ENVIRONMENT !== "preview") return response(503);
   if (!await sameToken(env.PROBE_TOKEN, request.headers.get("authorization"))) return response(401);
@@ -60,8 +59,8 @@ export async function handleHyperdriveProbe(
   if (!operations.has(operation)) return response(404);
 
   try {
-    const database = dependencies.createDatabase(env);
-    const result = await dependencies.runOperation(operation, database, env);
+    const database = (dependencies.createDatabase ?? defaultDependencies.createDatabase)(env);
+    const result = await (dependencies.runOperation ?? defaultDependencies.runOperation)(operation, database, env);
     result.headers.set("cache-control", "no-store");
     return result;
   } catch {

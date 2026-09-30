@@ -81,3 +81,20 @@ test("authenticated fixed operation gets one request-scoped database", async () 
   assert.equal(response.headers.get("cache-control"), "no-store");
   assert.deepEqual(counts, { databases: 1, operations: 1 });
 });
+
+test("default probe runner executes the fixed query through its database", async () => {
+  const database = {
+    async query(sql: string, values: unknown[]) {
+      assert.match(sql, /\$1/);
+      assert.deepEqual(values, ["vapt-stage10"]);
+      return { rows: [{ marker: "vapt-stage10" }] };
+    },
+  } as unknown as Pool;
+
+  const response = await handleHyperdriveProbe(request("/query"), preview, {
+    createDatabase: () => database,
+  });
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { ok: true, parameterized: true });
+});
