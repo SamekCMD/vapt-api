@@ -362,3 +362,8 @@ Frontend 135/135 no primeiro run; o run paralelo posterior teve uma falha em
 `public-menu-catalog.test.tsx` (consulta síncrona antes do efeito de categoria);
 suíte completa com `npm test -- --maxWorkers=2` passou 135/135. Estabilização
 desse teste ficou como minor adiado, sem edição do frontend nesta etapa.
+
+Após os commits da correção, a varredura pelos segredos conhecidos repetida
+em 511 arquivos versionados encontrou zero correspondências. O checkout API
+ficou limpo; no principal, os arquivos do usuário em
+`docs/implementation-references/` foram preservados sem staging. Sem merge/push.
