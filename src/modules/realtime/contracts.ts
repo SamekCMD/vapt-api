@@ -22,6 +22,9 @@ export type RealtimeEnvelope = {
   reason: CommittedChange["reason"];
 };
 
+export type RealtimeReady = { version: 1; type: "ready"; leaseExpiresAt: number };
+export type RealtimeAck = { version: 1; type: "ack"; sequence: number };
+
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const envelopeKeys = new Set(["version", "eventId", "sequence", "topic", "entityId", "reason"]);
 

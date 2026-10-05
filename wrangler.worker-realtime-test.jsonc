@@ -1,0 +1,12 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "vapt-realtime-test",
+  "main": "src/worker/realtime-test-fixture.ts",
+  "compatibility_date": "2026-09-28",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "vars": { "ENVIRONMENT": "preview", "CORS_ORIGINS": "https://app.vapt.test" },
+  "durable_objects": { "bindings": [{ "name": "ROOMS", "class_name": "TestRestaurantRealtime" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["TestRestaurantRealtime"] }]
+}
