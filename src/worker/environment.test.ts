@@ -46,6 +46,12 @@ test("Worker preview uses Hyperdrive URL and production validation", () => {
   assert.deepEqual(config.corsOrigins, ["https://preview.vapt.test"]);
 });
 
+test("disabled realtime preserves API configuration without a Durable Object binding", () => {
+  const config = configFromWorkerBindings({ ...validPreview, REALTIME_ENABLED: "false" } as WorkerBindings);
+  assert.equal(config.stripe.environment, "test");
+  assert.equal(config.betterAuth.databaseUrl, "postgresql://preview:synthetic@db.vapt.test/vapt");
+});
+
 test("Worker preview rejects Stripe live mode but production permits test mode", () => {
   assert.throws(
     () => configFromWorkerBindings({ ...validPreview, STRIPE_ENVIRONMENT: "live" } as WorkerBindings),
