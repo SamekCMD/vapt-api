@@ -1,4 +1,4 @@
-# Stage 11 — API Worker paralelo (em andamento)
+# Stage 11 — API Worker paralelo (preparação validada; sem cutover)
 
 Status em 05/10/2026: API completa configurada no Preview protegido por Access
 e bearer, com health/readiness, identidade Hyperdrive e falha por binding ausente
@@ -248,3 +248,75 @@ Isso não prova entrega originada pela Stripe nem ativação/pagamento de
 assinatura: o evento foi assinado pelo operador para um checkout Test expirado.
 Nenhum destination público, bypass Access, assinatura Live, Cron ou consumer
 foi criado. Esses gates seguem para a aceitação de billing/cutover.
+
+## Production pronta, sem binding — Tasks 7–8
+
+No repositório principal, commit `21e38cd` criou apenas os grants/verificador
+da role `vapt_api_production` e atualizou o handoff Neon. A role existe somente
+na branch `br-odd-term-b6j2n9ms`, endpoint direto
+`ep-holy-wildflower-b6vtv1dd.c-2.sa-east-1.aws.neon.tech:5432/vapt`.
+O verificador falhou antes da criação e passou como owner e login restrito.
+Seis verificadores passaram como owner; ACL, CRUD Better Auth e função permitida
+passaram como login restrito com rollback. DDL, leitura/grant de outbox,
+ownership e função não permitida retornaram `42501`. O schema geral usa
+`information_schema`, que esconde objetos proibidos do login restrito: nenhuma
+permissão foi ampliada para fazer esse verificador passar.
+
+Hyperdrive `vapt-api-neon-production`: `2885c609a66641b3b716190c2d467902`,
+role `vapt_api_production`, cache desativado e limite de cinco conexões. A senha
+foi rotacionada em memória e enviada no campo write-only da API Cloudflare,
+sem URI em argumentos, arquivo ou logs. O ID não aparece em Wrangler config.
+O Hyperdrive mantém TLS `require` padrão, validado por WebPKI conforme a
+[documentação Cloudflare](https://developers.cloudflare.com/hyperdrive/configuration/tls-ssl-certificates-for-hyperdrive/).
+Uma tentativa opcional de `verify-full` foi rejeitada (`400/2007`) porque esse
+modo requer CA customizada; nenhum certificado extra ou mudança de proteção
+foi aplicada. Esse modo adicional não pertence ao gate do plano.
+
+Readback final: shell `ce6f3919` com zero bindings, URL de produção desativada,
+zero Cron/custom domains; Preview restaurado em deployment
+`9d020e2c-13b8-490c-be9f-5a5223ff18305`, nove secrets, somente Hyperdrive/R2
+Preview. Probe protegido confirmou novamente `database=vapt`,
+`role=vapt_api_preview`; `PROBE_TOKEN` removido do deployment corrente.
+HTTP repetido: sem Access `302`, Access sem bearer `401`, health/readiness
+com ambos `200`. O comparador repetido permaneceu sem referência Coolify
+acessível; não foi feita mudança de DNS.
+
+O OAuth existente do Wrangler não tem leitura Access (`403/1010`). Não foi
+ampliado: o Dashboard confirmou scope `vapt-api-parallel`, tipo exclusivo
+`A Worker's preview URLs`, uma policy Allow/default-deny e sessão `1h`.
+Zero Trust continua Free; nenhum plano pago ou proteção production foi ativado.
+
+Validação final: API 450/450, workerd 15/15, build e ambos os dry-runs passaram;
+paralelo top-level sem bindings. Varredura por valores reais dos segredos em
+510 arquivos versionados de ambos os repositórios: zero correspondências.
+Neon nas duas branches: zero usuários, restaurantes, pedidos, eventos billing,
+outboxes e efeitos; roles de ambientes isoladas. R2 confirmou ausência dos
+objetos testados após exclusão e o Dashboard confirmou bucket vazio (0 B).
+Cliente Stripe Test foi excluído; sessão foi
+expirada, sem assinatura ou cobrança. Emails apenas no destinatário de teste.
+
+## Segurança e rollback
+
+`wrangler auth token --json`, apesar de capturado somente em memória, grava
+sua saída em debug log por padrão. Foi detectada e removida somente a cópia
+gerada nesta execução (`wrangler-2026-10-05_18-40-46_839.log`). Não houve valor
+na conversa ou Git. A sessão passou a usar `WRANGLER_WRITE_LOGS=false` e
+`WRANGLER_SEND_METRICS=false`; futuras capturas de tokens devem aplicar isso
+antes do comando. O arquivo de autenticação normal do Wrangler não foi apagado.
+
+O shell production não precisa de rollback de tráfego, pois nada foi vinculado.
+Para interromper este ensaio, desativar somente Preview URLs deste Worker;
+para remover credenciais de teste, revogar somente as novas chaves desta etapa.
+Não apagar buckets/branches ou chaves dos Workers billing existentes. Deployments
+históricos continuam no Access; remoção de secret corrente não apaga seu histórico.
+
+## Gates restantes — Stages 12/13
+
+- Integração frontend real com API/Auth de destino e aceitação de browser.
+- Paridade HTTP com referência acessível: não comprovada, não inventada.
+- Entrega Stripe originada pelo provedor e ciclo de assinatura/pagamento:
+  não comprovados pelo webhook assinado do operador.
+- Custos/limites gratuitos e uso real em Workers antes de qualquer produção;
+  nenhum upgrade pago está autorizado.
+- Cutover de rota pública, activation de Cron/consumers e serviços de produção
+  continuam separados desta preparação; DNS e Coolify não foram alterados.
