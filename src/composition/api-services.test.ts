@@ -52,3 +52,10 @@ test("shared composition defers provider initialization until a domain is used",
   assert.strictEqual(services.database, database);
   assert.deepEqual(services.payments.registry.codes(), ["manual"]);
 });
+
+test("realtime validation is lazy and does not initialize authentication or providers", async () => {
+  const services = createApiServices(config, { database });
+  const realtime = services.realtimeAuthorization;
+  assert.ok(realtime, "realtime authorization getter must exist");
+  assert.deepEqual(await realtime.revalidate([], Date.now()), []);
+});

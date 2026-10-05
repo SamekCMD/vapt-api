@@ -1,4 +1,5 @@
 import type { Pool } from "pg";
+import { createRealtimeAuthorization, type RealtimeAuthorization } from "../modules/realtime/authorization.js";
 
 import { createResendAuthEmailService } from "../email/email.service.js";
 import { createResendEmailClient } from "../email/resend.client.js";
@@ -96,6 +97,7 @@ export type ApiServiceDependencies = {
 };
 
 export type ApiServices = {
+  realtimeAuthorization: RealtimeAuthorization;
   config: AppConfig;
   database: Database;
   authRuntime: AuthRuntime;
@@ -119,6 +121,7 @@ export type ApiServices = {
 };
 
 export function createApiServices(config: AppConfig, dependencies: ApiServiceDependencies): ApiServices {
+  let realtimeAuthorization: RealtimeAuthorization | undefined;
   let authRuntime = dependencies.authRuntime;
   let stripeGateway = dependencies.stripeGateway;
   let payments = dependencies.payments;
@@ -165,6 +168,16 @@ export function createApiServices(config: AppConfig, dependencies: ApiServiceDep
   };
 
   return {
+    get realtimeAuthorization() {
+      const services = this;
+      realtimeAuthorization ??= createRealtimeAuthorization({
+        database: dependencies.database,
+        get authRuntime() { return services.authRuntime; },
+        get orders() { return services.orders; },
+        get ownershipLookup() { return services.ownershipLookup; },
+      });
+      return realtimeAuthorization;
+    },
     config,
     database: dependencies.database,
     menuImages: dependencies.menuImages ?? null,
