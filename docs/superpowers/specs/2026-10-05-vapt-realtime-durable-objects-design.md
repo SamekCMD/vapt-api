@@ -1,6 +1,6 @@
 # Etapa 12 — Realtime Vapt com Durable Objects e WebSockets
 
-Status: desenho conversacional aprovado em 05/10/2026; esta especificação escrita aguarda revisão do usuário. Não autoriza implementação nem publicação por si só.
+Status: desenho e especificação escrita aprovados pelo usuário em conversa em 05/10/2026; plano de implementação aguarda revisão. A ativação pública em produção continua fora desta etapa.
 
 ## Objetivo e limites
 
