@@ -9,7 +9,22 @@
   "previews": {
     "vars": {
       "ENVIRONMENT": "preview",
-      "STRIPE_ENVIRONMENT": "test"
+      "STRIPE_ENVIRONMENT": "test",
+      "CORS_ORIGINS": "https://infra-foundation-vapt-web.autoistloko.workers.dev",
+      "FRONTEND_URL": "https://infra-foundation-vapt-web.autoistloko.workers.dev",
+      "API_PUBLIC_URL": "https://stage11-inert-vapt-api-parallel.autoistloko.workers.dev",
+      "BETTER_AUTH_URL": "https://stage11-inert-vapt-api-parallel.autoistloko.workers.dev",
+      "BETTER_AUTH_TRUSTED_ORIGINS": "https://infra-foundation-vapt-web.autoistloko.workers.dev,https://stage11-inert-vapt-api-parallel.autoistloko.workers.dev",
+      "STRIPE_PORTAL_CONFIGURATION_ID": "bpc_1UKLz8QYNWCekS7FIAhwaL1w",
+      "STRIPE_PRICE_STARTER": "price_1UKLz6QYNWCekS7FogRBzEO9",
+      "STRIPE_PRICE_PRO": "price_1UKLz7QYNWCekS7FA9lBwZEd",
+      "STRIPE_PRICE_BUSINESS": "price_1UKLz8QYNWCekS7Fgz31Vrqd",
+      "RESEND_TEMPLATE_VERIFY_ACCOUNT": "account-confirmation",
+      "RESEND_TEMPLATE_RESET_PASSWORD": "password-reset",
+      "EMAIL_FROM": "Vapt <no-reply@vapt.app.br>",
+      "R2_ACCOUNT_ID": "3ce69408aa5112617a282957aba71932",
+      "R2_BUCKET_NAME": "vapt-assets-preview",
+      "R2_PUBLIC_BASE_URL": "https://pub-c7718cfb495f4c83866dfe3ed8c52890.r2.dev"
     },
     "hyperdrive": [
       { "binding": "HYPERDRIVE", "id": "0c05fec2924b4f3b9225f3d689ba7ea9" }

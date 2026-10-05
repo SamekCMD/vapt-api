@@ -1,9 +1,10 @@
 # Stage 11 — API Worker paralelo (em andamento)
 
-Status em 30/09/2026: shell inerte publicado sem URL de produção, Access de
-Preview configurado e um Preview inerte acessível apenas através do Access;
-ainda não há Preview da API completa. Nenhum tráfego público de produção, DNS, Cron,
-Queue consumer ou segredo da API foi alterado nesta etapa. A API pública continua
+Status em 05/10/2026: API completa configurada no Preview protegido por Access
+e bearer, com health/readiness, identidade Hyperdrive e falha por binding ausente
+validados remotamente. Os fluxos sintéticos e a comparação HTTP ainda estão pendentes.
+O shell permanece sem bindings/URL de produção. Nenhum tráfego público de produção,
+DNS, Cron ou Queue consumer foi alterado nesta etapa. A API pública continua
 sob responsabilidade do Coolify; a migração da rota pública pertence à Stage 13.
 
 ## Inventário antes do Worker
@@ -76,10 +77,11 @@ de login interativo parou porque o Brave bloqueou o consent screen OAuth
 proprietário, o navegador mostrou exatamente
 `{"error":{"code":"service_unavailable","message":"Service unavailable"}}`.
 O wrapper versionado só emite essa resposta com status `503` quando falta
-`PARALLEL_PREVIEW_TOKEN` (teste local: 4/4 PASS, delegate zero nessa condição);
-o navegador não expôs o status HTTP diretamente. Portanto, corpo remoto e
-teste local juntos sustentam que a requisição autenticada parou antes da API,
-Neon ou provider. A tela Settings do Preview mostrou apenas as variáveis
+`PARALLEL_PREVIEW_TOKEN` (teste local: 4/4 PASS, delegate zero nessa condição).
+Uma segunda requisição autenticada pela sessão local do `cloudflared` confirmou
+diretamente HTTP `503`, `service_unavailable` e `Cache-Control: no-store` em
+`/health`, sem bearer. Portanto, o gate parou antes da API, Neon ou provider.
+A tela Settings do Preview mostrou apenas as variáveis
 `ENVIRONMENT=preview` e `STRIPE_ENVIRONMENT=test`, sem segredo.
 
 Uma tentativa de usar Service Token temporário também foi interrompida: o
@@ -88,11 +90,75 @@ Após autorização específica, o token foi **excluído**, com confirmação �
 token has been deleted” no Dashboard. Ele nunca foi associado a uma política,
 nem enviado ao Worker. Nenhum Service Token ativo foi deixado por esta etapa.
 
-## Gate de segurança pendente
+## API completa no Preview — Task 4
 
-O gate de Access e wrapper foi provado sem instalar segredos. Antes do deploy
-da API completa, repetir o verificador estático e instalar os segredos
-**somente** no Preview nomeado, nunca no shell nem no Base compartilhado.
+Em 30/09, antes dos providers, a instalação write-only do bearer foi seguida
+por HTTP `401` sem bearer e `503` com bearer correto/config incompleta. Na
+retomada de 05/10, a sessão local em memória e as chaves one-time haviam sido
+descartadas. O bearer foi substituído por novo valor aleatório de 48 bytes e o
+token R2 `vapt-api-preview-r2` foi novamente rotacionado com o mesmo escopo:
+Object Read & Write apenas em `vapt-assets-preview`. As chaves antigas foram
+invalidadas. As novas chaves foram transferidas diretamente entre as telas R2
+e Preview, sem imprimir valores, e confirmadas como `Value encrypted`.
 
-A amostragem SQL acima não substitui a execução integral do verificador
-versionado de ACL durante a aceitação remota.
+Foi criada a chave Resend `vapt-api-parallel-preview-2026-10-05`, com Sending
+access somente para `vapt.app.br`, e instalada diretamente no Preview. A chave
+Stripe reutilizada foi validada pelo prefixo Test do arquivo local ignorado do
+projeto. Better Auth e public-order token receberam segredos aleatórios novos.
+Turnstile usa a chave pública de testes documentada pela Cloudflare.
+
+`STRIPE_WEBHOOK_SECRET` é um segredo sintético aleatório para o ensaio de
+requisições assinadas pelo operador através do Access. Não corresponde a um
+destination público Stripe; entrega originada pelo provider continua não provada.
+
+Os nove secrets estão apenas no Preview nomeado `stage11-inert`:
+
+```text
+BETTER_AUTH_SECRET        PARALLEL_PREVIEW_TOKEN     PUBLIC_ORDER_TOKEN_SECRET
+R2_ACCESS_KEY_ID          R2_SECRET_ACCESS_KEY      RESEND_API_KEY
+STRIPE_SECRET_KEY         STRIPE_WEBHOOK_SECRET     TURNSTILE_SECRET_KEY
+```
+
+O bulk via stdin retornou exit `0`, com verificação de que nenhum valor foi
+ecoado. Nenhum arquivo com os segredos foi criado no worktree. A configuração
+versionada contém somente URLs de Preview, IDs dos planos Test, templates,
+sender, conta/bucket/base pública R2 e os marcadores de ambiente.
+
+O primeiro deploy completo foi `379f15d6-0b7c-4eee-b5da-9ad3f5884f9b`.
+O readback mostrou os nove `secret_text`, seis namespaces `11011`–`11016`,
+Hyperdrive `0c05fec2924b4f3b9225f3d689ba7ea9`, bucket `vapt-assets-preview`,
+`ENVIRONMENT=preview` e `STRIPE_ENVIRONMENT=test`. O shell `ce6f3919` continuou
+com `bindings: []` e somente `fetch`, sem rota pública ou trigger.
+
+| Requisição remota | Resultado |
+| --- | --- |
+| `/health`, sem Access/bearer | `302` para o Access, `no-store` |
+| `/health`, Access sem bearer | `401 unauthorized`, `no-store` |
+| `/health`, Access+bearer | `200`, `status=ok` |
+| `/health/ready`, Access+bearer | `200`, `status=ready` |
+| `/auth/me`, Access+bearer sem cookie de aplicação | `401 unauthorized` |
+| Probe SQL protegido `POST /identity` | `200`, database `vapt`, role `vapt_api_preview` |
+| Catálogo público, Access+bearer com `PUBLIC_RATE_LIMIT` ausente | `503 service_unavailable` |
+
+Para verificar a identidade SQL, somente o Preview nomeado foi temporariamente
+publicado com o probe já versionado, mesmo Hyperdrive e token diagnóstico em
+memória. A primeira chamada imediata pelo alias ainda atingiu a API anterior
+(`404 not_found`); o readback mostrava `hyperdrive-probe.js`. A reexecução pela
+URL imutável do deployment recebeu `200` e a identidade exata. A API foi
+restaurada em `finally` e `PROBE_TOKEN` removido do deployment corrente.
+
+O teste negativo removeu somente `PUBLIC_RATE_LIMIT` de uma configuração
+temporária ignorada. Sua URL imutável, também protegida pelo Access, retornou
+`503` antes da rota de catálogo. A configuração completa foi restaurada em
+`finally`, deployment `435ecc62-ad83-4fcc-b008-215b059a9e50`. Os deployments
+anteriores continuam sujeitos ao Access; secrets removidos do deployment
+corrente não são apresentados como apagados retroativamente do histórico.
+
+Validação: checker estático e seus 5 testes passaram; `npm test` 450/450,
+`npm run test:worker` 15/15, build TypeScript e ambos os dry-runs passaram.
+O dry-run paralelo mostrou zero bindings top-level. O sandbox inicialmente
+bloqueou os subprocessos Node com `EPERM`; as execuções autorizadas passaram.
+
+Estas provas não certificam signup/login, R2 signed PUT ou checkout. Esses
+fluxos e a limpeza de fixtures pertencem à Task 6. A amostragem SQL inicial
+não substitui o verificador integral de ACL durante a aceitação remota.
