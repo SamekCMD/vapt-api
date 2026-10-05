@@ -320,3 +320,45 @@ históricos continuam no Access; remoção de secret corrente não apaga seu his
   nenhum upgrade pago está autorizado.
 - Cutover de rota pública, activation de Cron/consumers e serviços de produção
   continuam separados desta preparação; DNS e Coolify não foram alterados.
+
+## Revisão final e regressão ACL
+
+Uma única revisão independente (Astra medium) identificou duas lacunas no
+verificador production: ausência de propriedade de funções em `pg_proc` e
+checagens negativas incompletas de permissões efetivas por coluna/função.
+Não foi encontrada evidência de grants excessivos na role existente.
+
+`scripts/verify-production-acl-regression.mjs` recebe `{ownerUrl, verifierPath}`
+somente por stdin e aceita apenas o endpoint direto production aprovado.
+Introduz SELECT de coluna da outbox excluída, EXECUTE da função legada e
+ownership de função permitida dentro de transações sempre revertidas. Antes
+da correção, os três cenários não eram rejeitados; depois, baseline mais três
+negações passaram (4/4), com rollback e baseline final confirmados. Seis
+verificadores passaram novamente como owner; como login restrito, passaram
+ACL, CRUD e cinco negações.
+
+O verificador agora usa a mesma lista de permissões exigidas para rejeitar
+qualquer permissão de tabela/coluna fora dela e qualquer rotina de aplicação
+executável fora das sete permitidas. Funções da extensão `pgcrypto` conservam
+o ACL da baseline, sem revogar PUBLIC nem alterar comportamento de outros
+consumidores; extensões arbitrárias não são isentas. Propriedade de funções
+é proibida inclusive para funções de extensão nesses schemas. Nenhuma
+permissão persistente foi alterada durante os testes de regressão.
+
+Os limites que a revisão não reproduziu remotamente permanecem os gates
+acima: evidência do operador não é replay do revisor; ausência de paridade,
+browser, realtime/carga, origem Stripe e URL exata do email não é aceitação.
+Novos membros exigem revisão Access; secrets históricos exigem rotação;
+overrides locais precisam de verificação própria. Código de etapas anteriores
+não foi reavaliado por esta revisão delimitada à Stage 11.
+
+O verificador Preview anterior não foi alterado neste gate production; antes
+de uma aceitação Preview mais ampla, aplicar também a verificação endurecida
+contra drift por coluna/função/ownership. Isso não indica grant excessivo
+atual; impede que a garantia do gate novo seja atribuída ao verificador antigo.
+
+Regressão final: API 450/450, workerd 15/15, scripts 17/17 e build passaram.
+Frontend 135/135 no primeiro run; o run paralelo posterior teve uma falha em
+`public-menu-catalog.test.tsx` (consulta síncrona antes do efeito de categoria);
+suíte completa com `npm test -- --maxWorkers=2` passou 135/135. Estabilização
+desse teste ficou como minor adiado, sem edição do frontend nesta etapa.
