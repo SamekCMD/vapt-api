@@ -3,6 +3,7 @@
 Status em 05/10/2026: API completa configurada no Preview protegido por Access
 e bearer, com health/readiness, identidade Hyperdrive e falha por binding ausente
 validados remotamente. Os fluxos sintéticos e a comparação HTTP ainda estão pendentes.
+O comparador HTTP foi implementado e executado; o destino Coolify ficou indisponível.
 O shell permanece sem bindings/URL de produção. Nenhum tráfego público de produção,
 DNS, Cron ou Queue consumer foi alterado nesta etapa. A API pública continua
 sob responsabilidade do Coolify; a migração da rota pública pertence à Stage 13.
@@ -162,3 +163,34 @@ bloqueou os subprocessos Node com `EPERM`; as execuções autorizadas passaram.
 Estas provas não certificam signup/login, R2 signed PUT ou checkout. Esses
 fluxos e a limpeza de fixtures pertencem à Task 6. A amostragem SQL inicial
 não substitui o verificador integral de ACL durante a aceitação remota.
+
+## Matriz HTTP somente leitura — Task 5
+
+`scripts/compare-parallel-api.mjs` aceita somente os dois hosts aprovados,
+cinco caminhos fixos `GET`, sem corpo, cookies ou redirect automático. Somente
+o Preview recebe as credenciais Access/bearer; Coolify recebe apenas a origem
+CORS de Preview. O resultado contém status, media type, nomes conhecidos das
+chaves de erro, código de erro allowlisted e booleanos dos headers relevantes,
+sem corpos, cookies, IDs, mensagens arbitrárias ou URLs de redirect.
+
+Os cinco testes foram escritos antes da implementação (RED: módulo ausente),
+depois passaram: matching contracts, IDs voláteis, divergência status/error/CORS,
+Access redirect, rejeição de mutações/body/hosts/cookies e erro de transporte
+sanitizado. A suíte Node permaneceu 450/450.
+
+Uma execução remota limitada em 05/10 produziu:
+
+| GET | Coolify | Preview | Resultado |
+| --- | --- | --- | --- |
+| `/health` | indisponível | `200` | comparação não comprovada |
+| `/auth/me` | indisponível | `401` | comparação não comprovada |
+| `/restaurants/me` | indisponível | `401` | comparação não comprovada |
+| `/public/restaurants/__stage11_missing__/catalog` | indisponível | `404` | comparação não comprovada |
+| `/__stage11_missing__/%not-hex` | indisponível | `400` | comparação não comprovada |
+
+A indisponibilidade é erro de transporte, não status HTTP inventado, e não
+certifica divergência da aplicação. A resposta `400` ao caminho malformado
+também não prova que essa requisição chegou à API. Nenhum esforço de mudança
+de DNS ou reconfiguração Coolify foi feito para tornar o comparador verde.
+Paridade com a referência permanece um gate não comprovado; os fluxos de
+Preview isolados podem continuar.
