@@ -24,6 +24,7 @@
       "EMAIL_FROM": "Vapt <no-reply@vapt.app.br>",
       "R2_ACCOUNT_ID": "3ce69408aa5112617a282957aba71932",
       "R2_BUCKET_NAME": "vapt-assets-preview",
+      "R2_UPLOAD_URL_TTL_SECONDS": "60",
       "R2_PUBLIC_BASE_URL": "https://pub-c7718cfb495f4c83866dfe3ed8c52890.r2.dev"
     },
     "hyperdrive": [

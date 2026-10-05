@@ -2,7 +2,7 @@
 
 Status em 05/10/2026: API completa configurada no Preview protegido por Access
 e bearer, com health/readiness, identidade Hyperdrive e falha por binding ausente
-validados remotamente. Os fluxos sintéticos e a comparação HTTP ainda estão pendentes.
+validados remotamente. Os fluxos sintéticos de autenticação, CRUD, pedidos e R2 passaram.
 O comparador HTTP foi implementado e executado; o destino Coolify ficou indisponível.
 O shell permanece sem bindings/URL de produção. Nenhum tráfego público de produção,
 DNS, Cron ou Queue consumer foi alterado nesta etapa. A API pública continua
@@ -194,3 +194,57 @@ também não prova que essa requisição chegou à API. Nenhum esforço de mudan
 de DNS ou reconfiguração Coolify foi feito para tornar o comparador verde.
 Paridade com a referência permanece um gate não comprovado; os fluxos de
 Preview isolados podem continuar.
+
+## Fluxos sintéticos isolados — Task 6
+
+O runner `scripts/verify-parallel-preview-flows.mjs` só aceita o Preview nomeado,
+Access + bearer, tag `stage11-...`, destinatário `delivered@resend.dev` e callback
+de limpeza obrigatório. Não aceita hosts de produção nem repassa credenciais
+da API para R2. Os testes locais passaram 7/7, incluindo falha parcial de pedidos
+concorrentes: ambas as chamadas devem terminar antes da limpeza em `finally`.
+
+O verificador integral de ACL da role Preview passou antes das mutações.
+Um ensaio remoto completo em 05/10 passou:
+
+| Fluxo | Evidência |
+| --- | --- |
+| Better Auth | signup, verificação e login `200`; duas leituras de sessão `200`; logout `200`; duas leituras com cookie revogado `401` |
+| Ownership/CRUD | onboarding `201`, restaurante/menu read/update `200`, tenant alheio `403`, menu delete `204` |
+| Pedidos concorrentes | mesma chave de idempotência: `201/200`, mesmo ID e token; leitura pública/kitchen e transição `200` |
+| R2 | chave, MIME e tamanho alterados `403`; PUT correto `200`; HEAD/GET com MIME, tamanho e bytes PNG exatos; Worker delete `204`, HEAD `404` |
+| Expiração R2 | TTL Preview `60s`; após expiração PUT `403`, HEAD `404` |
+| Limpeza | zero linhas sintéticas, objetos e efeitos pendentes; somente fixtures desta tag excluídas |
+
+O token de verificação foi emitido em memória pelo helper oficial da mesma
+versão Better Auth, usando apenas a conta sintética. Isso prova assinatura,
+callback e transição de conta, não a URL exata contida no email. O Resend
+mostrou `Delivered` para os emails de confirmação enviados ao destinatário
+de teste. Nenhum token, cookie, URL assinada ou segredo aparece no resumo.
+
+O primeiro teste real de pedidos expôs um erro existente de serialização:
+`pg` transformava `input.items` em array SQL, incompatível com `$4::jsonb`.
+Um SELECT somente leitura reproduziu `22P02` com o array cru e retornou
+`jsonb_typeof=array` com JSON codificado. O repositório agora serializa itens
+e entrega explicitamente; nenhuma permissão SQL foi ampliada. Teste de
+regressão RED→GREEN, suíte API 450/450, workerd 15/15 e build passaram.
+
+Deployment com a correção: `2167079b-0a9f-45b8-b628-693be4a6e50f`.
+O SDK R2 usa virtual-hosted addressing; o runner aceita apenas esse hostname
+exato do bucket Preview ou o formato path-style exato da mesma conta/bucket.
+O checker estático continua aprovando o isolamento da configuração.
+
+O ensaio Stripe Test também passou: checkout `200`, repetição `200` com a mesma
+sessão `cs_test_...`; a sessão foi expirada pela API Stripe, sem pagamento.
+Um evento `checkout.session.expired` assinado pelo operador atravessou Access
+e bearer: primeira chamada `200` não duplicada/não ignorada, repetição `200`
+duplicada. No Neon houve uma única linha `processed`, `attempt_count=1`, e
+checkout pendente foi limpo. Cliente Stripe Test excluído, sessão expirada,
+eventos/fixtures/objetos removidos e outboxes vazias. Um registro sintético
+com `restaurant_id` nulo foi encontrado na primeira conferência de limpeza;
+foi removido por ID/tag do workflow e a limpeza passou a incluir a metadata
+do evento. O ensaio final passou completo com zero resíduos.
+
+Isso não prova entrega originada pela Stripe nem ativação/pagamento de
+assinatura: o evento foi assinado pelo operador para um checkout Test expirado.
+Nenhum destination público, bypass Access, assinatura Live, Cron ou consumer
+foi criado. Esses gates seguem para a aceitação de billing/cutover.
