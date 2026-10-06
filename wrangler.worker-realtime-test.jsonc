@@ -6,7 +6,7 @@
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": false,
   "preview_urls": false,
-  "vars": { "ENVIRONMENT": "preview", "CORS_ORIGINS": "https://app.vapt.test" },
+  "vars": { "ENVIRONMENT": "preview", "CORS_ORIGINS": "https://app.vapt.test,http://127.0.0.1:5179,http://localhost:5179" },
   "durable_objects": { "bindings": [{ "name": "ROOMS", "class_name": "TestRestaurantRealtime" }] },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["TestRestaurantRealtime"] }]
 }

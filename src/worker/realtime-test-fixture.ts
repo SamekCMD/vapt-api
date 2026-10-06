@@ -7,6 +7,7 @@ import { AppError } from "../lib/errors.js";
 import type { ApiServices } from "../composition/api-services.js";
 import type { WorkerBindings } from "./environment.js";
 import type { ExecutionContext } from "hono";
+import { browserTenants, handleBrowserFixture } from "./realtime-browser-fixture.js";
 
 type Env = RoomEnvironment & { ROOMS: DurableObjectNamespace<TestRestaurantRealtime> };
 const restaurantId = "11111111-1111-4111-8111-111111111111";
@@ -64,9 +65,42 @@ export class TestRestaurantRealtime extends RestaurantRealtime {
       alarm: await this.ctx.storage.getAlarm(),
     };
   }
+  async testBusiness(operation: string, body: Record<string, any>): Promise<any> {
+    this.ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS browser_fixture (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+    const rows = this.ctx.storage.sql.exec("SELECT value FROM browser_fixture WHERE key = 'orders'").toArray();
+    const orders = rows.length ? JSON.parse(String(rows[0].value)) as any[] : [];
+    if (operation === "orders") return orders;
+    if (operation === "control") {
+      if (body.disconnect) for (const socket of this.ctx.getWebSockets()) socket.close(1012, "Synthetic restart");
+      if (body.clear) {
+        this.ctx.storage.sql.exec("DELETE FROM browser_fixture WHERE key = 'orders'");
+        return { orders: 0 };
+      }
+      return { orders: orders.length };
+    }
+    let changed: any;
+    if (operation === "create") {
+      const tenant = Object.values(browserTenants).find(value => this.env.RESTAURANT_REALTIME!.idFromName(value.restaurantId).equals(this.ctx.id));
+      if (!tenant) throw new Error("Unknown synthetic tenant");
+      changed = { orderId: crypto.randomUUID(), restaurantId: tenant.restaurantId, displayId: String(orders.length + 1),
+        tableSessionId: tenant.restaurantId, status: body.status ?? "pending", paymentStatus: "paid", channel: body.channel ?? "local",
+        tableNumber: "1", totalPrice: "23.50", createdAt: new Date().toISOString(), items: [{ menuItemId: "10000000-0000-4000-8000-000000000001",
+          name: "Prato sintético", quantity: 1, unitPrice: "23.50", notes: null }] };
+      orders.push(changed);
+    } else if (operation === "status") {
+      changed = orders.find(value => value.orderId === body.orderId);
+      if (!changed) return null;
+      changed.status = body.status;
+    } else throw new Error("Unknown synthetic operation");
+    this.ctx.storage.sql.exec("INSERT INTO browser_fixture VALUES ('orders', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", JSON.stringify(orders));
+    if (!body.silent) await this.publish({ restaurantId: changed.restaurantId, orderIds: [changed.orderId],
+      topics: ["orders", "kitchen", "table_sessions"], entityId: changed.orderId, reason: operation === "create" ? "created" : "updated" });
+    return changed;
+  }
 }
 export default {
   async fetch(request: PlatformRequest, env: Env, context: ExecutionContext): Promise<PlatformResponse> {
+    if (new URL(request.url).pathname.startsWith("/browser/")) return await handleBrowserFixture(request as unknown as Request, env, context) as unknown as PlatformResponse;
     const [operation, restaurantId] = new URL(request.url).pathname.slice(1).split("/");
     if (operation.startsWith("operator")) {
       const url = new URL(request.url);
