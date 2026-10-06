@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createTestHarness } from "wrangler";
 
-import { ROUTE_CONTRACTS } from "./route-contract.js";
+import { ROUTE_CONTRACTS, WORKER_ONLY_ROUTE_CONTRACTS } from "./route-contract.js";
 
 test("all Fastify route contracts have a native Worker method and path", async () => {
   const server = createTestHarness({ workers: [
@@ -17,7 +17,7 @@ test("all Fastify route contracts have a native Worker method and path", async (
     const inventory = await enabled.fetch(`${base}/_test/route-inventory`);
     assert.equal(inventory.status, 200);
     const actual = await inventory.json() as Array<{ method: string; path: string }>;
-    const expected = ROUTE_CONTRACTS.map(({ method, path }) => ({ method, path }));
+    const expected = [...ROUTE_CONTRACTS, ...WORKER_ONLY_ROUTE_CONTRACTS].map(({ method, path }) => ({ method, path }));
     const sorted = (routes: Array<{ method: string; path: string }>) => routes.sort((a, b) =>
       `${a.method} ${a.path}`.localeCompare(`${b.method} ${b.path}`));
     assert.deepEqual(sorted(actual), sorted(expected));

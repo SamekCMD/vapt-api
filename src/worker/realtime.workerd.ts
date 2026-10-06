@@ -217,3 +217,47 @@ test("ticket admission is atomic, expiry after validation fails closed, and auth
     })).status, 503);
   } finally { await server.close(); }
 });
+
+test("authorized 101 traverses Hono, rate limiting, CORS and protected operator wrapper", { timeout: 20_000 }, async () => {
+  const server = createTestHarness({ workers: [{ configPath: "./wrangler.worker-realtime-test.jsonc" }] });
+  try {
+    await server.listen();
+    const worker = server.getWorker("vapt-realtime-test");
+    const bearer = "synthetic-operator-bearer-32-characters";
+    const headers = { Origin: origin, Authorization: `Bearer ${bearer}`, "CF-Connecting-IP": "203.0.113.1", "Content-Type": "application/json", cookie: "session=owner" };
+    const post = (prefix = "operator", changes: Record<string, string | undefined> = {}) => {
+      const merged = new Headers(headers);
+      for (const [key, value] of Object.entries(changes)) { if (value === undefined) merged.delete(key); else merged.set(key, value); }
+      return worker.fetch(`https://api.vapt.test/${prefix}/v1/realtime/tickets`, {
+        method: "POST", headers: Object.fromEntries(merged), body: JSON.stringify({ mode: "owner", restaurantId: restaurant }),
+      });
+    };
+    assert.equal((await post("operator", { Authorization: undefined })).status, 401);
+    assert.equal((await post("operator", { Authorization: "Bearer wrong" })).status, 401);
+    assert.equal((await post("operator", { Origin: undefined })).status, 403);
+    assert.equal((await post("operator", { Origin: "null" })).status, 403);
+    assert.equal((await post("operator", { Origin: "https://evil.vapt.test" })).status, 403);
+    assert.equal((await post("operator-off")).status, 503);
+    assert.equal((await post("operator-unbound")).status, 503);
+    assert.equal((await post("operator-unlimited")).status, 503);
+    const admitted = await post();
+    assert.equal(admitted.status, 200);
+    assert.equal(admitted.headers.get("cache-control"), "no-store");
+    assert.equal(admitted.headers.get("access-control-allow-origin"), origin);
+    const ticket = await admitted.json() as { ticket: string };
+    const socketUrl = `https://api.vapt.test/operator/v1/realtime/restaurants/${restaurant}/socket`;
+    const upgradeHeaders = { ...headers, Upgrade: "websocket", "Sec-WebSocket-Protocol": `vapt.realtime.v1, vapt.ticket.${ticket.ticket}` };
+    assert.equal((await worker.fetch(socketUrl, { headers: { ...upgradeHeaders, Authorization: "Bearer invalid" } })).status, 401);
+    const upgrade = await worker.fetch(socketUrl, { headers: upgradeHeaders });
+    assert.equal(upgrade.status, 101);
+    assert.ok(upgrade.webSocket, "original WebSocket response preserved through all layers");
+    assert.equal(upgrade.headers.get("sec-websocket-protocol"), "vapt.realtime.v1");
+    const frames: any[] = [];
+    upgrade.webSocket!.addEventListener("message", (event: any) => frames.push(JSON.parse(event.data)));
+    upgrade.webSocket!.accept();
+    await waitFor(() => frames.length === 1);
+    assert.equal(frames[0].type, "ready");
+    assert.equal((await worker.fetch(socketUrl, { headers: upgradeHeaders })).status, 403);
+    upgrade.webSocket!.close(1000);
+  } finally { await server.close(); }
+});

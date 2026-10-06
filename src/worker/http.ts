@@ -31,7 +31,10 @@ export function installWorkerHttpPolicy(app: Hono<WorkerHonoEnv>, createServices
     const origin = context.req.header("origin");
     const allowed = origin && (context.env.CORS_ORIGINS ?? "")
       .split(",").map((value) => value.trim()).includes(origin);
-    if (origin && !allowed) throw new AppError(500, "internal_error", "Origin not allowed");
+    if (origin && !allowed) {
+      if (context.req.path.startsWith("/v1/realtime/")) throw new AppError(403, "forbidden", "Forbidden");
+      throw new AppError(500, "internal_error", "Origin not allowed");
+    }
 
     if (origin && context.req.method === "OPTIONS") {
       context.header("access-control-allow-origin", origin);
@@ -43,6 +46,7 @@ export function installWorkerHttpPolicy(app: Hono<WorkerHonoEnv>, createServices
     }
 
     await next();
+    if (context.res.status === 101) return;
     if (origin) {
       context.header("access-control-allow-origin", origin);
       context.header("access-control-allow-credentials", "true");

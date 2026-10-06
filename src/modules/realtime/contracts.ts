@@ -12,6 +12,7 @@ export type CommittedChange = {
   entityId: string;
   reason: (typeof realtimeReasons)[number];
 };
+export type CommittedChangePublisher = (change: CommittedChange) => Promise<void>;
 
 export type RealtimeEnvelope = {
   version: 1;

@@ -5,7 +5,7 @@ import type { AppConfig } from "../lib/config.js";
 import type { Database } from "../lib/database.js";
 import { buildApp } from "../app.js";
 import type { AuthRuntime } from "../modules/auth/runtime.js";
-import { ROUTE_CONTRACTS } from "./route-contract.js";
+import { ROUTE_CONTRACTS, WORKER_ONLY_ROUTE_CONTRACTS } from "./route-contract.js";
 
 const config: AppConfig = {
   nodeEnv: "test",
@@ -69,6 +69,13 @@ const database = {
     return { async query() { return { rows: [] }; }, release() {} };
   },
 } as unknown as Database;
+
+test("additive realtime contracts are Worker-only public-rate routes", () => {
+  assert.deepEqual(WORKER_ONLY_ROUTE_CONTRACTS, [
+    { method: "POST", path: "/v1/realtime/tickets", group: "public", auth: false },
+    { method: "GET", path: "/v1/realtime/restaurants/:restaurantId/socket", group: "public", auth: false },
+  ]);
+});
 
 test("route contract covers every enabled Fastify method and path", async () => {
   const app = await buildApp(config, { authRuntime, database, startPaymentReconciliation: false });

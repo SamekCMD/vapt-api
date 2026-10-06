@@ -11,6 +11,7 @@ import { registerWorkerRestaurantRoutes } from "./routes/restaurant.js";
 import { registerWorkerStripeRoutes } from "./routes/stripe.js";
 import { registerWorkerMercadoPagoRoutes } from "./routes/mercado-pago.js";
 import { registerWorkerMiscRoutes } from "./routes/misc.js";
+import { registerWorkerRealtimeRoutes } from "./routes/realtime.js";
 
 export type WorkerHonoEnv = {
   Bindings: WorkerBindings;
@@ -25,6 +26,7 @@ export function createWorkerApp(
   installWorkerHttpPolicy(app, createServices);
   app.get("/health", (context) => context.json({ status: "ok" }));
   if (createServices) {
+    registerWorkerRealtimeRoutes(app);
     registerWorkerAuthRoutes(app, { rateLimit: options.authRateLimit });
     registerWorkerPublicRoutes(app, { rateLimit: options.publicRateLimit });
     registerWorkerRestaurantRoutes(app, { rateLimit: options.privateRateLimit });

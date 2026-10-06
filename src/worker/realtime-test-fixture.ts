@@ -1,8 +1,28 @@
 import type { DurableObjectNamespace, DurableObjectState, Request as PlatformRequest, Response as PlatformResponse } from "@cloudflare/workers-types";
 import type { RealtimeGrant } from "../modules/realtime/authorization.js";
 import { RestaurantRealtime, type RoomEnvironment } from "./realtime/restaurant-room.js";
+import { createWorkerApp } from "./app.js";
+import { handleParallelPreview } from "./parallel-preview.js";
+import { AppError } from "../lib/errors.js";
+import type { ApiServices } from "../composition/api-services.js";
+import type { WorkerBindings } from "./environment.js";
+import type { ExecutionContext } from "hono";
 
 type Env = RoomEnvironment & { ROOMS: DurableObjectNamespace<TestRestaurantRealtime> };
+const restaurantId = "11111111-1111-4111-8111-111111111111";
+const orderId = "22222222-2222-4222-8222-222222222222";
+const app = createWorkerApp(async () => ({ realtimeAuthorization: {
+  async admit(input: { mode: "owner"; restaurantId: string; headers: Headers } | { mode: "order"; orderId: string; token: string }) {
+    if (input.mode === "owner") {
+      if (input.headers.get("authorization")) throw new Error("Operator header must be removed");
+      if (input.headers.get("cookie") !== "session=owner") throw new AppError(401, "unauthorized", "Unauthorized");
+      if (input.restaurantId !== restaurantId) throw new AppError(403, "forbidden", "Forbidden");
+      return { mode: "owner", restaurantId, userId: orderId, sessionId: orderId, sessionExpiresAt: Date.now() + 300_000 };
+    }
+    if (input.orderId !== orderId || input.token !== "synthetic-public-token") throw new AppError(404, "not_found", "Order not found");
+    return { mode: "order", restaurantId, orderId, tokenFingerprint: "a".repeat(64) };
+  },
+} } as unknown as ApiServices));
 export class TestRestaurantRealtime extends RestaurantRealtime {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, { ...env, RESTAURANT_REALTIME: env.ROOMS as unknown as DurableObjectNamespace<RestaurantRealtime> });
@@ -46,8 +66,21 @@ export class TestRestaurantRealtime extends RestaurantRealtime {
   }
 }
 export default {
-  async fetch(request: PlatformRequest, env: Env): Promise<PlatformResponse> {
+  async fetch(request: PlatformRequest, env: Env, context: ExecutionContext): Promise<PlatformResponse> {
     const [operation, restaurantId] = new URL(request.url).pathname.slice(1).split("/");
+    if (operation.startsWith("operator")) {
+      const url = new URL(request.url);
+      url.pathname = url.pathname.replace(/^\/operator[^/]*\//, "/");
+      const bindings: WorkerBindings & { PARALLEL_PREVIEW_TOKEN: string } = {
+        ENVIRONMENT: env.ENVIRONMENT, CORS_ORIGINS: env.CORS_ORIGINS,
+        PARALLEL_PREVIEW_TOKEN: "synthetic-operator-bearer-32-characters",
+        REALTIME_ENABLED: operation === "operator-off" ? "false" : "true",
+        RESTAURANT_REALTIME: operation === "operator-unbound" ? undefined : env.ROOMS as unknown as DurableObjectNamespace<RestaurantRealtime>,
+        PUBLIC_RATE_LIMIT: operation === "operator-unlimited" ? undefined : { async limit() { return { success: true }; } },
+      };
+      return await handleParallelPreview(new Request(url, request as unknown as Request), bindings, context,
+        (forwarded, scopedEnv, ctx) => app.fetch(forwarded, scopedEnv, ctx)) as unknown as PlatformResponse;
+    }
     const room = env.ROOMS.getByName(restaurantId);
     if (operation === "socket") return room.fetch(request);
     try {

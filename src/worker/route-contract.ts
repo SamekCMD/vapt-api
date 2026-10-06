@@ -54,3 +54,9 @@ export const ROUTE_CONTRACTS: readonly RouteContract[] = [
   { method: "POST", path: "/webhooks/payments/mercado-pago", group: "webhooks", auth: false, condition: "mercado-pago" },
   { method: "POST", path: "/payments/mercado-pago/webhook", group: "webhooks", auth: false, condition: "mercado-pago" },
 ];
+
+// Cloudflare-only additions are intentionally absent from legacy Fastify.
+export const WORKER_ONLY_ROUTE_CONTRACTS: readonly RouteContract[] = [
+  { method: "POST", path: "/v1/realtime/tickets", group: "public", auth: false },
+  { method: "GET", path: "/v1/realtime/restaurants/:restaurantId/socket", group: "public", auth: false },
+];

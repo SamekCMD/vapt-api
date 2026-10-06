@@ -13,6 +13,15 @@ const env: WorkerBindings & { PARALLEL_PREVIEW_TOKEN?: string } = {
   PARALLEL_PREVIEW_TOKEN: secret,
 };
 
+test("upgrade without operator bearer is denied before socket delegate", async () => {
+  let called = false;
+  const response = await handleParallelPreview(new Request("https://preview.vapt.test/v1/realtime/restaurants/11111111-1111-4111-8111-111111111111/socket", {
+    headers: { Upgrade: "websocket", Origin: "https://app.vapt.test", "Sec-WebSocket-Protocol": "vapt.realtime.v1, vapt.ticket.synthetic" },
+  }), env, context, async () => { called = true; return new Response(); });
+  assert.equal(response.status, 401);
+  assert.equal(called, false);
+});
+
 function request(authorization?: string): Request {
   return new Request("https://preview.vapt.test/health", {
     headers: authorization === undefined ? undefined : { authorization },

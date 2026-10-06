@@ -1,5 +1,6 @@
 import type { Pool } from "pg";
 import { createRealtimeAuthorization, type RealtimeAuthorization } from "../modules/realtime/authorization.js";
+import type { CommittedChangePublisher } from "../modules/realtime/contracts.js";
 
 import { createResendAuthEmailService } from "../email/email.service.js";
 import { createResendEmailClient } from "../email/resend.client.js";
@@ -69,6 +70,7 @@ export type MercadoPagoServices = {
 
 export type ApiServiceDependencies = {
   database: Database;
+  publishCommittedChange?: CommittedChangePublisher;
   authRuntime?: AuthRuntime;
   ownershipLookup?: OwnershipLookup;
   catalog?: CatalogService;
