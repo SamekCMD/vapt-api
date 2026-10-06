@@ -40,3 +40,11 @@ jobs:
 
       - name: Bundle Worker without deploying
         run: npm run build:worker
+
+      - name: Validate isolated production preparation
+        run: |
+          node --test scripts/verify-production-preparation-config.test.mjs
+          node scripts/verify-production-preparation-config.mjs wrangler.worker-production.jsonc
+
+      - name: Bundle production preparation without deploying
+        run: npx --no-install wrangler deploy --dry-run --config wrangler.worker-production.jsonc
