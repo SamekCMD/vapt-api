@@ -78,3 +78,9 @@ test("rejects production or secret material in Preview variables", () => {
   rejects((config) => { config.previews.vars.STRIPE_SECRET_KEY = "sk_test_synthetic"; });
   rejects((config) => { config.previews.vars.API_PUBLIC_URL = "https://api.vapt.app.br"; });
 });
+
+test("legacy wrapper cannot acquire realtime bindings or migrations", () => {
+  rejects(c => { c.previews.vars.REALTIME_ENABLED = "true"; });
+  rejects(c => { c.previews.durable_objects = { bindings: [] }; });
+  rejects(c => { c.migrations = [{ tag: "unexpected", new_classes: ["RestaurantRealtime"] }]; });
+});

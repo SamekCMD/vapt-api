@@ -1,14 +1,18 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "vapt-api-parallel",
-  "main": "src/worker/parallel-preview.ts",
+  "main": "src/worker/parallel-preview-entry.ts",
   "compatibility_date": "2026-09-28",
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": false,
   "preview_urls": false,
+  "migrations": [
+    { "tag": "stage12-realtime-sqlite-v1", "new_sqlite_classes": ["RestaurantRealtime"] }
+  ],
   "previews": {
     "vars": {
       "ENVIRONMENT": "preview",
+      "REALTIME_ENABLED": "true",
       "STRIPE_ENVIRONMENT": "test",
       "CORS_ORIGINS": "https://infra-foundation-vapt-web.autoistloko.workers.dev",
       "FRONTEND_URL": "https://infra-foundation-vapt-web.autoistloko.workers.dev",
@@ -26,6 +30,11 @@
       "R2_BUCKET_NAME": "vapt-assets-preview",
       "R2_UPLOAD_URL_TTL_SECONDS": "60",
       "R2_PUBLIC_BASE_URL": "https://pub-c7718cfb495f4c83866dfe3ed8c52890.r2.dev"
+    },
+    "durable_objects": {
+      "bindings": [
+        { "name": "RESTAURANT_REALTIME", "class_name": "RestaurantRealtime" }
+      ]
     },
     "hyperdrive": [
       { "binding": "HYPERDRIVE", "id": "0c05fec2924b4f3b9225f3d689ba7ea9" }
