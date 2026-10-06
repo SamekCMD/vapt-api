@@ -1,6 +1,6 @@
 # Etapa 12 — Durable Objects/WebSockets
 
-Status em 06/10/2026: Tasks 1–8 concluídas; Task 9 em preflight, **sem publicação realtime remota ainda**. Não declarar a etapa concluída antes do smoke privado, limpeza e revisão independente final.
+Status em 06/10/2026: Tasks 1–8 concluídas; Task 9 com publicação, smoke privado e limpeza reais aprovados. Revisão independente final em andamento; não declarar a etapa concluída antes desse gate.
 
 ## Código e validação local
 
@@ -8,15 +8,15 @@ O código compartilhado de backend/frontend implementa admissão owner/order, ti
 
 As telas cozinha, caixa, menu, drawer e delivery usam o cliente compartilhado. Evidência de navegador local, duas identidades/tenants, acompanhamento público filtrado e limpeza está em [prova local das telas](infra-migration-phase-12-realtime-local-screens.md). Não equivale a navegador remoto com Better Auth/Neon.
 
-Verificações repetidas após Task 8:
+Verificações repetidas na Task 9 antes de publicar:
 
 - `npm test`: API **488/488**.
 - `npm run test:worker`: workerd **19/19**, transporte/SQLite reais.
 - Frontend `npm test -- --maxWorkers=2`: **170/170**, 42 arquivos.
 - API `npm run build`, frontend `npm run typecheck` e `npm run build:preview`: passaram. O root typecheck do frontend não certifica `tsconfig.app.json`; a comparação mais forte da Task 7 encontrou 21 diagnósticos preexistentes e nenhum introduzido.
-- Gates scripts realtime/target/parallel config: **13/13**.
+- Gates scripts realtime/target/parallel config e runner: **22/22**, incluindo nove testes do runner/fixture.
 - `node scripts/verify-realtime-preview-config.mjs wrangler.worker-parallel-preview.jsonc`: `ok:true`.
-- Wrangler **4.138.0** `deploy --dry-run --config wrangler.worker-parallel-preview.jsonc`: bundle 4486.69 KiB/gzip 765.57 KiB; **No bindings found** no top-level. Não publicou nem comprovou namespace Preview resolvido.
+- Wrangler **4.138.0** `deploy --dry-run --config wrangler.worker-parallel-preview.jsonc`: bundle 4486.69 KiB/gzip 765.57 KiB; **No bindings found** no top-level. Dry-run não é publicação/prova de namespace. Um primeiro comando com `--ignore-base-config` foi rejeitado (flag de Preview, não de deploy); o comando válido acima passou.
 
 ## Gate ACL real — Task 8
 
@@ -26,7 +26,7 @@ Endurecido somente `infra/neon/verify-worker-preview-role.sql` no frontend/SQL: 
 
 No Neon real, o verificador antigo aceitou indevidamente três cenários temporários: SELECT de coluna da outbox excluída, EXECUTE de rotina legada e propriedade de função permitida. Após correção, baseline e três negações passaram **4/4**, com rollback e baseline final verificados. Credencial capturada da CLI Neon autenticada existente, somente em memória/stdin, sem URI em logs/argumentos/arquivos. Não houve mudança persistente de grants, ownership, senha ou schema.
 
-## Configuração e readback remoto, somente leitura
+## Configuração e readback remoto
 
 `wrangler.worker-parallel-preview.jsonc` usa o facade `parallel-preview-entry.ts`, preservando o wrapper Access/bearer. Binding local `RESTAURANT_REALTIME` em `previews.durable_objects`; flag backend `REALTIME_ENABLED:true` somente em `previews.vars`. Migração SQLite `stage12-realtime-sqlite-v1`. Sem `script_name`, namespace compartilhado, binding/flag top-level, Cron, Queue ou rota nova. Frontend remoto continua com realtime desligado.
 
@@ -37,16 +37,34 @@ Readback de 06/10/2026:
 - Conta `3ce69408aa5112617a282957aba71932`: Dashboard Workers plans mostra **Free / US$ 0 / Current plan**. GET subscriptions com OAuth retornou 403; não se ampliaram permissões para lê-lo.
 - Access app `b319b0a7-bba1-4fbb-b068-7c1cdc8707cd`: scope `vapt-api-parallel`, tipo exclusivo `A Worker's preview URLs`, uma policy Allow/default-deny `f892e8cf-87d0-4356-b0ec-c646b5047e26`, duração 1h. Nenhuma política editada.
 - Shell `vapt-api-parallel`: GET settings com **zero bindings**; nenhum deploy production executado.
-- Named Preview `stage11-inert`, ID `56efdbf131174b8fba43387369c6f1e3`, deployment existente `9d020e2c-13b8-490c-be9f-5a5223f18305`. Nenhuma atualização remota nesta Task.
-- GET namespaces Durable Objects: lista vazia. O namespace realtime ainda **não foi criado/publicado**.
+- Named Preview `stage11-inert`, ID `56efdbf131174b8fba43387369c6f1e3`: publicado por `wrangler preview --name stage11-inert --config wrangler.worker-parallel-preview.jsonc --ignore-base-config --json`. Deployment após a rotação equivalente final do bearer: `cede8793-b761-4124-b326-e0016614e295`; main module `parallel-preview-entry.js`, migration tag `stage12-realtime-sqlite-v1`.
+- Namespace `69fbe1f54ad64a93b7cb761910da094a`, nome `vapt-api-parallel_stage11-inert_RestaurantRealtime`, classe `RestaurantRealtime`, `use_sqlite:true`. Binding local apenas no Preview; não compartilhado com production. GET shell settings permaneceu zero bindings.
 - Hyperdrive preview `0c05fec2924b4f3b9225f3d689ba7ea9`: endpoint direto `ep-hidden-bird-b673zocn.c-2.sa-east-1.aws.neon.tech:5432/vapt`, role `vapt_api_preview`, cache desativado, limite 5 conexões.
-- Neon preview em transação read-only: users/sessions/restaurants/orders/billing events/billing email outbox/payment effect outbox: **todos 0**. Nenhum dado sintético remoto criado nesta execução.
+- Neon preview em transação read-only antes e depois do smoke: users/sessions/restaurants/orders/billing events/billing email outbox/payment effect outbox: **todos 0**. A limpeza do driver confirmou zero linhas dos IDs criados; nenhum objeto R2/compra/email foi criado pelo smoke.
 
-## Pendências da Task 9
+## Smoke privado real — Task 9
 
-O bearer do Preview é write-only e não está disponível na memória local. Foi solicitada autorização para substituí-lo somente no named Preview, sem Access/production/DNS; nenhuma substituição executada. Recuperação de sessão Access expirada deve usar login normal do usuário, sem Service Token persistente ou bypass.
+Autorização de substituição do bearer aceita na continuação. Valor aleatório somente em memória/stdin do Wrangler, nunca no Git/logs. O controlador foi reiniciado para carregar o runner final; houve uma segunda rotação equivalente, ainda somente nesse Preview. Login normal pelo `cloudflared access login --quiet` no app Access existente; sem Service Token, nova policy, túnel ou mudança de permissões. JWT capturado em memória. Exceção operacional documentada: o CLI nativo grava seu cache temporário de Access (1h), fora do Git; os dois arquivos desse app (`token`/`token.url`) criados pelo teste foram removidos após a prova, sem ler/imprimir conteúdo ou tocar outras credenciais. O bearer remoto permanece write-only no Preview autorizado.
 
-Após esse gate: implementar/testar runner remoto limitado a dois tenants e dois pedidos por tenant; revalidar perímetro/recursos, publicar somente named Preview, inspecionar namespace SQLite isolado, provar WS + escritas Neon + HTTP + revogação/reconexão e limpar exclusivamente fixtures/coordenação do smoke. Depois uma revisão independente da branch completa e handoff com evidências reais.
+`scripts/verify-realtime-preview.mjs` recebe apenas stdin JSON `{baseUrl,origin,accessJwt,bearer}`; os dois destinos são literais e production é negado antes de IO. Usa `ws` existente, headers Access/bearer separados da sessão Better Auth/token de pedido; tickets apenas no subprotocol, nunca query. `WRANGLER_WRITE_LOGS=false`/`WRANGLER_SEND_METRICS=false`. Saída contém status/contagens, não credenciais.
+
+Decisão: módulo operador `scripts/realtime-preview-fixtures.mjs` adicional captura da CLI Neon autenticada existente a URI direct/verify-full apenas em memória. `NEON_CLI_PATH` e `VAPT_REALTIME_FIXTURE_DRIVER` são caminhos de programa, não secrets. O guard exato preview precede construção do pool; não lê/escreve production, schema ou grants. Cria duas contas verificadas com hash Better Auth, evitando email; deleções usam manifest privado, UUID + etiqueta, não arrays editáveis do chamador. Nenhum código fixture é importado pelo Worker.
+
+Resultado remoto: `ok:true`, `cleaned:true`, checks perimeter/admission/tenantIsolation/publicIsolation/kitchen/cashier/reconnect/revocation todos true; **2 tenants, 4 pedidos, 5 upgrades WebSocket 101**.
+
+- Sem Access: 302; com Access sem bearer: 401; com ambos: health200. Ticket sem cookie401, owner de outro tenant403, public token inválido404.
+- `public/orders`201 → commit Neon → owner recebe invalidação; nunca pedido do outro restaurante.
+- Kitchen PATCH preparing200 → owner topic kitchen + public topic orders apenas do próprio pedido; snapshots HTTP público/cozinha confirmam estado/2 pedidos.
+- Atualização do pedido vizinho não chega ao socket público; sequência pública começa1, independente de volume owner.
+- Pedido de conta200 → topic table_sessions/check_requested → snapshot caixa check_requested/2 pedidos.
+- Desconexão → novo ticket/101 → snapshot HTTP com dois pedidos. Sign-out → cookie antigo ticket401; login novo do mesmo owner + commit ready → socket antigo fecha1008 sem evento novo.
+- Conexões fechadas pelo runner; accounts/sessions/restaurants/items/orders/table_sessions criados removidos por cascata/IDs. Segunda consulta read-only confirmou contagens zero, incluindo outboxes.
+
+Etiqueta `stage12-0094ad59-7261-4c08-825e-59b236ca2130`; rooms (nomes públicos, não credenciais): A `66081117-c6d9-4de2-b283-2e055f53c790`, B `1e2ff4f7-84ec-4338-983c-8d5a68abc333`. Usuários removidos: `4a8189ae-c065-40c4-bb66-43083a161595`/`9557e586-ae39-47c5-8e47-15b969d8c2c6`. Nenhum identificador de cliente.
+
+Data Studio confirmou **tickets0/sequences0 em ambos os rooms**, sem DELETE manual/namespace-wide. SELECT: `SELECT (SELECT count(*) FROM realtime_tickets) AS tickets, (SELECT count(*) FROM realtime_sequences) AS sequences;`. IDs reais A `fbd29ab709b92aa45c773803096ae39f5853c8a29914be44d077e66681d891ae`, B `9aa3002ff771a85463fd4d860051df0a38851438c70525c68639a7ba60a1d844`; Overview listou só essas duas instâncias, error rate0% em ambas. Screenshots `vapt-stage12-remote-room-a.jpg`/`vapt-stage12-remote-room-b.jpg` estão fora do Git na pasta de evidências do chat. Namespace retido, sem exclusão/migração destrutiva. Alarmes remotos não são visíveis pelo Data Studio; limpeza de alarmes tem prova workerd local, sem alegar readback remoto desse campo. Métricas do Dashboard têm atraso, não certificam consumo final/fatura futura; nenhum upgrade foi executado.
+
+Pendentes: revisão independente final das duas branches e push/atualização PRs.
 
 Não há aceitação production, paridade Coolify nem integração de navegador remoto certificadas. Não mudar planos pagos, domínio, DNS, tráfego ou Cron nesta etapa. Falta consolidar billing PR 3 com API PR 1/frontend PR 4; nenhuma main recebe automaticamente todos os commits. Sem push/merge nesta execução até agora.
 
