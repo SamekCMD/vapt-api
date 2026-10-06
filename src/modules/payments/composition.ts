@@ -1,5 +1,6 @@
 import type { AppConfig } from "../../lib/config.js";
 import type { Queryable } from "../../lib/database.js";
+import type { CommittedChangeOptions } from "../realtime/committed-changes.js";
 import { createPaymentEffectProcessor } from "./effects.js";
 import type { PaymentProvider } from "./provider.js";
 import { createPaymentEffectReconciliation } from "./reconciliation.js";
@@ -11,10 +12,10 @@ export function createPaymentModule(
   config: AppConfig,
   database: Queryable,
   providers: readonly PaymentProvider[],
-  options: { workerId: string; onError(error: unknown): void },
+  options: { workerId: string; onError(error: unknown): void } & CommittedChangeOptions,
 ): PaymentModule {
   const registry = createPaymentProviderRegistry(providers);
-  const repository = createPaymentRepository(database);
+  const repository = createPaymentRepository(database, options);
   const service = createPaymentService(registry, repository);
   const effectsConfig = config.paymentEffects ?? {
     pollIntervalMs: 5_000,

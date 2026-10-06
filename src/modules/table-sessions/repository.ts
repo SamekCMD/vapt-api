@@ -1,5 +1,7 @@
 import type { Database, Queryable } from "../../lib/database.js";
 import { withTransaction } from "../../lib/database.js";
+import { emitCommittedChange, requireManagedObserverPool, type CommittedChangeOptions } from "../realtime/committed-changes.js";
+import type { CommittedChange } from "../realtime/contracts.js";
 import { AppError } from "../../lib/errors.js";
 import type {
   CloseTableSessionDto,
@@ -35,6 +37,7 @@ type TableSessionOrderRow = {
 };
 
 type LockedSessionRow = {
+  restaurant_id: string;
   status: TableSessionStatus;
   closed_at: string | Date | null;
   table_number: string;
@@ -180,7 +183,7 @@ async function lockOwnedSession(
   sessionId: string,
 ): Promise<LockedSessionRow | null> {
   const result = await queryable.query<LockedSessionRow>(
-    `select session_row.status, session_row.closed_at, session_row.table_number
+    `select session_row.status, session_row.closed_at, session_row.table_number, session_row.restaurant_id
     from public.table_sessions as session_row
     join public.restaurants as restaurant
       on restaurant.id = session_row.restaurant_id
@@ -192,7 +195,8 @@ async function lockOwnedSession(
   return result.rows[0] ?? null;
 }
 
-export function createTableSessionRepository(database: Database): TableSessionRepository {
+export function createTableSessionRepository(database: Database, options: CommittedChangeOptions = {}): TableSessionRepository {
+  requireManagedObserverPool(database, options);
   return {
     async listActiveOwnedSessions(userId) {
       try {
@@ -231,7 +235,8 @@ export function createTableSessionRepository(database: Database): TableSessionRe
 
     async closeOwnedSession(userId, sessionId) {
       try {
-        return await withTransaction(database, async (client) => {
+        let change: CommittedChange | undefined;
+        const result = await withTransaction(database, async (client) => {
           const session = await lockOwnedSession(client, userId, sessionId);
           if (!session) return null;
 
@@ -281,6 +286,9 @@ export function createTableSessionRepository(database: Database): TableSessionRe
           );
           const closedAt = closed.rows[0]?.closed_at;
           if (!closedAt) throw storageFailure();
+          change = { restaurantId: session.restaurant_id,
+            topics: delivered.rows.length ? ["table_sessions", "orders", "kitchen"] : ["table_sessions"],
+            orderIds: delivered.rows.map(row => row.id), entityId: sessionId, reason: "closed" };
           return {
             sessionId,
             status: "closed" as const,
@@ -288,6 +296,8 @@ export function createTableSessionRepository(database: Database): TableSessionRe
             deliveredOrderIds: delivered.rows.map((row) => row.id),
           };
         });
+        await emitCommittedChange(options, change);
+        return result;
       } catch (error) {
         if (error instanceof AppError && error.code !== "internal_error") throw error;
         throw storageFailure();
@@ -296,22 +306,25 @@ export function createTableSessionRepository(database: Database): TableSessionRe
 
     async transferOwnedSession(userId, sessionId, tableNumber) {
       try {
-        return await withTransaction(database, async (client) => {
+        let change: CommittedChange | undefined;
+        const result = await withTransaction(database, async (client) => {
           const session = await lockOwnedSession(client, userId, sessionId);
           if (!session) return null;
           if (session.status === "closed") return "closed";
 
-          const updatedSession = await client.query<{ id: string }>(
-            `update public.table_sessions as session_row
-            set table_number = $1::text
-            from public.restaurants as restaurant
-            where session_row.id = $2::uuid
-              and restaurant.id = session_row.restaurant_id
-              and restaurant.owner_id = $3::uuid
-            returning session_row.id`,
-            [tableNumber, sessionId, userId],
-          );
-          if (!updatedSession.rows[0]) throw storageFailure();
+          if (session.table_number !== tableNumber) {
+            const updatedSession = await client.query<{ id: string }>(
+              `update public.table_sessions as session_row
+              set table_number = $1::text
+              from public.restaurants as restaurant
+              where session_row.id = $2::uuid
+                and restaurant.id = session_row.restaurant_id
+                and restaurant.owner_id = $3::uuid
+              returning session_row.id`,
+              [tableNumber, sessionId, userId],
+            );
+            if (!updatedSession.rows[0]) throw storageFailure();
+          }
 
           const updatedOrders = await client.query<{ id: string }>(
             `update public.orders as order_row
@@ -321,15 +334,22 @@ export function createTableSessionRepository(database: Database): TableSessionRe
             where order_row.table_session_id = $2::uuid
               and restaurant.id = order_row.restaurant_id
               and restaurant.owner_id = $3::uuid
+              and order_row.table_number is distinct from $1::text
             returning order_row.id`,
             [tableNumber, sessionId, userId],
           );
+          if (session.table_number !== tableNumber || updatedOrders.rows.length) change = {
+            restaurantId: session.restaurant_id, topics: updatedOrders.rows.length ? ["table_sessions", "orders", "kitchen"] : ["table_sessions"],
+            orderIds: updatedOrders.rows.map(row => row.id), entityId: sessionId, reason: "transferred",
+          };
           return {
             sessionId,
             tableNumber,
             updatedOrderIds: updatedOrders.rows.map((row) => row.id),
           };
         });
+        await emitCommittedChange(options, change);
+        return result;
       } catch (error) {
         if (error instanceof AppError && error.code !== "internal_error") throw error;
         throw storageFailure();
@@ -338,9 +358,10 @@ export function createTableSessionRepository(database: Database): TableSessionRe
 
     async requestPublicCheck(sessionId, orderId) {
       try {
-        return await withTransaction(database, async (client) => {
-          const locked = await client.query<{ status: TableSessionStatus }>(
-            `select session_row.status
+        let change: CommittedChange | undefined;
+        const result = await withTransaction(database, async (client) => {
+          const locked = await client.query<{ status: TableSessionStatus; restaurant_id: string }>(
+            `select session_row.status, session_row.restaurant_id
             from public.table_sessions as session_row
             join public.orders as order_row
               on order_row.table_session_id = session_row.id
@@ -368,8 +389,11 @@ export function createTableSessionRepository(database: Database): TableSessionRe
             [sessionId, orderId],
           );
           if (!updated.rows[0]) throw storageFailure();
+          change = { restaurantId: session.restaurant_id, topics: ["table_sessions"], orderIds: [], entityId: sessionId, reason: "check_requested" };
           return { sessionId, status: "check_requested" as const };
         });
+        await emitCommittedChange(options, change);
+        return result;
       } catch (error) {
         if (error instanceof AppError && error.code !== "internal_error") throw error;
         throw storageFailure();

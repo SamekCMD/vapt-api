@@ -1,4 +1,6 @@
 import type { Queryable } from "../../lib/database.js";
+import { withTransaction } from "../../lib/database.js";
+import { emitCommittedChange, requireManagedObserverPool, type CommittedChangeOptions } from "../realtime/committed-changes.js";
 import { AppError } from "../../lib/errors.js";
 import type { CreateOrderBody } from "./schemas.js";
 
@@ -128,42 +130,49 @@ function mapCreateFailure(error: unknown): never {
   throw new AppError(500, "order_storage_error", "Failed to persist order");
 }
 
-export function createOrderRepository(database: Queryable): OrderRepository {
+export function createOrderRepository(database: Queryable, options: CommittedChangeOptions = {}): OrderRepository {
+  const observerPool = requireManagedObserverPool(database, options);
   return {
     async createPublicOrder(input) {
-      let result;
+      let record: CreatePublicOrderRecord;
       try {
-        result = await database.query<RawCreateOrder>(
-          `select * from public.create_public_order_v3(
-            $1::text,
-            $2::text,
-            $3::integer,
-            $4::jsonb,
-            $5::jsonb,
-            $6::text,
-            $7::text,
-            $8::text
-          )`,
-          [
-            input.restaurantSlug,
-            input.channel,
-            input.tableNumber ?? null,
-            JSON.stringify(input.items),
-            input.delivery ? JSON.stringify(input.delivery) : null,
-            input.publicTokenHash,
-            input.idempotencyKey,
-            input.requestFingerprint,
-          ],
-        );
+        const execute = async (queryable: Queryable) => {
+          const result = await queryable.query<RawCreateOrder>(
+            `select * from public.create_public_order_v3(
+              $1::text,
+              $2::text,
+              $3::integer,
+              $4::jsonb,
+              $5::jsonb,
+              $6::text,
+              $7::text,
+              $8::text
+            )`,
+            [
+              input.restaurantSlug,
+              input.channel,
+              input.tableNumber ?? null,
+              JSON.stringify(input.items),
+              input.delivery ? JSON.stringify(input.delivery) : null,
+              input.publicTokenHash,
+              input.idempotencyKey,
+              input.requestFingerprint,
+            ],
+          );
+          const row = result.rows[0];
+          if (!row) throw new AppError(500, "order_storage_error", "Failed to persist order");
+          return mapCreateOrder(row);
+        };
+        record = observerPool ? await withTransaction(observerPool, execute) : await execute(database);
       } catch (error) {
         mapCreateFailure(error);
       }
 
-      const row = result.rows[0];
-      if (!row) {
-        throw new AppError(500, "order_storage_error", "Failed to persist order");
-      }
-      return mapCreateOrder(row);
+      if (!record.idempotentReplay) await emitCommittedChange(options, {
+        restaurantId: record.restaurantId, topics: record.tableSessionId ? ["orders", "kitchen", "table_sessions"] : ["orders", "kitchen"],
+        orderIds: [record.orderId], entityId: record.orderId, reason: "created",
+      });
+      return record;
     },
 
     async findPublicOrder(orderId, tokenHash) {

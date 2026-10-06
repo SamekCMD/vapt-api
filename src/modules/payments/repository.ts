@@ -1,4 +1,7 @@
 import type { Queryable } from "../../lib/database.js";
+import { withTransaction } from "../../lib/database.js";
+import { emitCommittedChange, requireManagedObserverPool, type CommittedChangeOptions } from "../realtime/committed-changes.js";
+import type { CommittedChange } from "../realtime/contracts.js";
 import { AppError } from "../../lib/errors.js";
 import type {
   ClaimPaymentEffectsInput,
@@ -329,7 +332,8 @@ function mapEffect(row: RawPaymentEffect): PaymentEffectRecord {
   };
 }
 
-export function createPaymentRepository(database: Queryable): PaymentRepository {
+export function createPaymentRepository(database: Queryable, options: CommittedChangeOptions = {}): PaymentRepository {
+  const observerPool = requireManagedObserverPool(database, options);
   return {
     async findOrderForManualPayment(orderId) {
       try {
@@ -475,35 +479,54 @@ export function createPaymentRepository(database: Queryable): PaymentRepository 
 
     async applyPaymentTransition(input) {
       try {
-        const result = await database.query<RawPaymentTransaction>(
-          `select * from public.apply_payment_transition_v2(
-            $1::uuid,
-            $2::integer,
-            $3::text,
-            $4::text,
-            $5::text,
-            $6::timestamptz,
-            $7::text,
-            $8::timestamptz,
-            $9::jsonb,
-            $10::text[]
-          )`,
-          [
-            input.transactionId,
-            input.expectedVersion,
-            input.newStatus,
-            input.providerStatus,
-            input.externalPaymentId,
-            input.transitionedAt,
-            input.checkoutUrl,
-            input.expiresAt,
-            input.providerPayload,
-            input.effectTypes,
-          ],
-        );
-        const row = result.rows[0];
-        if (!row) storageFailure("Failed to apply payment transition");
+        let change: CommittedChange | undefined;
+        const execute = async (queryable: Queryable) => {
+          let previous: { version: number; status: PaymentStatus } | undefined;
+          if (observerPool) {
+            // Snapshot + routine's own row lock: no direct UPDATE privilege needed.
+            await queryable.query("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE");
+            previous = (await queryable.query<{ version: number; status: PaymentStatus }>(
+              "select version, status from public.payment_transactions where id = $1::uuid", [input.transactionId],
+            )).rows[0];
+            if (!previous) storageFailure("Failed to apply payment transition");
+          }
+          const result = await queryable.query<RawPaymentTransaction>(
+            `select * from public.apply_payment_transition_v2(
+              $1::uuid,
+              $2::integer,
+              $3::text,
+              $4::text,
+              $5::text,
+              $6::timestamptz,
+              $7::text,
+              $8::timestamptz,
+              $9::jsonb,
+              $10::text[]
+            )`,
+            [
+              input.transactionId,
+              input.expectedVersion,
+              input.newStatus,
+              input.providerStatus,
+              input.externalPaymentId,
+              input.transitionedAt,
+              input.checkoutUrl,
+              input.expiresAt,
+              input.providerPayload,
+              input.effectTypes,
+            ],
+          );
+          const row = result.rows[0];
+          if (!row) storageFailure("Failed to apply payment transition");
+          if (previous && (row.version !== previous.version || row.status !== previous.status)) change = {
+            restaurantId: row.restaurant_id, topics: ["payments", "orders", "kitchen", "table_sessions"],
+            orderIds: [row.order_id], entityId: row.id, reason: "payment_changed",
+        };
         return mapTransaction(row);
+        };
+        const result = observerPool ? await withTransaction(observerPool, execute) : await execute(database);
+        await emitCommittedChange(options, change);
+        return result;
       } catch (error) {
         if (error instanceof AppError) throw error;
         storageFailure("Failed to apply payment transition");
@@ -638,10 +661,30 @@ export function createPaymentRepository(database: Queryable): PaymentRepository 
 
     async releaseOrderToProduction(input) {
       try {
-        await database.query(
-          "select public.release_paid_order_to_production($1::uuid, $2::uuid)",
-          [input.paymentTransactionId, input.restaurantId],
-        );
+        let change: CommittedChange | undefined;
+        const execute = async (queryable: Queryable) => {
+          const load = () => queryable.query<{ id: string; restaurant_id: string; status: string }>(
+            `select order_row.id, order_row.restaurant_id, order_row.status
+             from public.orders as order_row
+             join public.payment_transactions as payment on payment.order_id = order_row.id and payment.restaurant_id = order_row.restaurant_id
+             where payment.id = $1::uuid and payment.restaurant_id = $2::uuid
+             for update of order_row`, [input.paymentTransactionId, input.restaurantId],
+          );
+          const before = observerPool ? (await load()).rows[0] : undefined;
+          if (observerPool && !before) storageFailure("Failed to release paid order to production");
+          await queryable.query(
+            "select public.release_paid_order_to_production($1::uuid, $2::uuid)",
+            [input.paymentTransactionId, input.restaurantId],
+          );
+          if (before) {
+            const after = (await load()).rows[0];
+            if (!after) storageFailure("Failed to release paid order to production");
+            if (before.status !== after.status) change = { restaurantId: after.restaurant_id,
+              topics: ["orders", "kitchen", "table_sessions"], orderIds: [after.id], entityId: after.id, reason: "updated" };
+          }
+        };
+        if (observerPool) await withTransaction(observerPool, execute); else await execute(database);
+        await emitCommittedChange(options, change);
       } catch {
         storageFailure("Failed to release paid order to production");
       }

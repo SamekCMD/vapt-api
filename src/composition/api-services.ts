@@ -198,7 +198,7 @@ export function createApiServices(config: AppConfig, dependencies: ApiServiceDep
     },
     get orders() {
       orders ??= createOrderService(
-        createOrderRepository(dependencies.database),
+        createOrderRepository(dependencies.database, { publishCommittedChange: dependencies.publishCommittedChange }),
         config.security.publicOrderTokenSecret,
       );
       return orders;
@@ -208,7 +208,7 @@ export function createApiServices(config: AppConfig, dependencies: ApiServiceDep
       return feedback;
     },
     get tableSessions() {
-      tableSessions ??= createTableSessionService(createTableSessionRepository(dependencies.database));
+      tableSessions ??= createTableSessionService(createTableSessionRepository(dependencies.database, { publishCommittedChange: dependencies.publishCommittedChange }));
       return tableSessions;
     },
     get restaurants() {
@@ -222,7 +222,7 @@ export function createApiServices(config: AppConfig, dependencies: ApiServiceDep
       return menu;
     },
     get kitchen() {
-      kitchen ??= createKitchenService(createKitchenRepository(dependencies.database));
+      kitchen ??= createKitchenService(createKitchenRepository(dependencies.database, { publishCommittedChange: dependencies.publishCommittedChange }));
       return kitchen;
     },
     get overview() {
@@ -321,6 +321,7 @@ export function createApiServices(config: AppConfig, dependencies: ApiServiceDep
         providers,
         {
           workerId: dependencies.workerId ?? "payment-effects-manual",
+          publishCommittedChange: dependencies.publishCommittedChange,
           onError: dependencies.onError ?? (() => undefined),
         },
       );

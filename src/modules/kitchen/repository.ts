@@ -1,5 +1,7 @@
 import type { Database, Queryable } from "../../lib/database.js";
 import { withTransaction } from "../../lib/database.js";
+import { emitCommittedChange, requireManagedObserverPool, type CommittedChangeOptions } from "../realtime/committed-changes.js";
+import type { CommittedChange } from "../realtime/contracts.js";
 import { AppError } from "../../lib/errors.js";
 import type {
   KitchenOrderDto,
@@ -108,7 +110,8 @@ async function loadOwnedOrder(
   return row ? mapOrder(row) : null;
 }
 
-export function createKitchenRepository(database: Database): KitchenRepository {
+export function createKitchenRepository(database: Database, options: CommittedChangeOptions = {}): KitchenRepository {
+  requireManagedObserverPool(database, options);
   return {
     async listActiveOwnedOrders(userId) {
       try {
@@ -133,7 +136,8 @@ export function createKitchenRepository(database: Database): KitchenRepository {
 
     async updateOwnedOrderStatus(userId, orderId, target, validateCurrent) {
       try {
-        return await withTransaction(database, async (client) => {
+        let change: CommittedChange | undefined;
+        const result = await withTransaction(database, async (client) => {
           const locked = await client.query<{ status: string }>(
             `select order_row.status
             from public.orders as order_row
@@ -163,8 +167,12 @@ export function createKitchenRepository(database: Database): KitchenRepository {
 
           const updated = await loadOwnedOrder(client, userId, orderId);
           if (!updated) throw storageFailure();
+          if (updated.status !== current.status) change = { restaurantId: updated.restaurantId,
+            topics: ["orders", "kitchen", "table_sessions"], orderIds: [updated.id], entityId: updated.id, reason: "updated" };
           return updated;
         });
+        await emitCommittedChange(options, change);
+        return result;
       } catch (error) {
         if (error instanceof AppError) throw error;
         throw storageFailure();
