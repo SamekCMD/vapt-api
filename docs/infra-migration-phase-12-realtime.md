@@ -1,6 +1,6 @@
 # Etapa 12 — Durable Objects/WebSockets
 
-Status em 06/10/2026: Tasks 1–8 concluídas; Task 9 com publicação, smoke privado e limpeza reais aprovados. Revisão independente final em andamento; não declarar a etapa concluída antes desse gate.
+Status em 06/10/2026: implementação, publicação privada, smoke, limpeza e revisão independente validados. Integração pelas branches/PRs existentes; sem merge na main ou cutover production.
 
 ## Código e validação local
 
@@ -12,7 +12,7 @@ Verificações repetidas na Task 9 antes de publicar:
 
 - `npm test`: API **488/488**.
 - `npm run test:worker`: workerd **19/19**, transporte/SQLite reais.
-- Frontend `npm test -- --maxWorkers=2`: **170/170**, 42 arquivos.
+- Frontend `npm test -- --maxWorkers=2`: **175/175**, 42 arquivos após o fix pass da revisão (170/170 antes).
 - API `npm run build`, frontend `npm run typecheck` e `npm run build:preview`: passaram. O root typecheck do frontend não certifica `tsconfig.app.json`; a comparação mais forte da Task 7 encontrou 21 diagnósticos preexistentes e nenhum introduzido.
 - Gates scripts realtime/target/parallel config e runner: **22/22**, incluindo nove testes do runner/fixture.
 - `node scripts/verify-realtime-preview-config.mjs wrangler.worker-parallel-preview.jsonc`: `ok:true`.
@@ -64,8 +64,19 @@ Etiqueta `stage12-0094ad59-7261-4c08-825e-59b236ca2130`; rooms (nomes públicos,
 
 Data Studio confirmou **tickets0/sequences0 em ambos os rooms**, sem DELETE manual/namespace-wide. SELECT: `SELECT (SELECT count(*) FROM realtime_tickets) AS tickets, (SELECT count(*) FROM realtime_sequences) AS sequences;`. IDs reais A `fbd29ab709b92aa45c773803096ae39f5853c8a29914be44d077e66681d891ae`, B `9aa3002ff771a85463fd4d860051df0a38851438c70525c68639a7ba60a1d844`; Overview listou só essas duas instâncias, error rate0% em ambas. Screenshots `vapt-stage12-remote-room-a.jpg`/`vapt-stage12-remote-room-b.jpg` estão fora do Git na pasta de evidências do chat. Namespace retido, sem exclusão/migração destrutiva. Alarmes remotos não são visíveis pelo Data Studio; limpeza de alarmes tem prova workerd local, sem alegar readback remoto desse campo. Métricas do Dashboard têm atraso, não certificam consumo final/fatura futura; nenhum upgrade foi executado.
 
-Pendentes: revisão independente final das duas branches e push/atualização PRs.
+## Revisão independente e correções finais
 
-Não há aceitação production, paridade Coolify nem integração de navegador remoto certificadas. Não mudar planos pagos, domínio, DNS, tráfego ou Cron nesta etapa. Falta consolidar billing PR 3 com API PR 1/frontend PR 4; nenhuma main recebe automaticamente todos os commits. Sem push/merge nesta execução até agora.
+Uma revisão fresh-context Astra medium cobriu todos os arquivos da Etapa 12 nos dois repos e integrações relevantes; etapas anteriores mantêm suas revisões separadas. Resultado: zero Critical, dois Important e um Minor. O revisor não executou novamente testes nem mutações remotas. Os dois Important foram confirmados e corrigidos pelo implementador em um único fix pass, sem segunda revisão:
+
+- HTTP pendente podia bloquear a fila de resync ou a admissão indefinidamente. GET agora tem deadline de 15s; ticket POST explícito de 10s; cancelamento inclui leitura do corpo e rejeita conclusões tardias. Troca de identidade/unsubscribe cancela a admissão antiga. Mutations sem deadline explícito mantêm o comportamento anterior. Três regressões observaram RED, depois HTTP/client/hook22/22 GREEN.
+- A conta do caixa aberta retinha pedidos/pagamentos antigos. Cada snapshot das mesas invalida também o detalhe selecionado, mantendo divisão/transferência e diálogo de pagamento; transferência externa atualiza mesa e fechamento remoto remove o modal. Leituras descartadas são canceladas. Duas regressões observaram RED, depois cashier7/7 GREEN.
+
+A primeira suíte completa encontrou duas regressões de timing (`realtime-auth` e `stripe-billing`): o wrapper adiava o início do fetch por um microtask. Corrigido preservando a chamada imediata, sem afrouxar testes. Suíte final frontend175/175; API488/488, workerd19/19, guards22/22, builds e root typecheck passaram. Comparação in-memory de `tsconfig.app.json`: baseline21, atual21, introduzidos0. Diff atual passou; whitespace histórico de três documentos frontend permanece explicitamente fora desta correção.
+
+Minor adiado: limites superiores baseados no relógio local podem rejeitar ticket/lease válidos quando o dispositivo está atrasado alguns segundos. Mantém fallback HTTP/polling; tolerância de clock skew não alterada nesta etapa. Browser remoto/Coolify/cutover e dívida TypeScript preexistente continuam gates separados, não certificações desta revisão.
+
+Controlador operador encerrado após limpar referências em memória; cache nativo temporário deste app removido. Nenhuma credencial foi adicionada aos commits.
+
+Não há aceitação production, paridade Coolify nem integração de navegador remoto certificadas. Não mudar planos pagos, domínio, DNS, tráfego ou Cron nesta etapa. Integração proposta em API PR 1/frontend PR 4; falta consolidar billing PR 3, pois nenhuma main recebe automaticamente todos os commits. Worktree preservado para feedback; nenhum merge/main/cutover autorizado neste gate.
 
 Rollback previsto: desligar flags/restaurar somente named Preview; manter polling. Não apagar namespace, branch ou bucket amplamente, nem executar migração destrutiva de classe como rollback trivial.
