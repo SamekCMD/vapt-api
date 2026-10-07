@@ -8,9 +8,12 @@ export function createWorkerMenuImageGateway(
   signing: NonNullable<AppConfig["r2"]>,
   bucket: WorkerR2Bucket,
 ): MenuImageGateway {
-  const signer = createR2MenuImageGateway(signing);
+  let signer: MenuImageGateway | undefined;
   return {
-    createUploadUrl: (input) => signer.createUploadUrl(input),
+    createUploadUrl(input) {
+      signer ??= createR2MenuImageGateway(signing);
+      return signer.createUploadUrl(input);
+    },
     async deleteObject({ objectKey }) { await bucket.delete(objectKey); },
   };
 }
