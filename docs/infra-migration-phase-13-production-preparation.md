@@ -1,8 +1,10 @@
-# Etapa 13 — preparação local da API production
+# Etapa 13 — preparação da API production
 
 ## Status em 06/10/2026
 
-Configuração versionada e verificada, sem implantação nem cutover. Reutiliza o runtime já implementado na Etapa12 (`src/worker/realtime-entry.ts`), não uma segunda implementação da API. O Worker `vapt-api-production` ainda não existia no readback desta rodada. Main, DNS, rotas, secrets, plano pago e dados remotos não foram alterados.
+API production implantada sem entradas públicas, com quatro secrets instalados e CORS do bucket configurado. Cutover ainda pendente: credenciais R2/Stripe, pareamento funcional, CPU Free e rollback precisam dos próximos gates. Main, DNS, plano pago e Access de produção não foram alterados. O runtime da Etapa12 é reutilizado, sem uma segunda implementação da API.
+
+As seções seguintes até “Avanço remoto” preservam a evidência histórica da preparação local no commit91c84d0, anterior à implantação. Referências a Worker/DO inexistentes e secrets ausentes descrevem aquele preflight, não o estado atual.
 
 ## Recursos e isolamento
 
@@ -41,3 +43,19 @@ Documentação Cloudflare consultada em06/10/2026: [Workers limits](https://deve
 [Durable Objects pricing](https://developers.cloudflare.com/durable-objects/platform/pricing/) permite SQLite no Free com quotas; esgotamento pode interromper operações. Não equivale a garantia de disponibilidade/custo. Não houve upgrade.
 
 Rollback desta preparação: reverter somente estes arquivos/steps na feature branch, sem tocar main ou recursos remotos. Após uma implantação futura, preferir versão anterior/flags/rotas sem apagar namespace ou executar migration destrutiva como rollback trivial. Realtime permanece off e polling existente preservado. Cutover público, integração main e aposentadoria Coolify/Hetzner seguem pendentes.
+
+## Avanço remoto em 06/10/2026 — implantação sem exposição
+
+- Deploy do código91c84d0 com Wrangler4.138.0 e configuração production passou:4484.87KiB/gzip765.05KiB, startup113ms e “No targets deployed”. Isso comprova upload/implantação, não requisições funcionais ou CPU por caminho de negócio. Versão inicial `a9b50f42-689f-46f8-9433-01a2cc7c5ee2`.
+- Namespace SQLite próprio criado: `d3ad7a4008c64124b765f934986956da`, `vapt-api-production_RestaurantRealtime`; distinto do Preview69fbe1f54ad64a93b7cb761910da094a. Binding Hyperdrive production2885c609a66641b3b716190c2d467902 e bucketvapt-assets-production confirmados por GET. Flags realtimefalse e Stripe test preservadas.
+- `BETTER_AUTH_SECRET` e `PUBLIC_ORDER_TOKEN_SECRET`: gerados independentemente com48bytes aleatórios cada e instalados por stdin write-only, sem arquivos de valores, Git ou logs. Não copiados de Preview.
+- `RESEND_API_KEY`: chave própria `vapt-api-production-auth-2026-10-06`, Sending access restrito a `vapt.app.br`. Criação/instalação aprovadas explicitamente; usuário transferiu o valor da tela única Resend ao campo Secret production da Cloudflare, Previews desmarcado. UI confirmou “Value encrypted”; GET confirmou somente o nome/tipo. Nenhum email enviado nesta rodada. Não reutilizada em billing/Preview.
+- `TURNSTILE_SECRET_KEY`: secret do widget existente `0x4AAAAAAEhvIktjmb6yaq09`, que já inclui `vapt.app.br`, recuperado em memória e instalado por stdin somente em production. Widget/domínios não alterados, secret não rotacionado. É reutilização deliberada do mesmo widget frontend/backend, não cópia de binding Preview; validação real do desafio permanece pendente.
+- CORS versionado `infra/cloudflare/r2-cors-production.json` aplicado somente emvapt-assets-production e confirmado por GET200: PUT, Content-Type/Content-Length, origensvapt.app.br/dashboard.vapt.app.br, ETag,3600s. CORS não autoriza uploads sem assinatura nem torna o bucket público. Credenciais S3 ainda ausentes.
+- Readback final: quatro bindings secret_text acima; deployment `305e7828-d26f-40fd-9bb1-04d451892f83`, versão `7cdfa081-d782-4d05-a5d1-55864bbe6511` a100%; workers.dev=false, previews_enabled=false, schedules0, custom domains Workers[] e R2[]. Domínio R2 gerenciado continua enabled:false. Nenhuma rota/DNS/Cron/Queue/Access/upgrade foi ativado.
+- Catálogo Stripe conferido por GET usando credencial Test local somente em memória: três prices e portal da configuração retornaram200, active:true, livemode:false; preços BRL/mês. Esse inventário não instalou a chave, não criou webhook nem realizou pagamento.
+- CI da configuração91c84d0: API run37543814966 aprovado. Frontendd74d507: run37544183319 aprovado, verify e billing_email, após correção limitada à espera do prato no teste público. Não atribuir esses resultados ao novo commit documental.
+
+Pendentes: `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `STRIPE_SECRET_KEY` Test e `STRIPE_WEBHOOK_SECRET` do endpoint próprio; origem/entrega webhook, upload/leitura/delete, auth/cookies/Turnstile, conectividade/ACL SQL e orçamento CPU Free. Sem configuração completa, não declarar readiness ou saúde remota. A API segue sem tráfego público e a Etapa13 não está concluída.
+
+Rollback operacional: manter ingress/realtime desligados; escolher uma versão anterior quando necessário, preservando secrets válidos e o namespace SQLite. Não apagar namespace/objetos ou executar migration destrutiva. Reverter somente documentação não desfaz recursos remotos.
