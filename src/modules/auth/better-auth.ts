@@ -72,6 +72,7 @@ export function createBetterAuthOptions(
           "/sign-up/email",
           "/sign-in/email",
           "/request-password-reset",
+          "/send-verification-email",
         ],
       }),
     ],

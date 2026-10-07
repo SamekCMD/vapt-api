@@ -91,6 +91,7 @@ test("Better Auth protects the exact email endpoints with Cloudflare Turnstile",
       "/sign-up/email",
       "/sign-in/email",
       "/request-password-reset",
+      "/send-verification-email",
     ],
   });
 });
