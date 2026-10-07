@@ -2,6 +2,32 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createTestHarness } from "wrangler";
 
+test("Worker auth body admission rejects excess before composition and preserves valid payload", async () => {
+  const server = createTestHarness({ workers: [{ configPath: "./wrangler.worker-test.jsonc" }] });
+  try {
+    await server.listen();
+    const fixture = server.getWorker("vapt-api-worker-test");
+    const base = "https://api.vapt.test";
+    const before = await (await fixture.fetch(`${base}/_test/composition-counts`)).json() as { serviceFactoryCalls: number };
+    const denied = await fixture.fetch(`${base}/api/auth/sign-in/email`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: "é".repeat(524_289),
+    });
+    assert.equal(denied.status, 413);
+    assert.deepEqual(await denied.json(), { error: { code: "payload_too_large", message: "Payload too large" } });
+    const after = await (await fixture.fetch(`${base}/_test/composition-counts`)).json() as { serviceFactoryCalls: number };
+    assert.equal(after.serviceFactoryCalls, before.serviceFactoryCalls);
+    const body = '{"email":"synthetic@example.invalid","name":"José"}';
+    const accepted = await fixture.fetch(`${base}/api/auth/sign-in/email?keep=query`, {
+      method: "POST", headers: { "content-type": "application/json", origin: "https://app.vapt.test" }, body,
+    });
+    assert.equal(accepted.status, 200);
+    assert.deepEqual(await accepted.json(), { method: "POST", search: "?keep=query", body });
+    assert.equal(accepted.headers.get("access-control-allow-origin"), "https://app.vapt.test");
+    assert.equal(accepted.headers.getSetCookie().length, 2);
+  } finally { await server.close(); }
+});
+
 test("Worker HTTP policy preserves safe errors, CORS and fail-closed ingress limits", async () => {
   const server = createTestHarness({ workers: [{ configPath: "./wrangler.worker-test.jsonc" }] });
   try {

@@ -1,10 +1,11 @@
 import type { Hono, MiddlewareHandler } from "hono";
 
 import { createRestaurantAccessChecker } from "../../lib/permissions.js";
+import { AppError } from "../../lib/errors.js";
 import { validateWithSchema } from "../../lib/validation.js";
 import { restaurantAccessParamsSchema } from "../../modules/auth/schemas.js";
 import type { WorkerHonoEnv } from "../app.js";
-import { requireWorkerAuth, workerRateLimit } from "../http.js";
+import { readWorkerBody, requireWorkerAuth, workerRateLimit } from "../http.js";
 
 export function registerWorkerAuthRoutes(
   app: Hono<WorkerHonoEnv>,
@@ -15,8 +16,15 @@ export function registerWorkerAuthRoutes(
     : workerRateLimit("auth");
 
   app.on(["GET", "POST"], "/api/auth/*", rate, async (context) => {
+    let request = context.req.raw;
+    // Bound POST bytes before auth/SQL/provider initialization, including
+    // chunked bodies. GET keeps its original body-free request.
+    if (request.method === "POST") {
+      const body = await readWorkerBody(request, new AppError(413, "payload_too_large", "Payload too large"));
+      request = new Request(request, { body });
+    }
     const services = await context.get("getServices")();
-    return services.authRuntime.handler(context.req.raw);
+    return services.authRuntime.handler(request);
   });
   app.get("/auth/me", rate, async (context) => context.json(await requireWorkerAuth(context)));
   app.get("/auth/restaurants/:restaurantId/access", rate, async (context) => {
