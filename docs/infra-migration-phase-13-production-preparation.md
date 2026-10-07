@@ -1,5 +1,11 @@
 # Etapa 13 — preparação da API production
 
+## Continuação atual — reenvio de email protegido, 07/10/2026
+
+Runtime7498574 inclui /send-verification-email no Turnstile existente, sem alterar templates/background/CSRF/sessões/hash ou criar quota/subsistema. RED6 falhas reproduziu a omissão; dez consumer tests reais locais com transportes externos sintéticos, GREEN14 focados/API536/workerd21/GC1/build/guard/bundles e revisão sem findings. Frontend atual sem caller de reenvio; futuro botão precisa desafio fresco. Código compartilhado para preview/production, novo deploy somente na API production privada.
+
+Estado atual92f46a03-5f05-47d4-990c-810c75c01c0a a100%, keep-vars/mesmos8secrets/HD/R2/DO/flags. Sete controles remotos de desafio ausente (reenvio exato/trailing query, login/reset), health/readiness/SELECT e sessão anônima passaram, com strictGET pré/pós/transportDisposed; zero fixtures/escritas/eventos de provedor solicitados. Não prova entrega real, quota financeira/identidade ou aceitação Turnstile positiva. Sem main/DNS/Paid/publicação. CI anterior f377fd6/fa44b5e aprovado; novos commits precisam de leitura. Detalhes e limites no handoff antiabuso. Deadlines SQL anteriores continuam aplicados, não são revertidos pelo rollback de código. Etapa13 permanece incompleta.
+
 ## Continuação atual — deadlines SQL, 07/10/2026
 
 Preview e production já têm defaults server-side8s por statement/2s por lock nas respectivas roles API IN DATABASE vapt, via migrations008 do repositório produto; somente os Hyperdrives correspondentes foram reciclados. Probes privados READ ONLY comprovaram settings/cancel57014/transaction25P02/ROLLBACK/reuso do mesmo cliente nas duas branches, com remoção404 dos Workers temporários. Não houve grants/dados/schema/secrets/owner/billing alterados. Factory promove checkout/handshake5s a todos os seus pools, preservando query_timeout apenas diagnostic e ownership/release.
