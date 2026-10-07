@@ -2,7 +2,7 @@
 
 ## Status em 07/10/2026
 
-API production implantada sem entradas públicas, com oito secrets, CORS R2 e webhook Stripe Test próprio desativado. ACL SQL atual e 11 checks funcionais privados passaram; duas fixtures de restaurantes/pedidos foram removidas com zero resíduos em 12 tabelas. Cutover ainda pendente: pareamento/browser/login real, entregas de provedores, uploads, CPU Free e rollback precisam dos próximos gates. Main, DNS, plano pago e Access de produção não foram alterados. O runtime da Etapa12 é reutilizado, sem uma segunda implementação da API.
+API production implantada sem entradas públicas, com oito secrets, CORS R2 e webhook Stripe Test próprio desativado. ACL SQL e 11 checks públicos privados passaram; uma rodada adicional aprovou 13 checks de login real/owner/CRUD/R2/logout, com limpeza verificada de zero resíduos em 12 tabelas e nos objetos sintéticos. Cutover ainda pendente: pareamento browser/CORS, exposição deliberada das imagens, entregas/ciclo de provedores, CPU Free e rollback precisam dos próximos gates. Main, DNS, plano pago e Access de produção não foram alterados. O runtime da Etapa12 é reutilizado, sem uma segunda implementação da API.
 
 As seções seguintes até “Avanço remoto” preservam a evidência histórica da preparação local no commit91c84d0, anterior à implantação. Referências a Worker/DO inexistentes e secrets ausentes descrevem aquele preflight, não o estado atual.
 
@@ -100,3 +100,23 @@ Diagnóstico do operador, sem mudança na aplicação: `Origin:https://vapt.app.
 Readbacks anterior/posterior confirmaram workers.dev/Preview URLsfalse, nenhum custom domain para o serviço, Hyperdrive production esperado, realtimefalse e Stripe test. Não houve deploy, alteração de secret, DNS, grants, plano ou runtime nesta rodada. Nenhum endpoint público novo.
 
 Gates restantes: login positivo com Turnstile real, cookies/CSRF e pareamento browser; CRUD autenticado/menu/cozinha/caixa e isolamento de proprietário; R2 presigned upload/read/delete e exposição das imagens; entrega Stripe/ciclo Test; CPU Free, observabilidade, recuperação e ensaio de rollback antes do cutover. O isolamento público/cleanup e a ACL verificados acima deixam de ser pendências desta rodada, mas não substituem autorização autenticada nem o restante da Etapa13.
+
+## Gate privado autenticado e R2 em 07/10/2026
+
+CI anterior API857ec248/run37622624174 e frontend7e137115/run37622622487 confirmado success. Mesma versão production4a33769a-1958-484d-9dbc-bcca9d1b0048, sem novo deploy. Operador servidor-a-servidor pelo binding privado, com credenciais somente em memória, uma conta credential sintética bootstrapada e sessão emitida pelo login real — nenhuma sessão artificial, troca de secret CAPTCHA ou proteção desativada. Usuário concluiu o Turnstile do widget existente em página local127.0.0.1; desafio usado uma vez. Os 13 checks aprovados:
+
+- Login Better Auth com desafio real:200; cookie `__Secure-better-auth.session_token` com Secure/HttpOnly/SameSite=Lax, sem valor em logs.
+- Resolução `/auth/me`:200 com proprietário correto; restaurante GET/PATCH200 e acesso ao restaurante estrangeiro403/forbidden.
+- Cardápio próprio: listagem200, criação201, alteração200 e exclusão204; identidade/vínculo/preço conferidos.
+- Presign para item de outro proprietário:403/forbidden. Presign próprio200, chave/bucket/URL/método e validade60s conferidos.
+- PUT adulterando chave, Content-Type ou Content-Length:403 nos três casos; PUT correto do PNG sintético:200.
+- Leitura privada pelo binding R2: conteúdo e metadados exatos; DELETE pela API:204 e objeto ausente. URL assinada expirada:403 e objeto continuou ausente.
+- Dois pedidos sintéticos201; cozinha lista só pedido próprio, altera status200 e rejeita pedido estrangeiro404/order_not_found.
+- Caixa: solicitação de conta200, listagem/detalhe próprios200, sessão estrangeira404/table_session_not_found e transferência200.
+- Logout Better Auth200; reuso do cookie anterior em `/auth/me`:401/unauthorized, comprovando revogação.
+
+Primeira tentativa de login desta rodada recebeu403/MISSING_OR_NULL_ORIGIN: operador não enviava Referer antes de obter sessão. Cleanup confirmou zero linhas/objetos e transporte foi descartado. Fonte Better Auth inspecionada, corrigido apenas o contexto legítimo do operador (`Referer:https://vapt.app.br/` em todas as requisições); novo desafio humano foi usado no teste final. O header Origin continua indisponível nesse transporte, portanto **não** certifica CORS/pareamento/cookies reais entre browser e domínios de produção. Proteções de aplicação/trustedOrigins permaneceram intactas.
+
+Fixtures exatas do operador `stage13-auth-e3d0db73-ef30-4885-9b35-9d53949aa7ec`: bootstrap owner apenas para controle/limpeza; requisições de negócio no Worker e role limitada/Hyperdrive production. Cleanup final limitado aos UUIDs+owner/name/slug/email e dois prefixos UUID R2; zero resíduos nas mesmas12tabelas e zero objetos conferidos. Cookie/senha/desafio/URLs assinadas descartados, transporte e pool encerrados, helper exit0. Sem email, Stripe Checkout/evento, alteração de grants, secret, DNS, main ou plano pago. Consumo de sequência de display IDs não revertido.
+
+Readbacks antes/depois: workers.dev/Preview URLsfalse, nenhum custom domain, Hyperdrive production próprio, realtimefalse, Stripe test e leitura pública R2false. Esta rodada certifica auth/owner/CRUD e operações R2 privadas, não leitura pública de imagens, entrega Stripe/Resend, ciclo de pagamento Test, browser/CORS, CPU Free, observabilidade ou recuperação/rollback. Esses são os gates restantes antes do cutover; Etapa13 permanece incompleta, sem ativação pública/Stripe Live/Access production ou aposentadoria Coolify/Hetzner.
