@@ -1,5 +1,7 @@
 # Etapa 13 — diagnóstico CPU em 07/10/2026
 
+**Diretriz atualizada pelo usuário em07/10:** Workers Paid é destino futuro, não Free permanente/custo zero. Manter medições históricas e otimização proporcional, mas não usar<=10ms como bloqueio absoluto do plano Paid. Readiness agora exige orçamento/limites por invocação representativos e prevenção de abuso, sem enfraquecer segurança. Paid não ativado nesta atualização. Próximos riscos/controles em `docs/infra-migration-phase-13-abuse-cost-readiness.md`.
+
 ## Continuação privada do engine reutilizável — 07/10/2026, 18:21 UTC
 
 O experimento local registrado ao final agora foi implantado: runtime `e9aa582` (ponte `36d76df`), versão production privada `799b78a0-a585-413d-9cfa-06fa4e14119d`, keep-vars e nenhum target público. Preflight/pós-deploy/pós-teste preservaram oito secrets por nome, mesmos HD/R2/DO, workers.dev/Preview URLs desligados, zero domains/Cron, R2 público/realtimefalse, Stripe Test e observabilitynull. Sem secret/grant/DNS/main/Paid/dependência alterada. Startup105ms não é CPU por request. Verificação fresca:26/26 focados, GC1/1, fixture workerd1/1, TypeScript, guard7/7+CLI; production dry-run4490.24KiB/gzip766.39KiB.

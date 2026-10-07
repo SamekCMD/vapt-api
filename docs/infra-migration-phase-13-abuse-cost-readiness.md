@@ -1,0 +1,44 @@
+# Etapa13 — custo previsível e proteção contra abuso
+
+## Intenção e limites — 07/10/2026
+
+Usuário confirmou futuro Workers Paid em substituição à VPS Hetzner, US$7/mês informado por ele. Objetivo: otimizar trabalho desnecessário e reduzir abuso/contas inesperadas, **não zerar custo ou tornar toda API compatível com10ms Free**. Plano canônico frontend `docs/infra-migration-plan.md`, regras11–13 e seção5, já prevê Paid quando Free limita testes/antes de production. Esta diretriz supersede o gate permanenteFree, não apaga evidência histórica nem aprova o cutover.
+
+Workers Paid mínimoUS$5/mês por conta, com10milhões de requests e30milhões deCPU-ms incluídos, excedentes cobrados; não é teto mensal nem inclui toda possível fatura Neon/R2/Resend/Queues/DO. Configurar limite CPU por invocação mitiga execução runaway, **não impõe teto de requests/fatura**. Rate limiter nativo é local por localização e eventualmente consistente, não contabilização financeira/global. Referências conferidas: [pricing](https://developers.cloudflare.com/workers/platform/pricing/), [CPU/limites](https://developers.cloudflare.com/workers/platform/limits/), [rate locality/accuracy](https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/). Alertas são detecção, não bloqueio automático ou promessa de gasto máximo.
+
+Não ativar Paid/main/DNS/publicação neste ajuste. Worker production privado agora `ba363c7c-3355-4849-b71f-c615bc3344db`, sucedendo799b78a0; API/R2 públicosfalse, realtimefalse, Stripe Testdisabled. Não recriar recursos/provedores, reduzir hash/CAPTCHA, cachear autorização/sessões revogáveis ou retirar verificações SQL. Executar inline no worktree existente emD:/Projetos; preservar docs do usuário.
+
+## Leitura de código — controles e lacunas
+
+| Área | Evidência existente | Próximo gate / limite da evidência |
+| --- | --- | --- |
+| Entrada por IP | `src/worker/http.ts` + `rate-limit.ts`: grupo+CF-Connecting-IP válido; limite antes de serviços, ausência de binding503 | Local porcolo/eventualmente consistente, não bloqueia abuso distribuído ou requests cobradas; não quota por usuário/tenant |
+| Auth | rate20/min porIP; Better Auth exige sessão assinada; CAPTCHA signup/signin/reset; hashing preservado | Corpo raw dePOST era repassado sem cap; primeiro ajuste abaixo. Resend de verificação/resend e quotas por identidade exigem gate próprio |
+| JSON de negócio/webhooks | `readWorkerBody` conta bytes/max1MiB/cancelaoverflow; Stripe assinatura antes dehandleEvent | Erros históricos500 preservados fora deste ajuste; bounds de filtros/listas e tamanho das respostas ainda avaliar |
+| SQL | Poolmax1 request-local; engine compartilhado sem compartilharI/O; ownership/revogação autoritativos | `createWorkerServices` chama `createWorkerDatabase(env)` semdiagnostic; timeouts8s/10s/2s existem **somente diagnostic:true**. Não declarar produção com esses deadlines |
+| Storage | schema upload<=5MiB, assinatura length/type/host, TTL60s, owner e tamper/expiry verificados | Presign porIP não quota cumulativa storage por tenant; imagem pública ainda desativada |
+| Billing/efeitos | ratebilling60/webhooks300, autenticação/owner/assinatura, idempotência; reconciliação batch<=100/retries limitados | Revisar amplificação/replay, chamadas provedores e limites concorrentes; sem cicloStripeTest entregue nesta rodada |
+| Realtime | tickets/TTL/capacidade/hibernação existentes e revisão histórica | Productionrealtimefalse; CPU/storage/conexões deDO têm orçamento próprio antes deativar |
+| Operação/cobrança | Private ingress e semPaid ativado; métricasGraphQL já disponíveis | Selecionar limiteCPU Paid com login real e margem; monitorarrequests/CPU/429/providerusage, proteção deborda disponível na conta e procedimento deresposta |
+
+Não chamar API de “impossível de abusar” ou garantir faturaUS$5. Os controles de aplicação poupam trabalho downstream, mas um flood distribuído pode consumir requests/CPU e atingir outros serviços; proteção antecipada de borda e orçamento operacional precisam avaliação real antes de tráfego público. Não comprar WAF/plano adicional por inferência.
+
+## Primeiro ajuste bounded — admissão do corpo auth
+
+Manter o limite já usado pela API1MiB, sem novo protocolo/subsistema. Rate/CORS primeiro; POST `/api/auth/*` mede stream antes decriarserviços, rejeita excesso413 `payload_too_large`, inclusive semContent-Length/declaradofalso/UTF8 multibyte; cancela leitura quandooverflow. Recria Request com corpo válido preservado e metadata/headers; GET segue original. Não alterar CAPTCHA/hash/cookies/CSRF/revogação, endpoints/códigoNode ou o policy dos outros bodies.
+
+Testes devem detectar ausência do cap e bypass de cabeçalho/contagem por caracteres, consumo após rate/CORSnegado, inicialização antes da validação, perda de metadata/set-cookie e rejeição do boundaryexato. Node/Hono real; dependência externa auth substituída só na prova do handoff; regressões Better Auth existentes e workerd mantidas. Resultado e revisão serão registrados após suítes completas. Sem deploy remoto ou proteção global/budget certificada por esse ajuste.
+
+Verificação local: baseline514/514; RED5falhas esperadas503vs413 (corpos ainda chegavam à criação de serviços),3controles já verdes; GREEN8/8 novos+7/7 admissão auth real, suíte522/522, workerd21/21 (caso novo verifica zero composição emoverflow e pequenoUTF8/set-cookie/CORS), GC1/1. Build TypeScript, guardproduction7/7+CLI e bundle4490.46KiB/gzip766.46KiB passaram sem upload. Runtime commit `2f76670ef0020d7d6232eba7609b50adebd190da`, revisão independente do novo diff ainda pendente; não declarar implantado ou proteção de custo completa.
+
+Revisão independente Astra medium do range4c58384..2f76670/imediatos: Critical0/Important1/Minor0; oito focados passaram no runner semisolamento após sandboxEPERM. Important confirmou logout body-free415 porque reconstrução com string adicionava Content-Type. Único fixpass: REDdois testes (headernull viroutext/plain; signout real415vs200), preservar Request com bodynull depois devalidar tamanho declarado e reconstruir body existente com Uint8Array, sem inventar header. GREEN10/10 body+7/7 admissão real; suíte final524/524, workerd21/21, TypeScript e productiondryrun4490.55KiB/gzip766.49KiB. Sign-out real com cookie assinado:200/3Set-Cookie/sessionstore0/próximo getSessionnull. Nenhuma segunda revisão ou fix de Minor. Item Important corrigido com evidência, não parecer de code review reiterado.
+
+Decisões sobre itens declinados: JSON/form configurados, não proxy binário arbitrário (bytes malformados/transparênciaforaescopo); stalledstream/cancelrejection/readerlock mantêm helper anterior e deadline é gate próprio; remotoCPU/budget/Paid não inferidos localmente; migração histórica/outros endpoints/timeoutsSQL ficam sob evidência/gates separados. Custo dessas decisões: cap não cobre stall, abuso distribuído, consumo global ou clientes deauth fora do contrato. Sem promessa de proteção total/fatura fixa; não reabrir revisão histórica.
+
+## Implantação privada e prova remota
+
+Runtime final `96bda7434203b7a623e2f8b104ea7b71a9eb0e7d`, versão `ba363c7c-3355-4849-b71f-c615bc3344db`, keep-vars/no targets/startup81ms (não CPU/request). GETs pre/post confirmaram oito secret_text por nome, mesmos HD/R2/DO e flags privados, sem observability/public/realtime/DNS/main/Paid/grants/secret mutação.
+
+Oito controles privados passaram: health200; bodies acima1MiB emsign-in/reset/signupUTF8 recebem413; POST pequeno ainda exigeCAPTCHA400/MISSING_RESPONSE; GETsession anônimo200/null; POST vazio semmedia-type415; logoutJSON{}200/3Set-Cookie. Sem fixtures, contas, emails, pagamentos ou desafioCAPTCHA; operador exit0/transporte encerrado. Não houve nova mediçãoCPU, sessão real remota/revogação desta rodada ou prova de fatura/abuso global. Teste local real continua cobrindo revogação.
+
+Falha operacional preservada: primeira execução esperava200 emPOST sembody e recebeu415, demais controles passaram; finally descartou transporte. Diagnóstico offline mostrou networkPOST emworkerd com bodyStream não-null/Content-Typenull, versusNodebody:null; BetterCall instalado exige media type sebody não-null. Operador foi corrigido para respeitar essa política e testar o formatoJSON suportado, sem alteração extra no runtime/parser. Duas falhas de formatoMiniflare no operador offline foram resolvidas com conversor instalado já usado pelos perfis existentes; nenhum dado remoto envolvido. As notas “sem deploy”/“revisão pendente” acima descrevem momentos anteriores, superados somente pelos resultados explicitamente registrados aqui.

@@ -2,6 +2,10 @@
 
 ## Status em 07/10/2026
 
+**Diretriz supersedente do usuário:** Workers Paid é o destino planejado da API para substituir Hetzner; não perseguir custo zero nem exigir<=10ms como condição permanente. Regras11–13/seção5 do plano já preveem essa transição. Leituras Free abaixo permanecem históricas, não certificam nem impedem por si production Paid. Próximo gate de consumo é proteção contra abuso/readiness do plano escolhido; ativação Paid continua etapa financeira explícita. Nenhuma assinatura/main/DNS/entrada pública ativada. MínimoUS$5 por conta não é teto; risco e próximos controles em `docs/infra-migration-phase-13-abuse-cost-readiness.md`.
+
+Estado mais recente: guardPOSTauth1MiB antes de serviços, runtime2f76670+96bda74 e versão privada `ba363c7c-3355-4849-b71f-c615bc3344db`. Suíte final524/524/workerd21/21/build/bundle; revisão focada achou1Important deContent-Type/logout, corrigido RED→GREEN com Better Auth real, sem re-review/Minors. Oito controles remotos passaram sem fixtures/provedores, pré/pós mesmos recursos/secrets/flags e transporte encerrado. Nenhuma nova certificaçãoCPU/budget/Paid/browser/concorrência/recuperação. Evidência e limitação doPOSTvazio no transporte constam no handoff antiabuso, sem relaxar parser. Seções seguintes799b78a0 são histórico do gate anterior; não ensaiado rollback do novo par.
+
 Última continuação: engine request-scoped (`36d76df`/`e9aa582`) implantado na versão production **privada** `799b78a0-a585-413d-9cfa-06fa4e14119d`, somente código com keep-vars. GETs antes/depois preservaram oito secrets por nome e bindings/flags privados. Sem entrada pública/main/DNS/Paid/grant/secret alterada. Registros posteriores “sem deploy nesta rodada” descrevem o experimento local anterior.
 
 Verificação fresca:26/26 focados, GC1/1, fixture workerd1/1, TypeScript, guard7/7+CLI e bundle4490.24KiB/gzip766.39KiB. Quinze probes negativos passaram; CPU ainda acima do Free (Cookie não relacionado94.680ms, sem Cookie até15.005ms, associação por ordem sem trace/cold-warm). Não há economia/capacidade certificada; janelas/unidades em `docs/infra-migration-phase-13-cpu-diagnosis.md`.
