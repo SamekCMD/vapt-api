@@ -120,3 +120,25 @@ Primeira tentativa de login desta rodada recebeu403/MISSING_OR_NULL_ORIGIN: oper
 Fixtures exatas do operador `stage13-auth-e3d0db73-ef30-4885-9b35-9d53949aa7ec`: bootstrap owner apenas para controle/limpeza; requisições de negócio no Worker e role limitada/Hyperdrive production. Cleanup final limitado aos UUIDs+owner/name/slug/email e dois prefixos UUID R2; zero resíduos nas mesmas12tabelas e zero objetos conferidos. Cookie/senha/desafio/URLs assinadas descartados, transporte e pool encerrados, helper exit0. Sem email, Stripe Checkout/evento, alteração de grants, secret, DNS, main ou plano pago. Consumo de sequência de display IDs não revertido.
 
 Readbacks antes/depois: workers.dev/Preview URLsfalse, nenhum custom domain, Hyperdrive production próprio, realtimefalse, Stripe test e leitura pública R2false. Esta rodada certifica auth/owner/CRUD e operações R2 privadas, não leitura pública de imagens, entrega Stripe/Resend, ciclo de pagamento Test, browser/CORS, CPU Free, observabilidade ou recuperação/rollback. Esses são os gates restantes antes do cutover; Etapa13 permanece incompleta, sem ativação pública/Stripe Live/Access production ou aposentadoria Coolify/Hetzner.
+
+## CPU/observabilidade — alerta medido em07/10/2026
+
+CI dos handoffs anteriores APIbafc649/run37625756392 e frontend08d09e4/run37625770495 confirmado completed/success. Consulta somente leitura com OAuth existente: settings/subdomain da APIproduction e GraphQL Analytics, sem chamar endpoints de negócio, criar token, habilitar logs ou alterar recursos. `observability:null` no settings; workers.dev/Preview URLsfalse. Leitura API de assinaturas recebeu403/10000; consulta GraphQL independente funcionou, sem ampliar escopos. Painel Workers plans confirmou **Free / Current plan / $0**, não upgrade nem promessa de fatura zero para todos os outros produtos.
+
+Janela GraphQL `2026-10-07T00:00:00.000Z`–`2026-10-07T13:10:55.829Z`: filtro exclusivo `scriptName:vapt-api-production`,19grupos retornados, soma52requests/0invocationErrors, todos os grupos status success; limite1000 não atingido. “Success” é outcome de execução, não afirmação de HTTP200 em testes negativos. Introspecção oficial de `AccountWorkersInvocationsAdaptiveQuantiles` confirmou cpuTimeP50/cpuTimeP99 em **microssegundos**. Exemplos no intervalo da rodada autenticada (UTC; São Paulo UTC−3):
+
+| Grupo UTC | Requests | P50 CPU (ms) | P99 CPU (ms) |
+| --- | ---: | ---: | ---: |
+| 13:00:54 | 1 | 11.390 | 11.390 |
+| 13:01:26 | 6 | 11.524 | 120.784 |
+| 13:01:27 | 4 | 14.201 | 33.683 |
+| 13:01:29 | 1 | 10.559 | 10.559 |
+| 13:01:30 | 5 | 10.679 | 11.641 |
+| 13:01:31 | 5 | 9.821 | 14.655 |
+| 13:01:32 | 3 | 10.338 | 16.676 |
+
+Gate CPU Free **não aprovado**: há grupos acima dos10ms por HTTP request documentados, apesar do smoke funcional passar e nenhuma invocationError aparecer na janela. [Cloudflare explica a flexibilidade/rollover dos limites e o outcome exceededCpu](https://developers.cloudflare.com/workers/platform/limits/); sucesso eventual não garante comportamento estável com carga. [Métricas usam amostragem/quantis](https://developers.cloudflare.com/workers/observability/metrics-and-analytics/), portanto não somar/médias dos P99, não chamar120.784ms de máximo absoluto nem atribuí-lo ao login sem medição por caminho. O painel resumido mostrou8ms para52requests, mas isso não invalida os quantis de grupos acima do limite.
+
+Diagnóstico inicial somente leitura: serviços são lazy e auth é inicializado por request quando necessário; pacote Better Auth instalado mantém scryptN16384/r16/p1 e export condicional workerd para node:crypto. Isso não prova qual trecho consumiu CPU ou qual caminho foi selecionado no bundle. Nenhuma redução de custo do hashing, cache de sessão/autorização, compartilhamento de pool cross-request ou mudança de algoritmo foi aplicada. Real-time logs padrão documentado não fornece por si só perfil detalhado de CPU; não habilitar coleta persistente/raw headers por conveniência.
+
+Próximo gate: profiling controlado por caminho e separação de cold/warm, composição/consulta/auth/criptografia, preservando isolamento, revogação e força do hashing; então otimização mínima com RED/GREEN se houver causa comprovada e nova medição no runtime alvo. Não comprar Workers Paid, mover auth/banco para outro provedor, reativar legado, alterar architecture/budget ou fazer cutover por inferência. API continua privada; browser/provedores/R2 público/recuperação/rollback ainda pendentes. Nenhuma fixture/processo de teste criada nesta consulta.
