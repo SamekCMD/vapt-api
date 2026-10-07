@@ -1,7 +1,6 @@
 import { betterAuth } from "better-auth";
 import { captcha } from "better-auth/plugins";
-import { PostgresDialect } from "kysely";
-import { Pool } from "pg";
+import { PostgresDialect, type PostgresPool } from "kysely";
 
 import type { AuthEmailService } from "../../email/types.js";
 import type { BetterAuthConfig } from "../../lib/config.js";
@@ -12,7 +11,7 @@ import type {
 } from "./runtime.js";
 
 export type BetterAuthOptionDependencies = {
-  pool: Pool;
+  pool: PostgresPool;
   emailService: AuthEmailService;
   runInBackground: BackgroundTaskRunner;
 };
@@ -89,7 +88,7 @@ export function createBetterAuthOptions(
 export type BetterAuthRuntimeDependencies = {
   emailService: AuthEmailService;
   runInBackground: BackgroundTaskRunner;
-  pool: Pool;
+  pool: PostgresPool;
 };
 
 export function createBetterAuthRuntime(

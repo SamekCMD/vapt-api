@@ -72,6 +72,7 @@ export type ApiServiceDependencies = {
   database: Database;
   publishCommittedChange?: CommittedChangePublisher;
   authRuntime?: AuthRuntime;
+  authRuntimeFactory?: typeof createBetterAuthRuntime;
   ownershipLookup?: OwnershipLookup;
   catalog?: CatalogService;
   orders?: OrderService;
@@ -287,7 +288,7 @@ export function createApiServices(config: AppConfig, dependencies: ApiServiceDep
       return mercadoPago;
     },
     get authRuntime() {
-      authRuntime ??= createBetterAuthRuntime(config.betterAuth, {
+      authRuntime ??= (dependencies.authRuntimeFactory ?? createBetterAuthRuntime)(config.betterAuth, {
         pool: dependencies.database as Pool,
         emailService: createResendAuthEmailService(
           createResendEmailClient(config.betterAuth.email.resendApiKey),

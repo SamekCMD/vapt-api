@@ -40,7 +40,7 @@
 
 ### Task 2: Engine cache and Worker integration
 
-**Files:** Create src/worker/auth-runtime.ts and src/worker/auth-runtime.test.ts. Modify src/modules/auth/better-auth.ts, src/composition/api-services.ts, src/worker/services.ts, bridge workerd fixture/test and Stage 13 CPU diagnosis.
+**Files:** Create src/worker/auth-runtime.ts, src/worker/auth-runtime.test.ts and src/worker/auth-retention.gc.ts. Modify src/modules/auth/better-auth.ts, src/composition/api-services.ts, src/worker/services.ts, bridge workerd fixture/test, package.json, .github/workflows/ci.yml and Stage 13 CPU diagnosis.
 
 **Interfaces:** Consumes createWorkerAuthContext. Produces createWorkerAuthRuntimeFactory(options?: { createEngine?: WorkerAuthEngineBuilder }): (config: BetterAuthConfig, dependencies: BetterAuthOptionDependencies, environment: string) => AuthRuntime. Factory is isolate-local and receives environment identity per runtime call through a Worker-bound closure; cache is a sole shared entry. WorkerAuthEngine is { ready: Promise<void>; runtime: AuthRuntime }; builder takes (config, bridgeDependencies). Extend ApiServiceDependencies with optional authRuntimeFactory typed from createBetterAuthRuntime, broaden pool dependency to PostgresPool. Worker supplies reusable factory; explicit authRuntime override wins; Node fallback stays original.
 
@@ -50,6 +50,7 @@
 - [ ] Add failing composition assertion that Worker chooses its reusable factory lazily while explicit runtime/factory overrides and Node behavior are preserved. Run named test file. Expected: fails before wiring.
 - [ ] Wire optional authRuntimeFactory and Worker-bound environment identity; run tests and build. Expected: pass, existing anonymous guard and session/cookie contracts unchanged.
 - [ ] Expand workerd fixture to execute real default engine with unrelated/invalid Cookie without external SQL (schema metadata synthetic network boundary if necessary); do not disable schema validation. Run targeted workerd test. Expected: isolated engine survives reuse and negatives remain null.
+- [ ] Add regression `late descendant promises cannot retain or reuse the completed invocation dependencies` with a pending callback created during initialization and WeakRefs of the first pool/email/runner. Assert all three collected while callback is pending, then callback rejects auth_context_unavailable. Run `npm run test:auth-retention` (node --expose-gc --test-isolation=none --import tsx --test src/worker/auth-retention.gc.ts). Expected: RED before scope references clear; GREEN after. Wire dedicated script into CI because normal Node test isolation omits the GC flag.
 - [ ] Run `npm test`, `npm run test:worker`, `npm run build`, `npm run build:worker`, preserving logs in this plan's scratch. Expected: all pass, dry-run only. Record CPU Free remains unapproved and no remote deployment.
 - [ ] Commit Task 2 code/tests/evidence: `git commit -m "perf(worker): reuse auth engine without sharing request I/O"`. Expected: success on feature branch only.
 

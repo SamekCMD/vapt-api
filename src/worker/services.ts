@@ -12,6 +12,9 @@ import { createWorkerDatabase } from "./database.js";
 import { configFromWorkerBindings, type WorkerBindings } from "./environment.js";
 import { createWorkerRealtimePublisher } from "./realtime/publisher.js";
 import { isRealtimeEnabled } from "../modules/realtime/contracts.js";
+import { createWorkerAuthRuntimeFactory } from "./auth-runtime.js";
+
+const reusableAuthRuntime = createWorkerAuthRuntimeFactory();
 
 export type ApiServiceOverrides = Partial<ApiServiceDependencies> & { config?: AppConfig };
 export type WorkerServicesFactory = (env: WorkerBindings, context: ExecutionContext) => Promise<ApiServices>;
@@ -36,6 +39,8 @@ export async function createWorkerServices(
   })() : undefined);
   return createApiServices(config, {
     ...overrides,
+    authRuntimeFactory: overrides.authRuntimeFactory ?? ((authConfig, dependencies) =>
+      reusableAuthRuntime(authConfig, dependencies, env.ENVIRONMENT)),
     publishCommittedChange: overrides.publishCommittedChange ?? (isRealtimeEnabled(env.REALTIME_ENABLED)
       ? createWorkerRealtimePublisher(env, code => console.error(code)) : undefined),
     database,

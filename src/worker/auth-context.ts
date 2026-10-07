@@ -10,23 +10,24 @@ export type WorkerAuthDependencies = {
   runInBackground: BackgroundTaskRunner;
 };
 
-type Scope = { dependencies: WorkerAuthDependencies; live: boolean };
+type Scope = { dependencies: WorkerAuthDependencies | undefined; live: boolean };
 
 export function createWorkerAuthContext() {
   const invocation = new AsyncLocalStorage<Scope>();
   const unavailable = () => new AppError(503, "auth_context_unavailable", "Service unavailable");
-  function current(): Scope {
+  function current() {
     const scope = invocation.getStore();
-    if (!scope?.live) throw unavailable();
-    return scope;
+    const dependencies = scope?.dependencies;
+    if (!scope?.live || !dependencies) throw unavailable();
+    return { scope, dependencies };
   }
 
   const pool: PostgresPool = {
     // Kysely caches this facade, never a real pool or its credentials.
     options: {},
     async connect() {
-      const owner = current();
-      const client = await owner.dependencies.pool.connect();
+      const { scope: owner, dependencies } = current();
+      const client = await dependencies.pool.connect();
       if (!owner.live || invocation.getStore() !== owner) {
         client.release();
         throw unavailable();
@@ -63,13 +64,13 @@ export function createWorkerAuthContext() {
       async sendPasswordReset(input) { return current().dependencies.emailService.sendPasswordReset(input); },
     },
     runInBackground(task) {
-      let scope: Scope;
-      try { scope = current(); } catch (error) {
+      let active: ReturnType<typeof current>;
+      try { active = current(); } catch (error) {
         // Do not leave a rejected email promise unobserved when registration fails.
         void task.catch(() => undefined);
         throw error;
       }
-      scope.dependencies.runInBackground(task);
+      active.dependencies.runInBackground(task);
     },
   };
 
@@ -78,7 +79,12 @@ export function createWorkerAuthContext() {
     run<T>(requestDependencies: WorkerAuthDependencies, work: () => Promise<T>): Promise<T> {
       const scope: Scope = { dependencies: requestDependencies, live: true };
       return invocation.run(scope, async () => {
-        try { return await work(); } finally { scope.live = false; }
+        try { return await work(); } finally {
+          scope.live = false;
+          // Descendant async resources can outlive this operation. Leave them
+          // a closed marker, not its pool, email client or execution context.
+          scope.dependencies = undefined;
+        }
       });
     },
   };

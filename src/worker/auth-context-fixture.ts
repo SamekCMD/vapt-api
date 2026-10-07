@@ -1,6 +1,8 @@
 import { Kysely, PostgresDialect, sql } from "kysely";
 import { createWorkerAuthContext } from "./auth-context.js";
-import { deferred, syntheticAuthDependencies } from "./auth-context-test-support.js";
+import { deferred, syntheticAuthDependencies, syntheticAuthConfig, syntheticSchemaAuthDependencies } from "./auth-context-test-support.js";
+import { createWorkerAuthRuntimeFactory } from "./auth-runtime.js";
+import { serializeSignedCookie } from "better-call";
 
 export default {
   async fetch() {
@@ -29,6 +31,22 @@ export default {
     resume.resolve();
     const expired = await late;
     await db.destroy();
-    return Response.json({ results, events, missing, expired, taskCounts: owners.map(dep => dep.tasks.length) });
+    const authEvents: string[] = [];
+    const factory = createWorkerAuthRuntimeFactory();
+    const config = syntheticAuthConfig();
+    const unknownCookie = (await serializeSignedCookie("__Secure-better-auth.session_token", "unknown-synthetic", config.secret)).split(";")[0];
+    const sessions = [];
+    for (const [owner, cookie] of [["a", "analytics=synthetic"], ["b", "__Secure-better-auth.session_token=invalid"], ["c", unknownCookie]]) {
+      sessions.push(await factory(config, syntheticSchemaAuthDependencies(owner, authEvents), "preview").getSession(new Headers({ cookie })));
+    }
+    const concurrentEvents: string[] = [];
+    const concurrentFactory = createWorkerAuthRuntimeFactory();
+    const concurrentSessions = await Promise.all(["p", "q"].map(owner =>
+      concurrentFactory(config, syntheticSchemaAuthDependencies(owner, concurrentEvents), "preview").getSession(new Headers({ cookie: unknownCookie }))));
+    let badSchema = false;
+    try {
+      await createWorkerAuthRuntimeFactory()(config, syntheticSchemaAuthDependencies("bad", [], true), "preview").getSession(new Headers());
+    } catch (error) { badSchema = (error as { code: string }).code === "SCHEMA_MISMATCH"; }
+    return Response.json({ results, events, missing, expired, taskCounts: owners.map(dep => dep.tasks.length), sessions, authEvents, badSchema, concurrentEvents, concurrentSessions });
   },
 };

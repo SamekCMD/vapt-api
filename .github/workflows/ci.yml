@@ -35,6 +35,9 @@ jobs:
       - name: Test Worker in workerd
         run: npm run test:worker
 
+      - name: Test auth invocation dependency retention
+        run: npm run test:auth-retention
+
       - name: Build
         run: npm run build
 

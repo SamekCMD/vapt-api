@@ -13,6 +13,7 @@
     "start": "node dist/server.js",
     "test": "tsx --test \"src/**/*.test.ts\"",
     "test:worker": "tsx --test \"src/worker/*.workerd.ts\"",
+    "test:auth-retention": "node --expose-gc --test-isolation=none --import tsx --test src/worker/auth-retention.gc.ts",
     "storage:migrate": "tsx src/scripts/migrate-menu-images-to-r2.ts",
     "generate:supabase-keys": "node scripts/generate-supabase-jwt-keys.mjs"
   },
