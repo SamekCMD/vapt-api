@@ -14,8 +14,10 @@ export function createWorkerDatabase(
   return new Pool({
     connectionString,
     max: 1,
+    connectionTimeoutMillis: 5_000,
+    // Hyperdrive does not forward these startup settings to Postgres. Effective
+    // SQL deadlines come from the versioned API role defaults in DATABASE vapt.
     ...(options.diagnostic ? {
-      connectionTimeoutMillis: 5_000,
       statement_timeout: 8_000,
       query_timeout: 10_000,
       lock_timeout: 2_000,
