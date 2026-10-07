@@ -1,5 +1,23 @@
 # Etapa 13 — diagnóstico CPU em 07/10/2026
 
+## Continuação privada do engine reutilizável — 07/10/2026, 18:21 UTC
+
+O experimento local registrado ao final agora foi implantado: runtime `e9aa582` (ponte `36d76df`), versão production privada `799b78a0-a585-413d-9cfa-06fa4e14119d`, keep-vars e nenhum target público. Preflight/pós-deploy/pós-teste preservaram oito secrets por nome, mesmos HD/R2/DO, workers.dev/Preview URLs desligados, zero domains/Cron, R2 público/realtimefalse, Stripe Test e observabilitynull. Sem secret/grant/DNS/main/Paid/dependência alterada. Startup105ms não é CPU por request. Verificação fresca:26/26 focados, GC1/1, fixture workerd1/1, TypeScript, guard7/7+CLI; production dry-run4490.24KiB/gzip766.39KiB.
+
+Doze GETs e três controles negativos passaram: health/ready200, sem Cookie401, catálogo ausente404 e bearer legado/Cookie não relacionado/sessão inválida401. Sem fixture/provedor nessa medição, versão mantida e transporte encerrado. Janela `2026-10-07T18:21:14.697Z`–`2026-10-07T18:22:09.111Z`: leitura inicial9grupos, posterior12grupos/12requests/0invocationErrors, limite1000 não atingido. Grupos ordenados UTC/CPUms:18:21:17=6.060;21=2.079;25=1.578;29=15.005;34=1.367;38=0.874;42=1.093;46=3.628;50=0.570;54=0.752;58=0.721;18:22:02=3.788. Analytics antecede o relógio local. Correlação por ordem dos12probes, **não trace individual**: auth/me sem Cookie15.005/3.628/0.721ms. Não atribuir o primeiro excesso a Better Auth, que esse caminho evita.
+
+Controles em janela separada `2026-10-07T18:22:09.119Z`–`2026-10-07T18:22:30.315Z`:3grupos/3requests/0erros. Microssegundos convertidos emms, correlação por ordem:
+
+| Controle (todos401) | Grupo UTC | CPU P50=P99 (ms) |
+| --- | --- | ---: |
+| Bearer legado sem Cookie | 18:22:11 | 11.062 |
+| Cookie não relacionado | 18:22:15 | 94.680 |
+| Sessão inválida | 18:22:20 | 2.813 |
+
+Sem trace/cold-warm comprovado, ganho percentual ou garantia de reutilização entre isolates. Ainda há excessos sem senha; **Workers Free não aprovado**. Próximo diagnóstico deve separar inicialização e execução representativa de login/sessão, mantendo lifetime request-local; sem enfraquecer schema/hash/CAPTCHA/revogação, contratar Paid ou publicar.
+
+Depois de fechar ambas as janelas,13checks positivos passaram na nova versão: Turnstile humano real, schema/transporte PostgreSQL-Hyperdrive real, login200, Cookie Secure/HttpOnly/SameSite=Lax, sessão200, owner/CRUD/menu/cozinha/caixa, R2 tamper/upload/read/delete/expiry e logout200/reuso401. Bootstrap/controlSQL/cleanup owner restritos às mesmas fixtures; negócios pela role limitada. Chamadas sequenciais separadas ao Worker funcionaram; não certifica concorrência remota, browser/CORS, entrega de provedores ou CPU/login/carga. Zero resíduos em12tabelas e objetos, exit0, transporte/pool encerrados; sem email/pagamento. Rollback histórico vale só para o par anterior;799b78a0→db882acc não ensaiado.
+
 Status: **gate Workers Free não aprovado**. O diagnóstico inicial abaixo corresponde à versão `4a33769a-1958-484d-9dbc-bcca9d1b0048`, sem otimização naquela rodada. Depois foram implantadas duas otimizações limitadas em produção ainda privada: signer R2 lazy em `d4940da2-d822-4943-92e2-8f64f95ed34c` e rejeição sem Cookie em `db882acc-fdfb-41ce-a783-04ec87954872`, mantendo realtimefalse e Stripe Test. Evidências e limites nas continuações ao final. CI dos handoffs anteriores API0e63d0e/run37633845136 e frontend8b437e9/run37633842242: completed/success; não certifica commits posteriores.
 
 ## Leitura controlada no Worker implantado

@@ -2,6 +2,12 @@
 
 ## Status em 07/10/2026
 
+Última continuação: engine request-scoped (`36d76df`/`e9aa582`) implantado na versão production **privada** `799b78a0-a585-413d-9cfa-06fa4e14119d`, somente código com keep-vars. GETs antes/depois preservaram oito secrets por nome e bindings/flags privados. Sem entrada pública/main/DNS/Paid/grant/secret alterada. Registros posteriores “sem deploy nesta rodada” descrevem o experimento local anterior.
+
+Verificação fresca:26/26 focados, GC1/1, fixture workerd1/1, TypeScript, guard7/7+CLI e bundle4490.24KiB/gzip766.39KiB. Quinze probes negativos passaram; CPU ainda acima do Free (Cookie não relacionado94.680ms, sem Cookie até15.005ms, associação por ordem sem trace/cold-warm). Não há economia/capacidade certificada; janelas/unidades em `docs/infra-migration-phase-13-cpu-diagnosis.md`.
+
+Gate positivo repetido após mudança de auth:13checks com Turnstile humano real, schema/transporte PostgreSQL-Hyperdrive, login/sessão, isolamento owner, CRUD/menu/cozinha/caixa, R2 e revogação. Chamadas sequenciais separadas funcionaram; concorrência remota não certificada. Mesmo escopo sintético, zero resíduos em12tabelas e objetos, exit0/transporte/pool encerrados; sem email/pagamento. Browser/CORS/cookies entre domínios, provedores, imagens públicas, CPU/login Free, concorrência e recuperação ampla continuam gates. Rollback histórico não certifica799b78a0→db882acc. CI anterior API72dec1d/run37636586532 e frontend83b1b5a/run37636582938 passou, não certifica novos commits ainda não enviados.
+
 API production implantada sem entradas públicas, com oito secrets, CORS R2 e webhook Stripe Test próprio desativado. ACL SQL e 11 checks públicos privados passaram; uma rodada adicional aprovou 13 checks de login real/owner/CRUD/R2/logout, com limpeza verificada de zero resíduos em 12 tabelas e nos objetos sintéticos. Rollback de código compatível e restauração foram ensaiados. Cutover ainda pendente: pareamento browser/CORS, exposição deliberada das imagens, entregas/ciclo de provedores, CPU Free e recuperação ampla precisam dos próximos gates. Main, DNS, plano pago e Access de produção não foram alterados. O runtime da Etapa12 é reutilizado, sem uma segunda implementação da API.
 
 As seções seguintes até “Avanço remoto” preservam a evidência histórica da preparação local no commit91c84d0, anterior à implantação. Referências a Worker/DO inexistentes e secrets ausentes descrevem aquele preflight, não o estado atual.
