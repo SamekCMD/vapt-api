@@ -8,7 +8,14 @@ export type WorkerAuthEngine = { ready: Promise<void>; runtime: AuthRuntime };
 export type WorkerAuthEngineBuilder = (config: BetterAuthConfig, dependencies: BetterAuthOptionDependencies) => WorkerAuthEngine;
 
 const buildEngine: WorkerAuthEngineBuilder = (config, dependencies) => {
-  const auth = betterAuth(createBetterAuthOptions(config, dependencies));
+  const options = createBetterAuthOptions(config, dependencies);
+  const auth = betterAuth({
+    ...options,
+    // Explicit in workerd regardless of NODE_ENV; supplementary per-isolate
+    // protection, not a distributed quota or replacement for the edge limiter.
+    rateLimit: { enabled: true, storage: "memory" },
+    advanced: { ...options.advanced, ipAddress: { ipAddressHeaders: ["cf-connecting-ip"] } },
+  });
   return {
     ready: auth.$context.then(async context => { await context.checkSchema?.(); }),
     runtime: {
