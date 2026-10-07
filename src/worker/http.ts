@@ -75,6 +75,9 @@ export function installWorkerHttpPolicy(app: Hono<WorkerHonoEnv>, createServices
 export async function requireWorkerAuth(context: Context<WorkerHonoEnv>): Promise<AuthContext> {
   const getServices = context.get("getServices");
   if (!getServices) throw new AppError(503, "service_unavailable", "Service unavailable");
+  // Sessions are cookie-only. Reject anonymous requests before request-local
+  // auth/database initialization; any present Cookie still needs full validation.
+  if (!context.req.raw.headers.has("cookie")) throw new AppError(401, "unauthorized", "Unauthorized");
   const services = await getServices();
   const auth = await createSessionResolver(services.authRuntime, "fetch")(context.req.raw.headers);
   if (!auth) throw new AppError(401, "unauthorized", "Unauthorized");
