@@ -1,5 +1,15 @@
 # Etapa13 — custo previsível e proteção contra abuso
 
+## Avanço atual — rate limit interno explícito no Worker, 07/10/2026
+
+Runtime `7076df8` habilita explicitamente o limiter de memória do Better Auth somente no builder Worker e confia apenas em `cf-connecting-ip`. A configuração compartilhada Node/Coolify permanece inalterada. No diagnóstico local workerd anterior, `ENVIRONMENT=production` não ativava essa camada porque `NODE_ENV` não era production; isso não certificava o estado remoto antigo. Agora o comportamento não depende desse default. Permanecem os limites padrão do pacote instalado: reenvio/reset três tentativas por 60s; login/cadastro três por 10s, por IP/path e instância. CAPTCHA, hash, cookies, sessão/revogação, ALS e ownership de pools não mudaram; nenhuma tabela de rate limit, quota distribuída, credencial ou recurso novo.
+
+RED quatro testes reproduziu a ausência de 429; GREEN4/4 usa o builder real, SQL introspectivo/email externos sintéticos e workerd com `NODE_ENV=test`. Cobertura: spoof de XFF, IP independente, alias trailing slash/query, concorrência e CAPTCHA antes de provedores. API539/539, workerd22/22, retenção1/1, TypeScript, guard7/7+CLI e bundles passaram; revisão focada sem findings. Bundle production4491.08KiB/gzip766.76; preview4474.23/gzip762.24. CI anterior API1bccd02/F7072d39 aprovado; novos heads exigem leitura própria.
+
+Implantação keep-vars apenas na API production **privada**, versão `3afed7d4-9725-4fff-b1a9-15df463936f8` a100%. StrictGET pré/pós preservou oito nomes de secrets e HD/R2/DO/flags. Sete controles remotos passaram: três reenvios sem desafio400, quarto429 `X-Retry-After:60`, XFF trocado ainda429, outro CF IP400 e ready200 com SQL real. Zero cookies nesses reenvios, fixtures/escritas/eventos de provedor solicitados; transporte encerrado. Código disponível para preview, sem novo deploy preview.
+
+Esta é proteção **suplementar por instância**, não quota global, garantia de que o quarto request distribuído sempre será barrado ou teto de fatura. O controle nativo de borda permanece. Missing/invalid CF IP não ganha confiança por XFF; fallback do pacote é conservador, não isolamento por identidade. Browser/imagens, provedores/quotas, observabilidade/readiness Paid e recuperação ampla continuam antes do cutover. Sem main/DNS/Paid/entrada pública alterada. As seções seguintes preservam evidência histórica; estados antigos de limiter/versão não descrevem esta implantação.
+
 ## Avanço atual — proteção do reenvio de verificação, 07/10/2026
 
 O endpoint existente POST /api/auth/send-verification-email foi incluído no plugin Turnstile já usado por cadastro, login e reset. Antes, o handler anônimo podia enviar para conta não verificada sem passar pelo desafio; seis falhas RED reproduziram essa omissão. Mudança mínima na lista de endpoints, sem nova quota, driver, schema, recurso ou cache. Nenhum caller de reenvio encontrado no frontend atual; um futuro botão deverá enviar desafio fresco via x-captcha-response, como os três fluxos existentes.
@@ -28,14 +38,14 @@ Usuário confirmou futuro Workers Paid em substituição à VPS Hetzner, US$7/m�
 
 Workers Paid mínimoUS$5/mês por conta, com10milhões de requests e30milhões deCPU-ms incluídos, excedentes cobrados; não é teto mensal nem inclui toda possível fatura Neon/R2/Resend/Queues/DO. Configurar limite CPU por invocação mitiga execução runaway, **não impõe teto de requests/fatura**. Rate limiter nativo é local por localização e eventualmente consistente, não contabilização financeira/global. Referências conferidas: [pricing](https://developers.cloudflare.com/workers/platform/pricing/), [CPU/limites](https://developers.cloudflare.com/workers/platform/limits/), [rate locality/accuracy](https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/). Alertas são detecção, não bloqueio automático ou promessa de gasto máximo.
 
-Não ativar Paid/main/DNS/publicação neste ajuste. Worker production privado agora `92f46a03-5f05-47d4-990c-810c75c01c0a`, sucedendo bb585c31; API/R2 públicosfalse, realtimefalse, Stripe Testdisabled. Não recriar recursos/provedores, reduzir hash/CAPTCHA, cachear autorização/sessões revogáveis ou retirar verificações SQL. Executar inline no worktree existente emD:/Projetos; preservar docs do usuário.
+Não ativar Paid/main/DNS/publicação neste ajuste. Worker production privado agora `3afed7d4-9725-4fff-b1a9-15df463936f8`, sucedendo92f46a03; API/R2 públicosfalse, realtimefalse, Stripe Testdisabled. Não recriar recursos/provedores, reduzir hash/CAPTCHA, cachear autorização/sessões revogáveis ou retirar verificações SQL. Executar inline no worktree existente emD:/Projetos; preservar docs do usuário.
 
 ## Leitura de código — controles e lacunas
 
 | Área | Evidência existente | Próximo gate / limite da evidência |
 | --- | --- | --- |
 | Entrada por IP | `src/worker/http.ts` + `rate-limit.ts`: grupo+CF-Connecting-IP válido; limite antes de serviços, ausência de binding503 | Local porcolo/eventualmente consistente, não bloqueia abuso distribuído ou requests cobradas; não quota por usuário/tenant |
-| Auth | rate20/min porIP; sessão assinada; CAPTCHA signup/signin/reset/reenvio; corpo1MiB medido antes de serviços; hashing preservado | CAPTCHA não é quota por identidade/destinatário ou teto financeiro; rate interno e entregas reais exigem gate próprio |
+| Auth | rate20/min porIP externo; limiter interno explícito, memória por instância, CF IP somente; sessão assinada; CAPTCHA signup/signin/reset/reenvio; corpo1MiB antes de serviços; hashing preservado | Rate/CAPTCHA não são quota global por identidade/destinatário ou teto financeiro; entregas reais e amplificação distribuída exigem gate próprio |
 | JSON de negócio/webhooks | `readWorkerBody` conta bytes/max1MiB/cancelaoverflow; Stripe assinatura antes dehandleEvent | Erros históricos500 preservados fora deste ajuste; bounds de filtros/listas e tamanho das respostas ainda avaliar |
 | SQL | Poolmax1 request-local; checkout5s; defaults role IN vapt8s/2s comprovados viaHD preview/production; ownership/revogação preservados | Deadline por statement, não HTTP/fatura. Lock setting, não contenção/carga. query_timeout continua diagnostic-only; pool realtime separado/desativado tem gate próprio |
 | Storage | schema upload<=5MiB, assinatura length/type/host, TTL60s, owner e tamper/expiry verificados | Presign porIP não quota cumulativa storage por tenant; imagem pública ainda desativada |

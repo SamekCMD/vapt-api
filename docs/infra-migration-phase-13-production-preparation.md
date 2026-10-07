@@ -1,5 +1,11 @@
 # Etapa 13 — preparação da API production
 
+## Continuação atual — limiter interno de auth confirmado, 07/10/2026
+
+Runtime `7076df8` habilita explicitamente memória no Better Auth somente do Worker, com `cf-connecting-ip` como única fonte confiada de IP. Não depende de `NODE_ENV`; Node/Coolify e opções compartilhadas continuam iguais. Defaults do pacote por IP/path/instância, native rate/CAPTCHA/hash/sessões/ALS/ownership preservados. RED4→GREEN4, API539/workerd22/GC1/build/guard/bundles e revisão focada passaram.
+
+Estado atual production privado `3afed7d4-9725-4fff-b1a9-15df463936f8` a100%, keep-vars/mesmos8secrets/HD/R2/DO/flags. Sete controles remotos confirmaram400/400/400/429, XFF trocado429, outro CF IP400 e ready200; strictGET pré/pós e transporte encerrado. Sem fixtures/provedores/novo recurso ou deploy preview. Código comum pronto para ambos os ambientes, comportamento limitado por instância, não quota distribuída ou teto financeiro. Evidência/limites no handoff antiabuso. CI anterior API1bccd02/F7072d39 aprovado; novo head precisa leitura própria. Sem main/DNS/Paid/publicação; demais gates da Etapa13 continuam. Seções seguintes são histórico, inclusive versões antigas e limiter antes deste ajuste.
+
 ## Continuação atual — reenvio de email protegido, 07/10/2026
 
 Runtime7498574 inclui /send-verification-email no Turnstile existente, sem alterar templates/background/CSRF/sessões/hash ou criar quota/subsistema. RED6 falhas reproduziu a omissão; dez consumer tests reais locais com transportes externos sintéticos, GREEN14 focados/API536/workerd21/GC1/build/guard/bundles e revisão sem findings. Frontend atual sem caller de reenvio; futuro botão precisa desafio fresco. Código compartilhado para preview/production, novo deploy somente na API production privada.
