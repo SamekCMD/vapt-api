@@ -1,8 +1,8 @@
 # Etapa 13 — preparação da API production
 
-## Status em 06/10/2026
+## Status em 07/10/2026
 
-API production implantada sem entradas públicas, com oito secrets, CORS R2, webhook Stripe Test próprio desativado e primeira prova HTTP/banco pela conexão interna autenticada. Cutover ainda pendente: pareamento/browser/auth, entregas de provedores, uploads, CPU Free e rollback precisam dos próximos gates. Main, DNS, plano pago e Access de produção não foram alterados. O runtime da Etapa12 é reutilizado, sem uma segunda implementação da API.
+API production implantada sem entradas públicas, com oito secrets, CORS R2 e webhook Stripe Test próprio desativado. ACL SQL atual e 11 checks funcionais privados passaram; duas fixtures de restaurantes/pedidos foram removidas com zero resíduos em 12 tabelas. Cutover ainda pendente: pareamento/browser/login real, entregas de provedores, uploads, CPU Free e rollback precisam dos próximos gates. Main, DNS, plano pago e Access de produção não foram alterados. O runtime da Etapa12 é reutilizado, sem uma segunda implementação da API.
 
 As seções seguintes até “Avanço remoto” preservam a evidência histórica da preparação local no commit91c84d0, anterior à implantação. Referências a Worker/DO inexistentes e secrets ausentes descrevem aquele preflight, não o estado atual.
 
@@ -72,3 +72,31 @@ Rollback operacional: manter ingress/realtime desligados; escolher uma versão a
 - Handoffs anteriores API2f8a84d/frontend e5234e4 enviados às branches existentes: CI37555280420/37555269039 concluídos success. Os registros anteriores de CI pendente são históricos; este resultado não certifica commits documentais posteriores.
 
 Pendentes antes do cutover: auth/browser/cookies/Turnstile real, CRUD/isolamento com fixtures sintéticas e cleanup, R2 upload/leitura/delete e exposição deliberada das imagens, origem/entrega Stripe e ciclo completo de pagamento Test, ACL completa e orçamento CPU Free/recuperação/rollback. Saúde HTTP e uma leitura SQL não certificam esses fluxos. A API continua sem tráfego público, webhook Test desativado e Etapa13 incompleta. Nenhum upgrade, Stripe Live, main ou aposentadoria do legado nesta rodada.
+
+## Gate privado funcional em 07/10/2026
+
+CI dos handoffs anteriores confirmado: API head66aba971/run37556456162 e frontend head253f313d/run37556459318, ambos completed/success. Não atribuir esse CI às alterações documentais desta rodada.
+
+Operador local restrito à branch Neon production `br-odd-term-b6j2n9ms`, host direto `ep-holy-wildflower-b6vtv1dd.c-2.sa-east-1.aws.neon.tech`, databasevapt/roleneondb_owner. Credenciais capturadas do CLI autenticado somente em memória. `infra/neon/verify-worker-production-role.sql` passou no estado atual: atributos, membership, ownership e allowlist de privilégios da role `vapt_api_production` verificados sem novos grants. Owner foi usado apenas no bootstrap/limpeza e leitura de controle; os requests de negócio atravessaram o binding privado do Worker implantado e seu Hyperdrive production, sem executar o serviço localmente.
+
+Onze checks aprovados:
+
+- ACL SQL atual de production.
+- Rota de proprietário sem sessão:401/unauthorized.
+- Login sem CAPTCHA:400/MISSING_RESPONSE; proteção mantida, **não** prova de login real.
+- Dois catálogos200, cada um contendo somente seu restaurante/item sintético.
+- Dois POSTs concorrentes com a mesma chave:201 e200, mesmo pedido/token, sem duplicação.
+- Token de cada pedido lê somente seu pedido; uso no pedido do outro tenant:404/not_found.
+- Reuso de chave com quantidade diferente:409/idempotency_conflict.
+- Item do segundo restaurante no pedido do primeiro:400/invalid_request.
+- Solicitação de conta na sessão do outro restaurante:404/table_session_not_found.
+- Solicitação de conta nas duas sessões corretas:200/check_requested.
+- Controle SQL final: dois pedidos, duas sessões check_requested e zero payment_effect_outbox para as fixtures.
+
+Bootstrap com UUIDs/slug/email `stage13-4cf06604-71e4-4b2b-9598-469e070d6b40` e domínio sintético `example.invalid`; sem contas credential, sessões artificiais, emails, Checkout ou chamadas a provedores. Limpeza em finally limitada aos IDs exatos + owner/name/slug/email, com cascades e conferência de zero linhas em restaurants, orders, order_items, menu_items, menu_item_variations, table_sessions, order_feedback, payment_transactions, payment_effect_outbox e user/session/account de Better Auth. Transporte descartado; pool encerrado. O consumo eventual da sequência de display IDs pelos pedidos de teste não foi revertido.
+
+Diagnóstico do operador, sem mudança na aplicação: `Origin:https://vapt.app.br` recebe403/text/plain antes da API no transporte remoto; matriz confirmou health200 e rota owner401 sem Origin, versus403 em ambas com Origin. CORS_ORIGINS remoto contém exatamentevapt.app.br; o handler inspecionado não produz esse403. Teste servidor-a-servidor omite Origin, não desativa CORS/CSRF nem certifica navegador/origem. O parser operacional foi corrigido para ler o JSON do middleware CAPTCHA mesmo sem application/json. Falhas anteriores ocorreram antes do bootstrap; uma execução intermediária não iniciou porque o serviço de aprovação estava em limite, sem contorno da revisão.
+
+Readbacks anterior/posterior confirmaram workers.dev/Preview URLsfalse, nenhum custom domain para o serviço, Hyperdrive production esperado, realtimefalse e Stripe test. Não houve deploy, alteração de secret, DNS, grants, plano ou runtime nesta rodada. Nenhum endpoint público novo.
+
+Gates restantes: login positivo com Turnstile real, cookies/CSRF e pareamento browser; CRUD autenticado/menu/cozinha/caixa e isolamento de proprietário; R2 presigned upload/read/delete e exposição das imagens; entrega Stripe/ciclo Test; CPU Free, observabilidade, recuperação e ensaio de rollback antes do cutover. O isolamento público/cleanup e a ACL verificados acima deixam de ser pendências desta rodada, mas não substituem autorização autenticada nem o restante da Etapa13.
