@@ -20,8 +20,11 @@ export function registerWorkerAuthRoutes(
     // Bound POST bytes before auth/SQL/provider initialization, including
     // chunked bodies. GET keeps its original body-free request.
     if (request.method === "POST") {
+      const hasBody = request.body !== null;
       const body = await readWorkerBody(request, new AppError(413, "payload_too_large", "Payload too large"));
-      request = new Request(request, { body });
+      // Preserve body-free logout and absent Content-Type. A string body would
+      // silently add text/plain, which Better Auth correctly rejects.
+      if (hasBody) request = new Request(request, { body: new TextEncoder().encode(body) });
     }
     const services = await context.get("getServices")();
     return services.authRuntime.handler(request);

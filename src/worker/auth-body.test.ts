@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ExecutionContext } from "hono";
+import { betterAuth } from "better-auth";
+import { memoryAdapter } from "better-auth/adapters/memory";
+import { serializeSignedCookie } from "better-call";
 
 import type { ApiServices } from "../composition/api-services.js";
 import { AppError } from "../lib/errors.js";
@@ -111,4 +114,39 @@ test("auth GET stays body-free and keeps the original Request", async () => {
   } } as ApiServices));
   const response = await app.fetch(input, env, execution);
   assert.equal(await response.text(), "get-handler");
+});
+
+test("auth POST preserves an absent Content-Type rather than inventing one", async () => {
+  const input = new Request(base, { method: "POST", body: new TextEncoder().encode("{}"),
+    headers: { "cf-connecting-ip": "203.0.113.1" } });
+  const app = createWorkerApp(async () => ({ authRuntime: {
+    async handler(received: Request) {
+      return Response.json({ contentType: received.headers.get("content-type"), body: await received.text() });
+    },
+  } } as ApiServices));
+  const response = await app.fetch(input, env, execution);
+  assert.deepEqual(await response.json(), { contentType: null, body: "{}" });
+});
+
+test("body-free POST signs out through real Better Auth and revokes the session", async () => {
+  const now = new Date();
+  const store = {
+    user: [{ id: "owner", name: "Owner", email: "synthetic@example.invalid", emailVerified: true, createdAt: now, updatedAt: now }],
+    session: [{ id: "session", token: "synthetic-token", userId: "owner", expiresAt: new Date(Date.now() + 86_400_000),
+      createdAt: now, updatedAt: now, ipAddress: null, userAgent: null }], account: [], verification: [],
+  };
+  const secret = "synthetic-auth-body-secret-at-least-32-characters";
+  const auth = betterAuth({ baseURL: "https://api.vapt.test", secret, trustedOrigins: ["https://app.vapt.test"],
+    database: memoryAdapter(store), advanced: { useSecureCookies: true } });
+  const app = createWorkerApp(async () => ({ authRuntime: { handler: auth.handler } } as ApiServices));
+  const cookie = (await serializeSignedCookie("__Secure-better-auth.session_token", "synthetic-token", secret)).split(";")[0];
+  assert.equal((await auth.api.getSession({ headers: new Headers({ cookie }) }))?.user.id, "owner");
+  const response = await app.fetch(new Request("https://api.vapt.test/api/auth/sign-out", { method: "POST",
+    headers: { origin: "https://app.vapt.test", cookie, "cf-connecting-ip": "203.0.113.1" },
+  }), env, execution);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { success: true });
+  assert.equal(response.headers.getSetCookie().length, 3);
+  assert.equal(store.session.length, 0);
+  assert.equal(await auth.api.getSession({ headers: new Headers({ cookie }) }), null);
 });
