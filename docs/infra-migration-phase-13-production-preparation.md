@@ -1,5 +1,9 @@
 # Etapa 13 — preparação da API production
 
+## Continuação atual — Workers Paid e CPU limitada, 07/10/2026
+
+Assinatura Workers Paid ativada após autorização financeira/contratual explícita: US$5/mês por conta mais excedentes, não teto. Config d9fead0 limita CPU a1000ms; production privada agora `eeb0d212-ad66-4c0a-90ec-7117b89a4266` a100%, keep-vars/mesmos8secrets/HD/R2/DO/flags e readback remoto1000ms. Guard RED2→GREEN8, API539/build/drybundle/revisão focada aprovados. Health/readiness/catalog e13checks com Turnstile real/CRUD/owner/R2/logout passaram; zero resíduos12tabelas/objetos, operadores encerrados. Analytics24invocações/0erros, maiorP99degrupo270.107ms, não trace/máximo/carga. Sem deploy preview, DNS/main/ingress/ZeroTrustproduction/NeonPaid/StripeLive alterados. Handoff e limites em `docs/infra-migration-phase-13-workers-paid.md`; CPUcap não é teto de fatura, browser/provedores/imagens/observabilidade/cutover continuam gates. Etapa13 aberta; registros seguintes históricos.
+
 ## Continuação atual — recuperação SQL isolada, 07/10/2026
 
 Ensaio no Neon Free passou em duas cópias próprias, sem qualquer restore/write em production/preview: checkpoint com duas linhas sintéticas, alvo perdeu linha/payload/restaurants+dependências, restore do HEAD do parent recuperou conteúdo e estrutura selecionada. Comparações de20tabelas/273constraints/49rotinas/grants/settings/dados iguais ao original; production READ ONLY antes/depois sem diferenças, ambas as cópias removidas/ausência confirmada/pools encerrados. Sem runtime/Worker/DNS/main/Paid/secrets/ingress alterados; versão atual privada permanece3afed7d4-9725-4fff-b1a9-15df463936f8.

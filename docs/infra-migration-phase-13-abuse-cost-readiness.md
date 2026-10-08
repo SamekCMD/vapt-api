@@ -1,5 +1,9 @@
 # Etapa13 — custo previsível e proteção contra abuso
 
+## Avanço atual — Workers Paid autorizado e CPU limitada, 07/10/2026
+
+Workers Paid ativo (US$5/mês por conta+excedentes); limite1000ms obrigatório no config/guard e comprovado remotamente emproduction privada `eeb0d212-ad66-4c0a-90ec-7117b89a4266`. Runtime/hash/sessões/rate/CAPTCHA/SQL preservados. Guard8/API539/build/bundle/revisão e13checks sintéticos com cleanup passaram; Analytics24invocações/0erros, maiorP99degrupo270.107ms. Não é máximo absoluto/carga nem quota global/teto de fatura. Sem public/main/DNS/ZeroTrustproduction/StripeLive/NeonPaid; observabilitynull. Evidência e gates restantes em `docs/infra-migration-phase-13-workers-paid.md`. O estado sem Paid abaixo é histórico, não bloqueio para readiness do destino aprovado.
+
 ## Avanço atual — rate limit interno explícito no Worker, 07/10/2026
 
 Runtime `7076df8` habilita explicitamente o limiter de memória do Better Auth somente no builder Worker e confia apenas em `cf-connecting-ip`. A configuração compartilhada Node/Coolify permanece inalterada. No diagnóstico local workerd anterior, `ENVIRONMENT=production` não ativava essa camada porque `NODE_ENV` não era production; isso não certificava o estado remoto antigo. Agora o comportamento não depende desse default. Permanecem os limites padrão do pacote instalado: reenvio/reset três tentativas por 60s; login/cadastro três por 10s, por IP/path e instância. CAPTCHA, hash, cookies, sessão/revogação, ALS e ownership de pools não mudaram; nenhuma tabela de rate limit, quota distribuída, credencial ou recurso novo.
