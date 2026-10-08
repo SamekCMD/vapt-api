@@ -51,3 +51,9 @@ jobs:
 
       - name: Bundle production preparation without deploying
         run: npx --no-install wrangler deploy --dry-run --config wrangler.worker-production.jsonc
+
+      - name: Validate authorized public production configuration
+        run: node --test scripts/verify-public-production-config.test.mjs
+
+      - name: Bundle public production without deploying
+        run: npm run build:worker-production-public

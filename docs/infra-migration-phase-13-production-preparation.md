@@ -1,5 +1,9 @@
 # Etapa 13 — preparação da API production
 
+## Continuação atual — deploy público protegido, 08/10/2026
+
+`wrangler.worker-production-public.jsonc` declara somente api.vapt.app.br no Worker/conta existentes, keep_vars:true e mesmos recursos/CPU1000/auth/StripeTest/realtimefalse. Guard público normaliza só ingresso e reutiliza guard privado sem alterá-lo. Comandos verify:production-public, build:worker-production-public (dry-run) e deploy:worker-production-public adicionados; CI só valida, não publica. Público5+privado8/API539/workerd22/TypeScript/bundle aprovados. Config privada/routes[] preservada e não deve ser usada para redeploy público. Runbook no produto `docs/infra-migration-phase-13-public-deploy.md` cobre build frontend isolado e revisão corrigida. Qualificação remota dos comandos novos ainda pendente; Etapa13 aberta, sem main/novo ingresso/recurso/credencial/assinatura/StripeLive/desligamentoVPS.
+
 ## Continuação atual — sessão no browser comprovada, 08/10/2026
 
 Readback manteve APIeeb0d212/CPU1000 e frontenddeb94199 nos dois custom domains autorizados, sem deploy ou novas assinaturas. Brave real: login normal com Turnstile automático, reload completo preservando dashboard próprio, Sair retornando ao login e nova navegação ao dashboard novamente redirecionada. SQL contou uma sessão válida após reload e zero depois de Sair, antes do cleanup. Fixture sintética exata removida/zero resíduos nas cinco tabelas/pool fechado; sem pedidos/emails/uploads/pagamentos, nenhuma proteção relaxada. Prova no produto `docs/infra-migration-phase-13-browser-pairing.md`. Config privada/routes[] ainda não serve para redeploy público; próximo gate torna publicação reproduzível. Etapa13 não concluída, sem main/StripeLive/ZeroTrustproduction/desligamentoVPS; pendência anterior reload/logout abaixo histórica.
