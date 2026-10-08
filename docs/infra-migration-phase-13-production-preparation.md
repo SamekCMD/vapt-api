@@ -1,5 +1,11 @@
 # Etapa 13 — preparação da API production
 
+## Continuação atual — recuperação SQL isolada, 07/10/2026
+
+Ensaio no Neon Free passou em duas cópias próprias, sem qualquer restore/write em production/preview: checkpoint com duas linhas sintéticas, alvo perdeu linha/payload/restaurants+dependências, restore do HEAD do parent recuperou conteúdo e estrutura selecionada. Comparações de20tabelas/273constraints/49rotinas/grants/settings/dados iguais ao original; production READ ONLY antes/depois sem diferenças, ambas as cópias removidas/ausência confirmada/pools encerrados. Sem runtime/Worker/DNS/main/Paid/secrets/ingress alterados; versão atual privada permanece3afed7d4-9725-4fff-b1a9-15df463936f8.
+
+Não certifica PITR histórico, backup exportado/pg_restore, recuperação de production nem de R2/DO/efeitos Stripe/Resend. Histórico configurado6h, aplicação inicial sem linhas; somente conteúdo sintético foi recuperado. Suspensão/TTL foram adequados às restrições Free sem upgrade. Runbook/evidência no repositório produto, `docs/infra-migration-phase-13-recovery.md`. CIs APIc642400/F13b00ff passaram; commits posteriores exigem leitura própria. Browser/CORS/cookies e entregas reais continuam gates que exigem ingress deliberado e readiness do plano escolhido, não testes servidor-a-servidor como substituto. Nenhum merge/cutover aprovado por este ensaio.
+
 ## Continuação atual — limiter interno de auth confirmado, 07/10/2026
 
 Runtime `7076df8` habilita explicitamente memória no Better Auth somente do Worker, com `cf-connecting-ip` como única fonte confiada de IP. Não depende de `NODE_ENV`; Node/Coolify e opções compartilhadas continuam iguais. Defaults do pacote por IP/path/instância, native rate/CAPTCHA/hash/sessões/ALS/ownership preservados. RED4→GREEN4, API539/workerd22/GC1/build/guard/bundles e revisão focada passaram.
