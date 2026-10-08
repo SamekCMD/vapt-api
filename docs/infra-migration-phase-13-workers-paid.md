@@ -1,5 +1,9 @@
 # Etapa 13 — Workers Paid e CPU limitada, 07/10/2026
 
+## Atualização de ingresso — 07/10/2026
+
+Após autorização explícita, APIeeb0d212 passou a ser pública somente em api.vapt.app.br; CPU1000 e mesmos recursos/secrets/StripeTest/realtimefalse confirmados, workers.dev/VersionURLs API continuam off. Frontendvapt.app.br/deb94199, HTTPS/CORS/SQL e login real no Brave passaram; reload/logout interrompidos por extensão ainda pendentes. Fixture própria removida/pool fechado. Sem main/novo plano/StripeLive/ZeroTrustproduction. Runbook de pareamento e rollback no repositório produto: `docs/infra-migration-phase-13-browser-pairing.md`. Evidência privada abaixo permanece histórica, não descreve ingresso atual nem certifica cutover final.
+
 ## Estado confirmado
 
 Workers Paid ativado na conta Cloudflare existente após autorização financeira e aceite contratual explícitos. Checkout confirmou assinatura ativa, US$5/mês mais uso excedente. Assinatura por conta, não por Worker: inclui os Workers existentes e não é teto de fatura. Nenhum serviço Images/Stream foi configurado; checkout exibiu essa linha a US$0/mês. Zero Trust de produção, Neon Paid, Stripe Live, DNS, main e aposentadoria Coolify/Hetzner não foram ativados por esta autorização.
