@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const topKeys = new Set(['$schema', 'name', 'main', 'compatibility_date', 'compatibility_flags',
-  'workers_dev', 'preview_urls', 'routes', 'vars', 'hyperdrive', 'r2_buckets', 'durable_objects', 'migrations', 'ratelimits']);
+  'workers_dev', 'preview_urls', 'routes', 'limits', 'vars', 'hyperdrive', 'r2_buckets', 'durable_objects', 'migrations', 'ratelimits']);
 const fixedVars = {
   ENVIRONMENT: 'production', REALTIME_ENABLED: 'false', STRIPE_ENVIRONMENT: 'test',
   CORS_ORIGINS: 'https://vapt.app.br', FRONTEND_URL: 'https://vapt.app.br',
@@ -34,6 +34,7 @@ export function checkProductionPreparationConfig(config) {
       config.name !== 'vapt-api-production' || config.main !== 'src/worker/realtime-entry.ts' ||
       config.compatibility_date !== '2026-09-28' || !one(config.compatibility_flags) || config.compatibility_flags[0] !== 'nodejs_compat' ||
       config.workers_dev !== false || config.preview_urls !== false || !Array.isArray(config.routes) || config.routes.length !== 0) invalid();
+    if (!keys(config.limits, ['cpu_ms']) || config.limits.cpu_ms !== 1000) invalid();
     if (!keys(config.vars, [...Object.keys(fixedVars), ...Object.keys(dynamicVars)]) ||
       Object.entries(fixedVars).some(([key, value]) => config.vars[key] !== value) ||
       Object.entries(dynamicVars).some(([key, pattern]) => typeof config.vars[key] !== 'string' || !pattern.test(config.vars[key]))) invalid();

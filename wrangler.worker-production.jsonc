@@ -7,6 +7,7 @@
   "workers_dev": false,
   "preview_urls": false,
   "routes": [],
+  "limits": { "cpu_ms": 1000 },
   "vars": {
     "ENVIRONMENT": "production",
     "REALTIME_ENABLED": "false",

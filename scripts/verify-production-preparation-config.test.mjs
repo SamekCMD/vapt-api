@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 const valid = () => ({
   name: 'vapt-api-production', main: 'src/worker/realtime-entry.ts',
   compatibility_date: '2026-09-28', compatibility_flags: ['nodejs_compat'],
-  workers_dev: false, preview_urls: false, routes: [],
+  workers_dev: false, preview_urls: false, routes: [], limits: { cpu_ms: 1000 },
   vars: {
     ENVIRONMENT: 'production', REALTIME_ENABLED: 'false', STRIPE_ENVIRONMENT: 'test',
     FRONTEND_URL: 'https://vapt.app.br', CORS_ORIGINS: 'https://vapt.app.br',
@@ -59,7 +59,16 @@ test('rejects preview database, bucket, origins and credential-bearing configura
     c => { c.vars.DATABASE_URL = 'postgres://synthetic-secret@example/vapt'; },
   ]);
 });
-test('rejects public routes, previews, triggers, queues, paid settings and premature activation', async () => {
+test('requires the bounded CPU budget before private production deployment', async () => {
+  await rejects([
+    c => { delete c.limits; }, c => { c.limits = null; }, c => { c.limits = []; },
+    c => { c.limits = {}; }, c => { c.limits.cpu_ms = '1000'; },
+    c => { c.limits.cpu_ms = 0; }, c => { c.limits.cpu_ms = 999; },
+    c => { c.limits.cpu_ms = 1001; }, c => { c.limits.cpu_ms = 30000; },
+    c => { c.limits.subrequests = 100000; },
+  ]);
+});
+test('rejects public routes, previews, triggers, queues and premature activation', async () => {
   await rejects([
     c => { c.workers_dev = true; }, c => { c.preview_urls = true; },
     c => { c.routes = [{ pattern: 'api.vapt.app.br', custom_domain: true }]; },
