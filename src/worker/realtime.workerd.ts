@@ -96,6 +96,17 @@ test("SQLite rooms prove upgrade, tenant/order isolation, limits and real hibern
     binaryFrame.socket.send(Buffer.alloc(4097));
     await waitFor(() => binaryFrame.closed() !== undefined);
     assert.equal(binaryFrame.closed(), 1009);
+    const heartbeatRest = "44444444-4444-4444-8444-444444444444";
+    const heartbeat = await connect({ ...guest, restaurantId: heartbeatRest }, heartbeatRest);
+    for (let index = 0; index < 3; index++) {
+      heartbeat.socket.send('{"version":1,"type":"ping"}');
+      await waitFor(() => heartbeat.frames.length === index + 2);
+    }
+    await worker.evictDurableObject("ROOMS", { name: heartbeatRest, webSockets: "hibernate" });
+    heartbeat.socket.send('{"version":1,"type":"ping"}');
+    await waitFor(() => heartbeat.closed() !== undefined || heartbeat.frames.length === 5);
+    assert.equal(heartbeat.closed(), 1013, "heartbeat flood must close even after hibernation");
+    assert.equal(heartbeat.frames.filter(frame => frame.type === "pong").length, 3);
     const futureAck = await connect();
     futureAck.socket.send(JSON.stringify({ version: 1, type: "ack", sequence: 3 }));
     await waitFor(() => futureAck.closed() !== undefined);

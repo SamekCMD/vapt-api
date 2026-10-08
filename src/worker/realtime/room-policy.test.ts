@@ -49,3 +49,27 @@ test("only bounded heartbeat and advancing acknowledgements are accepted", async
   assert.equal(p.parseControl("x".repeat(4097), 0, 0), null);
   assert.equal(p.parseControl(new ArrayBuffer(8), 0, 0), null);
 });
+
+test("heartbeat budget bounds bursts, refills at ten seconds and cannot reset on clock regression", async () => {
+  const p = await policy();
+  assert.equal(typeof p.consumePingBudget, "function", "heartbeat budget is not implemented");
+  assert.deepEqual(p.consumePingBudget(undefined, 1000), { tokens: 2, refilledAt: 1000 });
+  assert.deepEqual(p.consumePingBudget({ tokens: 2, refilledAt: 1000 }, 1001), { tokens: 1, refilledAt: 1000 });
+  assert.deepEqual(p.consumePingBudget({ tokens: 1, refilledAt: 1000 }, 1002), { tokens: 0, refilledAt: 1000 });
+  assert.equal(p.consumePingBudget({ tokens: 0, refilledAt: 1000 }, 10_999), null);
+  assert.deepEqual(p.consumePingBudget({ tokens: 0, refilledAt: 1000 }, 11_000), { tokens: 0, refilledAt: 11_000 });
+  assert.deepEqual(p.consumePingBudget({ tokens: 0, refilledAt: 1000 }, 41_000), { tokens: 2, refilledAt: 41_000 });
+  assert.equal(p.consumePingBudget({ tokens: 0, refilledAt: 11_000 }, 1000), null);
+});
+
+test("attachments preserve bounded heartbeat state and reject malformed or extra budget authority", async () => {
+  const p = await policy();
+  const legacy = { version: 1, admission, expiresAt: 301_000, lastSent: 8, lastAck: 7 } as const;
+  const current = { ...legacy, pingBudget: { tokens: 0, refilledAt: 1000 } };
+  assert.deepEqual(p.parseAttachment(current), current);
+  assert.deepEqual(p.parseAttachment(legacy), legacy);
+  for (const pingBudget of [{ tokens: 4, refilledAt: 1000 }, { tokens: -1, refilledAt: 1000 },
+    { tokens: 0.5, refilledAt: 1000 }, { tokens: 0, refilledAt: -1 }, { tokens: 0, refilledAt: 1000, extra: true }, null]) {
+    assert.equal(p.parseAttachment({ ...legacy, pingBudget }), null);
+  }
+});

@@ -4,7 +4,7 @@ import type { DurableObjectNamespace, DurableObjectState, Request as PlatformReq
 import { createRealtimeGrantValidator, type RealtimeGrant } from "../../modules/realtime/authorization.js";
 import { parseRealtimeEnvelope, realtimeTopics, type CommittedChange, type RealtimeReady } from "../../modules/realtime/contracts.js";
 import { TicketStore } from "./ticket-store.js";
-import { hasCapacity, leaseExpiry, parseAdmission, parseAttachment, parseControl, scope, validId,
+import { consumePingBudget, hasCapacity, leaseExpiry, parseAdmission, parseAttachment, parseControl, scope, validId,
   type Attachment, type RoomAdmission, type RealtimeTicket } from "./room-policy.js";
 
 export type RealtimeRoomPort = {
@@ -175,7 +175,15 @@ export class RestaurantRealtime extends DurableObject<RoomEnvironment> implement
       const control = parseControl(message, attachment.lastAck, attachment.lastSent);
       if (!control) this.close(socket, 1008);
       else if (control.type === "ack") { attachment.lastAck = control.sequence; socket.serializeAttachment(attachment); }
-      else { try { socket.send('{"version":1,"type":"pong"}'); } catch { this.close(socket, 1013); } }
+      else {
+        const budget = consumePingBudget(attachment.pingBudget, this.now());
+        if (!budget) this.close(socket, 1013);
+        else {
+          attachment.pingBudget = budget;
+          socket.serializeAttachment(attachment);
+          try { socket.send('{"version":1,"type":"pong"}'); } catch { this.close(socket, 1013); }
+        }
+      }
     }
     await this.cleanup();
   }

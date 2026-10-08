@@ -3,7 +3,8 @@ import type { RealtimeAck } from "../../modules/realtime/contracts.js";
 
 export type RoomAdmission = { environment: "preview" | "production"; origin: string; grant: RealtimeGrant };
 export type RealtimeTicket = { ticket: string; restaurantId: string; expiresAt: number };
-export type Attachment = { version: 1; admission: RoomAdmission; expiresAt: number; lastSent: number; lastAck: number };
+export type PingBudget = { tokens: number; refilledAt: number };
+export type Attachment = { version: 1; admission: RoomAdmission; expiresAt: number; lastSent: number; lastAck: number; pingBudget?: PingBudget };
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const validId = (value: unknown): value is string => typeof value === "string" && uuid.test(value);
 const integer = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
@@ -33,10 +34,23 @@ export function parseAdmission(value: unknown): RoomAdmission | null {
   return value as RoomAdmission;
 }
 export function parseAttachment(value: unknown): Attachment | null {
-  if (!record(value) || !exact(value, ["version", "admission", "expiresAt", "lastSent", "lastAck"]) ||
+  if (!record(value) || !exact(value, ["version", "admission", "expiresAt", "lastSent", "lastAck", ...(Object.hasOwn(value, "pingBudget") ? ["pingBudget"] : [])]) ||
     value.version !== 1 || !parseAdmission(value.admission) || !integer(value.expiresAt) ||
-    !integer(value.lastSent) || !integer(value.lastAck) || value.lastAck > value.lastSent) return null;
+    !integer(value.lastSent) || !integer(value.lastAck) || value.lastAck > value.lastSent ||
+    (Object.hasOwn(value, "pingBudget") && !validPingBudget(value.pingBudget))) return null;
   return value as Attachment;
+}
+function validPingBudget(value: unknown): value is PingBudget {
+  return record(value) && exact(value, ["tokens", "refilledAt"]) && integer(value.tokens) && value.tokens <= 3 && integer(value.refilledAt);
+}
+// Application-level heartbeat only. ACKs already require an advancing server sequence.
+// Carry this in the platform attachment, not volatile object memory.
+export function consumePingBudget(previous: PingBudget | undefined, now: number): PingBudget | null {
+  if (!integer(now) || (previous !== undefined && !validPingBudget(previous))) return null;
+  if (!previous) return { tokens: 2, refilledAt: now };
+  const refills = Math.max(0, Math.floor((now - previous.refilledAt) / 10_000));
+  const tokens = Math.min(3, previous.tokens + refills);
+  return tokens > 0 ? { tokens: tokens - 1, refilledAt: previous.refilledAt + refills * 10_000 } : null;
 }
 export function leaseExpiry(grant: RealtimeGrant, now: number): number {
   return Math.min(now + 300_000, grant.mode === "owner" ? grant.sessionExpiresAt : Infinity);
