@@ -3,6 +3,8 @@ import { setTimeout as wait } from 'node:timers/promises';
 import WebSocket from 'ws';
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// Local sanity only; the server still enforces signed 30s tickets and 5min leases.
+const clockSkewMs = 5000;
 const require = condition => { if (!condition) throw new Error('Production smoke assertion failed'); };
 export function validateProductionInput(input) {
   require(input && typeof input === 'object' && !Array.isArray(input) &&
@@ -44,7 +46,7 @@ export async function openProductionSocket(input, ticket, { Socket = WebSocket }
   const url = socketUrl(input, ticket?.restaurantId);
   const now = Date.now();
   const match = typeof ticket?.ticket === 'string' ? ticket.ticket.match(/^rt1\.[A-Za-z0-9_-]{43}\.([1-9][0-9]{0,15})\.[A-Za-z0-9_-]{43}$/) : null;
-  if (!(match && Number(match[1]) === ticket.expiresAt && Number.isSafeInteger(ticket.expiresAt) && ticket.expiresAt > now && ticket.expiresAt <= now + 30000)) {
+  if (!(match && Number(match[1]) === ticket.expiresAt && Number.isSafeInteger(ticket.expiresAt) && ticket.expiresAt > now && ticket.expiresAt <= now + 30000 + clockSkewMs)) {
     throw Object.assign(new Error('Production socket admission failed'), { diagnostic: { kind: 'ticket' } });
   }
   const socket = new Socket(url, ['vapt.realtime.v1', 'vapt.ticket.' + ticket.ticket], socketOptions(input));
@@ -61,7 +63,7 @@ export async function openProductionSocket(input, ticket, { Socket = WebSocket }
       require(data.byteLength <= 4096); const frame = JSON.parse(data.toString());
       if (frame.type === 'ready') {
         require(!ready && Object.keys(frame).sort().join(',') === 'leaseExpiresAt,type,version' && frame.version === 1 &&
-          Number.isSafeInteger(frame.leaseExpiresAt) && frame.leaseExpiresAt > Date.now() && frame.leaseExpiresAt <= Date.now() + 300000);
+          Number.isSafeInteger(frame.leaseExpiresAt) && frame.leaseExpiresAt > Date.now() && frame.leaseExpiresAt <= Date.now() + 300000 + clockSkewMs);
         ready = true;
       } else {
         require(ready && Object.keys(frame).sort().join(',') === 'entityId,eventId,reason,sequence,topic,version' && frame.version === 1 &&

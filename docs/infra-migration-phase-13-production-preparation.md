@@ -1,5 +1,9 @@
 # Etapa 13 — preparação da API production
 
+## Continuação atual — causa e correção de relógio do cliente, 09/10/2026
+
+Dois ensaios públicos mínimos próprios isolaram a falha: forged/transplant403, upgrade101/protocolo correto, ready válido com300524ms no relógio local (server~0.5s à frente) rejeitado pelo cap exato. Cada ensaio1pedido/cleanupzero12tabelas/rollback automático; API9f1c7e77/frontend28c56520 agora false/mesmos controles. Cliente e operador corrigidos por RED2+1→GREEN: grace local<=5000ms, timer frontend limitado300000/renova5000antes; serverTTL30s/DOlease5min/HMAC/auth/single-use/revogação intactos. Full550API/179frontend,21operator+17guards/15frontendguards/TypeScript/build+verifyambos modos passaram. Builds novos não publicados, sem runtime/API source change. Próximo exactCI e full owner/order smoke com desafios humanos novos; frontend segue false e Etapa13 aberta. Ver runbook de ativação para evidências/hash/limites; sem main/DNS/secrets/recursos/plano/Live.
+
 ## Continuação atual — rollback do primeiro smoke realtime, 09/10/2026
 
 CI APIaaf4ba5/frontend5730e2b success push+PR. Ativação API3fd2b685 com frontend desligado/readback estrito passou; dois desafios humanos/logins/identidade/cookies passaram, mas proof falhou antes de pedidos/conexões. Cleanupzero12tabelas/pool/receivers fechados. Rollback APIefd7a60e confirmado false/CPU1000/seisrates/oito nomes/mesmos recursos/Cron0/StripeTest/R2privado/domínios e frontend28c56520 intocado. Diagnóstico de transporte na rota desligada recebeu503 esperado. Operador agora diferencia fases e erros sanitizados por RED2→GREEN20; nenhuma mudança de segurança/runtime. Reprodução mínima pública de um pedido/grant order ainda pendente; não retomar/ativar frontend sem causa comprovada e smoke completo. Etapa13 aberta, sem main/DNS/novo recurso/secret/plano/Live.

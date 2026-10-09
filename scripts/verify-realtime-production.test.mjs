@@ -112,3 +112,22 @@ test('socket failure reports only numeric handshake status without raw headers o
   await assert.rejects(open(target(),{restaurantId:id(1),expiresAt,ticket:`rt1.${'a'.repeat(43)}.${expiresAt}.${'b'.repeat(43)}`},{Socket}),
     error=>{assert.deepEqual(error.diagnostic,{kind:'http',status:403});assert.doesNotMatch(JSON.stringify(error),/synthetic|cookie/);return true;});
 });
+test('operator tolerates bounded server clock skew without accepting excessive ticket or lease lifetimes', async t => {
+  const open=await feature('openProductionSocket'),now=1700000000000;
+  t.mock.method(Date,'now',()=>now);
+  class Socket extends EventEmitter {
+    readyState=1;
+    constructor(_url,_protocols){super();queueMicrotask(()=>{
+      this.emit('upgrade',{statusCode:101,headers:{'sec-websocket-protocol':'vapt.realtime.v1'}});
+      this.emit('message',Buffer.from(JSON.stringify({version:1,type:'ready',leaseExpiresAt:this.constructor.lease ?? now+305000})));});}
+    close(){this.readyState=3;this.emit('close',1000);}terminate(){this.close();}
+  }
+  const expiresAt=now+35000;
+  const connection=await open(target(),{restaurantId:id(1),expiresAt,ticket:`rt1.${'a'.repeat(43)}.${expiresAt}.${'b'.repeat(43)}`},{Socket});
+  await connection.close();
+  await assert.rejects(open(target(),{restaurantId:id(1),expiresAt:expiresAt+1,ticket:`rt1.${'a'.repeat(43)}.${expiresAt+1}.${'b'.repeat(43)}`},{Socket}));
+  class ExcessiveLease extends Socket {
+    static lease=now+305001;
+  }
+  await assert.rejects(open(target(),{restaurantId:id(1),expiresAt,ticket:`rt1.${'a'.repeat(43)}.${expiresAt}.${'b'.repeat(43)}`},{Socket:ExcessiveLease}));
+});
