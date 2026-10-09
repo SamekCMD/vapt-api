@@ -61,5 +61,8 @@ jobs:
       - name: Validate explicit realtime activation without weakening disabled guards
         run: node --test scripts/verify-realtime-production-config.test.mjs
 
+      - name: Test production-only operator boundaries without remote access
+        run: node --test scripts/verify-realtime-production.test.mjs scripts/realtime-production-fixtures.test.mjs scripts/realtime-production-runner.test.mjs scripts/production-runtime-readback.test.mjs
+
       - name: Bundle realtime production without deploying
         run: npm run build:worker-production-realtime

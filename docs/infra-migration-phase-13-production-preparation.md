@@ -1,5 +1,9 @@
 # Etapa 13 — preparação da API production
 
+## Continuação atual — operador realtime production, 09/10/2026
+
+Operador production-only e driver de fixtures com manifesto imutável/cleanup próprio implementados por RED→GREEN;18 testes de fronteira e17 guards,550 API/22 workerd/auth-retention1/Preview10/TypeScript/dry-bundle passaram. Tela local de CAPTCHA one-shot tem modo realtime explícito; readback por modo/versões exige os mesmos seis rates/CPU1000/recursos/ingress e não enfraquece o checker false. Readback atual confirmou API2f63b310/frontend28c56520 desligados. Sem fixture/ativação/credencial nova, email/pagamento/upload ou main/DNS. Próximo: exactCI, primeiro desafio humano, APItrue/frontendfalse e smoke remoto com outros dois desafios e cleanup. Mocks locais não comprovam execução remota; Etapa13 continua aberta.
+
 ## Continuação atual — comandos explícitos de ativação, 09/10/2026
 
 Preparados guard/config/comandos separados para realtime ligado na API e build/config/artefato isolado no frontend, mantendo os caminhos originais desligados e todos os recursos/CPU/auth/StripeTest. RED→GREEN:17 guards API/15 frontend;550 API/22 workerd/177 frontend/auth-retention1/TypeScript/builds dos dois modos passaram. CI anteriores728aece/d1d29f4 push+PR success; novos heads exigem checks. Nenhum deploy/ativação remota nesta preparação: par2f63b310/28c56520 ainda realtimefalse. Procedimento, hashes, limitações e sequência API-before-frontend em `docs/infra-migration-phase-13-realtime-production-activation.md`; próximo é operador production com CAPTCHA real e fixtures próprias, depois ativação controlada/smoke/cleanup. Sem main/DNS/secrets/recursos/plano/Live ou revisão final da Etapa13.
