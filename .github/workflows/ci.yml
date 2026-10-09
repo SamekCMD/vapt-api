@@ -57,3 +57,9 @@ jobs:
 
       - name: Bundle public production without deploying
         run: npm run build:worker-production-public
+
+      - name: Validate explicit realtime activation without weakening disabled guards
+        run: node --test scripts/verify-realtime-production-config.test.mjs
+
+      - name: Bundle realtime production without deploying
+        run: npm run build:worker-production-realtime

@@ -1,0 +1,29 @@
+# Etapa 13 — ativação guardada de realtime production
+
+## Estado em 09/10/2026
+
+Preparação implementada, **ativação remota ainda não executada**. API `2f63b310-8435-438f-aa41-845732a15940` e frontend `28c56520-dcaf-4aeb-8d24-8258fbd0e124` continuam com realtime desligado. O CI dos commits anteriores API `728aece` e frontend `d1d29f4` passou em push e PR; os commits desta preparação precisam de checks próprios. Nenhuma mudança de main, DNS, recursos, secrets, cobrança, Stripe Live ou leitura pública de R2.
+
+## Caminhos explícitos e rollback
+
+O comando API `npm run deploy:worker-production-realtime` valida `wrangler.worker-production-realtime.jsonc` e publica com keep-vars no Worker existente. A configuração difere da pública desligada **somente** por `REALTIME_ENABLED: "true"`. O novo checker exige esse valor e normaliza apenas essa flag para reaplicar o guard público original inteiro: conta/domínio, CPU1000, HD/R2 production, namespace próprio, migrations não destrutivas, seis limiters, CORS/auth exatos, Stripe Test, sem secrets em vars, Cron ou entradas extras. Os guards privado e público originais continuam rejeitando realtime ligado. Validação estática não confirma ACL remota nem limita a fatura total.
+
+No frontend, `npm run deploy:production-realtime` faz build isolado, verifica o artefato e publica keep-vars em `vapt-web`. Usa `wrangler.production-realtime.jsonc`, o mesmo domínio e `dist-production-realtime`; o build fixa realtime ligado somente por modo explícito, ignorando VITE/arquivos de ambiente não autorizados. API/origins, CAPTCHA, payments sandbox e imagens disabled permanecem. O comando normal `npm run deploy:production` mantém realtime desligado e `dist-production`.
+
+Ambos os builds geram `deployment-proof.json` com versão1, boolean realtime e SHA256 de index+todos os JS. A verificação exige modo e bytes correspondentes; detecta cópia acidental de artefato desligado/stale. Não é assinatura nem proteção contra alguém capaz de alterar código/prova. O arquivo não contém credenciais. Artefato desligado `949df49dba77c42d5b8bc76588b2c721df313cb1f08f22c1f507a1526bde49fa`; ligado `375dc00c982c8bb52236fc65c95d38daba511ff92d9b6e086f4eb013ccb19750`.
+
+Rollback operacional usa os comandos normais de produção (frontend desligado antes da API) e readback do par; não apaga namespace, não roda migration destrutiva, não libera tickets unsigned. Preservar secrets/HD/R2/DO/limites e polling. Histórico de versão só é alternativa após confirmar compatibilidade do par.
+
+## Evidências desta preparação
+
+- RED observado: quatro assertions API por ausência do guard; quatro frontend por flag/config/build/CLI e uma por falta de prova de artefato. O primeiro spawnEPERM do sandbox não foi contado como RED.
+- GREEN:17 testes de guards API (incluindo13 existentes),15 frontend (incluindo10 existentes); configuração API ligada tem comparação exata com a desligada, salvo flag. Rejeitam alargamentos e erros sem refletir valores sensíveis.
+- Suítes completas API550/550, workerd22/22, frontend177/177 e auth-retention1/1 passaram. TypeScript e bundles API dos dois modos passaram,4495.87KiB/gzip767.88. Builds/verify frontend dos dois modos passaram; dry-run dos dois pacotes não publica. CI foi ampliado para testar e empacotar os caminhos ligados, sem deploy automático.
+
+## Próximo gate, antes de ativar o frontend
+
+Preparar operador production separado, com alvo exato `https://api.vapt.app.br`/origin `https://vapt.app.br`, fixtures sintéticas próprias, CAPTCHA real por humano, credenciais/tickets somente em memória e cleanup limitado aos IDs criados. O operador Preview continua Preview-only e não deve ser retargetado; Preview antigo ainda precisa atualização coordenada para usar o envelope assinado.
+
+Sequência: readback estrito do par desligado; ativação explícita da API com frontend ainda desligado; readback esperado realtime ligado mantendo todos os outros controles; ensaio owner/order/isolamento entre restaurantes e pedidos, reconexão, logout/revogação, single-use e rejeição de proof falsa; cleanup e readback. Só então publicar frontend ligado e provar integração por fluxo normal do navegador. Falha de smoke/readback pede rollback para flags desligadas, não relaxamento de autenticação.
+
+Ticket assinado continua sendo pré-admissão ligada à sala; o DO mantém consumo único, grants/revogação, lease/heartbeat/caps. Não declarar WebSocket remoto aprovado, quota global, teto financeiro, cutover, aposentadoria Coolify/Hetzner ou Etapa13 completa apenas por estes testes locais.

@@ -1,5 +1,9 @@
 # Etapa 13 — preparação da API production
 
+## Continuação atual — comandos explícitos de ativação, 09/10/2026
+
+Preparados guard/config/comandos separados para realtime ligado na API e build/config/artefato isolado no frontend, mantendo os caminhos originais desligados e todos os recursos/CPU/auth/StripeTest. RED→GREEN:17 guards API/15 frontend;550 API/22 workerd/177 frontend/auth-retention1/TypeScript/builds dos dois modos passaram. CI anteriores728aece/d1d29f4 push+PR success; novos heads exigem checks. Nenhum deploy/ativação remota nesta preparação: par2f63b310/28c56520 ainda realtimefalse. Procedimento, hashes, limitações e sequência API-before-frontend em `docs/infra-migration-phase-13-realtime-production-activation.md`; próximo é operador production com CAPTCHA real e fixtures próprias, depois ativação controlada/smoke/cleanup. Sem main/DNS/secrets/recursos/plano/Live ou revisão final da Etapa13.
+
 ## Continuação atual — proof de admissão pré-DO, 09/10/2026
 
 HMAC vinculada a sala/origin/env/rawticket/expiry exige autenticidade antes do namespace, sem SQL para tentativas inválidas; raw256bits/single-use/grants/revogação/101 preservados. Cliente e operador leem wrapper assinado, sem downgrade unsigned. RED→GREEN e suites API550/workerd22/frontend177/operator10/TypeScript/builds aprovados. API `2f63b310-8435-438f-aa41-845732a15940` e frontend `28c56520-dcaf-4aeb-8d24-8258fbd0e124` publicados keep-vars a100%; strictpostCPU1000/mesmos recursos/secrets/flags e oito controles públicos/index exato passaram. Realtimefalse nos dois. CI anteriores924274f/c50974d push+PR success, novos heads precisam checks próprios. Sem nova chave/recurso/schema/fixture/main/DNS/billing/Live/plano. Registro e limites em `docs/infra-migration-phase-13-abuse-cost-readiness.md`, incluindo compatibilidade/rollback pareado e preview antigo não redeployado. Próximo gate: ativação guardada e ensaio realtime production, não cost-zero nem cutover.
