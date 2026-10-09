@@ -3,12 +3,13 @@ import { AppError } from "../../lib/errors.js";
 import { isRealtimeEnabled } from "../../modules/realtime/contracts.js";
 import type { WorkerHonoEnv } from "../app.js";
 import { readWorkerBody, workerRateLimit } from "../http.js";
-import { socketTicket, validId } from "../realtime/room-policy.js";
+import { validId } from "../realtime/room-policy.js";
+import { hasIngressKey, signIngressTicket, verifyIngressTicket } from "../realtime/ingress-ticket.js";
 
 const unavailable = () => new AppError(503, "service_unavailable", "Service unavailable");
 const invalid = () => new AppError(400, "invalid_request", "Invalid request");
 const admissionGate: MiddlewareHandler<WorkerHonoEnv> = async (context, next) => {
-  if (!isRealtimeEnabled(context.env.REALTIME_ENABLED) || !context.env.RESTAURANT_REALTIME) throw unavailable();
+  if (!isRealtimeEnabled(context.env.REALTIME_ENABLED) || !context.env.RESTAURANT_REALTIME || !hasIngressKey(context.env.BETTER_AUTH_SECRET)) throw unavailable();
   const origin = context.req.header("Origin");
   let exact = false;
   try { exact = !!origin && new URL(origin).origin === origin && ["https:", "http:"].includes(new URL(origin).protocol); } catch {}
@@ -44,17 +45,27 @@ export function registerWorkerRealtimeRoutes(app: Hono<WorkerHonoEnv>): void {
       });
     } catch { throw unavailable(); }
     context.header("Cache-Control", "no-store");
-    return context.json(ticket);
+    try {
+      return context.json({ ...ticket, ticket: signIngressTicket(ticket, {
+        environment: context.env.ENVIRONMENT, origin: context.req.header("Origin")!, restaurantId: grant.restaurantId,
+      }, context.env.BETTER_AUTH_SECRET, Date.now()) });
+    } catch { throw unavailable(); }
   });
   app.get("/v1/realtime/restaurants/:restaurantId/socket", admissionGate, workerRateLimit("public"), async context => {
     const restaurantId = context.req.param("restaurantId");
     if (!validId(restaurantId) || context.req.header("Upgrade")?.toLowerCase() !== "websocket" ||
       new URL(context.req.url).search !== "") throw invalid();
-    if (!socketTicket(context.req.header("Sec-WebSocket-Protocol"))) throw new AppError(403, "forbidden", "Forbidden");
+    const rawTicket = verifyIngressTicket(context.req.header("Sec-WebSocket-Protocol"), {
+      environment: context.env.ENVIRONMENT, origin: context.req.header("Origin")!, restaurantId: restaurantId.toLowerCase(),
+    }, context.env.BETTER_AUTH_SECRET, Date.now());
+    if (!rawTicket) throw new AppError(403, "forbidden", "Forbidden");
+    const headers = new Headers(context.req.raw.headers);
+    headers.set("Sec-WebSocket-Protocol", `vapt.realtime.v1, vapt.ticket.${rawTicket}`);
+    const admittedRequest = new Request(context.req.raw, { headers });
     try {
       // Return the original 101, not a body/headers reconstruction.
       return await context.env.RESTAURANT_REALTIME!.getByName(restaurantId.toLowerCase())
-        .fetch(context.req.raw as unknown as import("@cloudflare/workers-types").Request) as unknown as Response;
+        .fetch(admittedRequest as unknown as import("@cloudflare/workers-types").Request) as unknown as Response;
     } catch { throw unavailable(); }
   });
 }

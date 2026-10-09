@@ -79,13 +79,15 @@ test('HTTP client preserves separate perimeter/cookie authority and refuses exte
   assert.equal(requests.length,1);
 });
 test('WebSocket sends ticket only in subprotocol, validates ready and auto-acks envelopes', async () => {
+  const expiresAt = Date.now()+30000;
+  const signed = `rt1.${'a'.repeat(43)}.${expiresAt}.${'b'.repeat(43)}`;
   class Socket extends EventEmitter {
     readyState = 1; sent = [];
     constructor(url, protocols, options) {
       super();
       assert.equal(url,'wss://stage11-inert-vapt-api-parallel.autoistloko.workers.dev/v1/realtime/restaurants/11111111-1111-4111-8111-111111111111/socket');
       assert.equal(new URL(url).search,'');
-      assert.deepEqual(protocols,['vapt.realtime.v1','vapt.ticket.'+'a'.repeat(43)]);
+      assert.deepEqual(protocols,['vapt.realtime.v1','vapt.ticket.'+signed]);
       assert.equal(options.headers.Authorization,'Bearer synthetic-bearer-32-characters-long');
       this.protocol = 'vapt.realtime.v1';
       queueMicrotask(()=>{this.emit('upgrade',{statusCode:101,headers:{'sec-websocket-protocol':'vapt.realtime.v1'}}); this.emit('message',Buffer.from(JSON.stringify({version:1,type:'ready',leaseExpiresAt:Date.now()+10000})));});
@@ -94,11 +96,19 @@ test('WebSocket sends ticket only in subprotocol, validates ready and auto-acks 
     close() { this.readyState=3; this.emit('close',1000); }
     terminate() { this.close(); }
   }
-  const connection = await openPreviewSocket(valid(),{restaurantId:'11111111-1111-4111-8111-111111111111',ticket:'a'.repeat(43),expiresAt:Date.now()+30000},{Socket});
+  const connection = await openPreviewSocket(valid(),{restaurantId:'11111111-1111-4111-8111-111111111111',ticket:signed,expiresAt},{Socket});
   connection.socket.emit('message',Buffer.from(JSON.stringify({version:1,eventId:'22222222-2222-4222-8222-222222222222',sequence:1,topic:'orders',entityId:'33333333-3333-4333-8333-333333333333',reason:'created'})));
   assert.equal(connection.frames.length,1);
   assert.deepEqual(JSON.parse(connection.socket.sent[0]),{version:1,type:'ack',sequence:1});
   await connection.close();
+});
+
+test('operator refuses unsigned or mismatched-expiry tickets before creating a socket', async () => {
+  class Socket { constructor() { throw Error('Socket must not be constructed'); } }
+  const expiresAt = Date.now()+30000;
+  for (const ticket of ['a'.repeat(43), `rt1.${'a'.repeat(43)}.${expiresAt+1}.${'b'.repeat(43)}`]) {
+    await assert.rejects(openPreviewSocket(valid(),{restaurantId:'11111111-1111-4111-8111-111111111111',ticket,expiresAt},{Socket}), /Preview assertion failed/);
+  }
 });
 test('runner fails closed and sanitizes external errors while cleaning partial fixtures', async () => {
   let cleaned = false;
@@ -160,8 +170,9 @@ test('bounded two-tenant flow proves filtering, reconnect and old-session revoca
         if (!order || headers.get('X-Vapt-Order-Token')!==order.publicToken) return json({},404);
         grant={owner:tenant,orderId:order.orderId};
       }
-      const token='t'.repeat(42)+String(tickets.size); tickets.set(token,grant);
-      return json({restaurantId:grant.owner.restaurantId,ticket:token,expiresAt:Date.now()+30000});
+      const expiresAt=Date.now()+30000;
+      const token=`rt1.${'t'.repeat(42)+String(tickets.size)}.${expiresAt}.${'b'.repeat(43)}`; tickets.set(token,grant);
+      return json({restaurantId:grant.owner.restaurantId,ticket:token,expiresAt});
     }
     if (path==='/public/orders') {
       const tenant=owners.find(o=>o.slug===body.restaurantSlug);

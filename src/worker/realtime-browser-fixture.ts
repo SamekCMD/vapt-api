@@ -134,6 +134,7 @@ export async function handleBrowserFixture(request: Request, env: Env, context: 
   if (!headers.has("cf-connecting-ip")) headers.set("cf-connecting-ip", "127.0.0.1");
   return app.fetch(new Request(url, { method: request.method, headers, body: request.body, duplex: "half" } as RequestInit), {
     ENVIRONMENT: "preview", REALTIME_ENABLED: "true", CORS_ORIGINS: "http://127.0.0.1:5179,http://localhost:5179",
+    BETTER_AUTH_SECRET: "synthetic-realtime-ingress-secret-32-characters",
     RESTAURANT_REALTIME: env.ROOMS as unknown as DurableObjectNamespace<RestaurantRealtime>,
     PUBLIC_RATE_LIMIT: { async limit() { return { success: true }; } },
   }, context);

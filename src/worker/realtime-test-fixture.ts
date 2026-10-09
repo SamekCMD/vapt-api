@@ -107,6 +107,7 @@ export default {
       url.pathname = url.pathname.replace(/^\/operator[^/]*\//, "/");
       const bindings: WorkerBindings & { PARALLEL_PREVIEW_TOKEN: string } = {
         ENVIRONMENT: env.ENVIRONMENT, CORS_ORIGINS: env.CORS_ORIGINS,
+        BETTER_AUTH_SECRET: "synthetic-realtime-ingress-secret-32-characters",
         PARALLEL_PREVIEW_TOKEN: "synthetic-operator-bearer-32-characters",
         REALTIME_ENABLED: operation === "operator-off" ? "false" : "true",
         RESTAURANT_REALTIME: operation === "operator-unbound" ? undefined : env.ROOMS as unknown as DurableObjectNamespace<RestaurantRealtime>,

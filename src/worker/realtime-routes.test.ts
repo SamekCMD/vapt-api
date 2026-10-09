@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createHmac } from "node:crypto";
 import type { ExecutionContext } from "hono";
 import type { ApiServices } from "../composition/api-services.js";
 import { AppError } from "../lib/errors.js";
@@ -10,6 +11,13 @@ const rest = "11111111-1111-4111-8111-111111111111";
 const order = "22222222-2222-4222-8222-222222222222";
 const origin = "https://app.vapt.test";
 const context = { waitUntil() {}, passThroughOnException() {} } as unknown as ExecutionContext;
+const ingressSecret = "synthetic-realtime-ingress-secret-32-characters";
+// Independent reference, not the production signer/parser.
+function proof(raw = "x".repeat(43), expiresAt = Date.now() + 30_000, restaurantId = rest,
+  environment = "preview", sentOrigin = origin, key = ingressSecret, purpose = "vapt.realtime.ingress.v1") {
+  const mac = createHmac("sha256", key).update(JSON.stringify([purpose, environment, sentOrigin, restaurantId, raw, expiresAt])).digest("base64url");
+  return `rt1.${raw}.${expiresAt}.${mac}`;
+}
 function fixture() {
   let services = 0;
   let rooms = 0;
@@ -29,6 +37,7 @@ function fixture() {
     } } } as unknown as ApiServices;
   });
   const env = { ENVIRONMENT: "preview", REALTIME_ENABLED: "true", CORS_ORIGINS: origin,
+    BETTER_AUTH_SECRET: ingressSecret,
     PUBLIC_RATE_LIMIT: { async limit() { return { success: true }; } },
     RESTAURANT_REALTIME: { getByName(name: string) {
       rooms++; roomNames.push(name);
@@ -103,7 +112,7 @@ test("malformed socket protocols are rejected before resolving any room or initi
   }
 });
 
-test("well-shaped socket pair preserves opaque ticket and original response without initializing services", async () => {
+test("authenticated socket pair forwards only the raw ticket and preserves room response without initializing services", async () => {
   const f = fixture();
   let received: Request | undefined;
   const original = new Response("synthetic room rejection", { status: 403, headers: { "X-Room-Response": "unchanged" } });
@@ -111,13 +120,55 @@ test("well-shaped socket pair preserves opaque ticket and original response with
     assert.equal(name, rest);
     return { async fetch(request: Request) { received = request; return original; } };
   } } } as unknown as WorkerBindings;
-  for (const pair of [`vapt.realtime.v1, vapt.ticket.${"x".repeat(43)}`, `vapt.ticket.${"x".repeat(43)}, vapt.realtime.v1`]) {
+  const signed = proof();
+  for (const pair of [`vapt.realtime.v1, vapt.ticket.${signed}`, `vapt.ticket.${signed}, vapt.realtime.v1`]) {
     const response = await f.app.fetch(new Request(`https://api.vapt.test/v1/realtime/restaurants/${rest}/socket`, {
       headers: { Origin: origin, Upgrade: "websocket", "CF-Connecting-IP": "203.0.113.1", "Sec-WebSocket-Protocol": pair },
     }), env, context);
     assert.equal(response.status, 403);
     assert.equal(response.headers.get("X-Room-Response"), "unchanged");
-    assert.equal(received?.headers.get("Sec-WebSocket-Protocol"), pair);
+    assert.equal(received?.headers.get("Sec-WebSocket-Protocol"), `vapt.realtime.v1, vapt.ticket.${"x".repeat(43)}`);
+  }
+  assert.deepEqual(f.counts(), { services: 0, rooms: 0 });
+});
+
+test("ticket response carries a verifiable room/origin/environment bound ingress signature", async () => {
+  const f = fixture();
+  const result = await (await f.request({ mode: "owner", restaurantId: rest })).json() as { ticket: string; restaurantId: string; expiresAt: number };
+  assert.equal(result.ticket, proof("x".repeat(43), result.expiresAt));
+  assert.equal(result.restaurantId, rest);
+});
+
+test("unsigned, forged, transplanted and expired tickets cannot resolve arbitrary rooms", async () => {
+  const f = fixture();
+  const raw = "x".repeat(43);
+  const current = proof();
+  for (const ticket of [raw, current.replace(/^rt1\./, "rt2."), current.replace(raw, "y".repeat(43)),
+    current.slice(0, -43) + "a".repeat(43), proof(raw, Date.now() + 30_000, order),
+    proof(raw, Date.now() + 30_000, rest, "production"), proof(raw, Date.now() + 30_000, rest, "https://other.vapt.test"),
+    proof(raw, Date.now() + 30_000, rest, "preview", origin, "other-synthetic-credential-32-characters"),
+    proof(raw, Date.now() + 30_000, rest, "preview", origin, ingressSecret, "another-signing-purpose"),
+    proof(raw, Date.now() - 1), proof(raw, Date.now() + 60_000)]) {
+    const response = await f.app.fetch(new Request(`https://api.vapt.test/v1/realtime/restaurants/${rest}/socket`, {
+      headers: { Origin: origin, Upgrade: "websocket", "CF-Connecting-IP": "203.0.113.1", "Sec-WebSocket-Protocol": `vapt.realtime.v1, vapt.ticket.${ticket}` },
+    }), f.env, context);
+    assert.equal(response.status, 403);
+    assert.deepEqual(f.counts(), { services: 0, rooms: 0 }, "invalid ingress authority must not reach SQL or the namespace");
+  }
+  const response = await f.app.fetch(new Request(`https://api.vapt.test/v1/realtime/restaurants/${order}/socket`, {
+    headers: { Origin: origin, Upgrade: "websocket", "CF-Connecting-IP": "203.0.113.1", "Sec-WebSocket-Protocol": `vapt.realtime.v1, vapt.ticket.${current}` },
+  }), f.env, context);
+  assert.equal(response.status, 403);
+  assert.deepEqual(f.counts(), { services: 0, rooms: 0 });
+});
+
+test("missing or short ingress signing key fails closed before ticket services or rooms", async () => {
+  const f = fixture();
+  for (const key of [undefined, "short"]) {
+    assert.equal((await f.request({ mode: "owner", restaurantId: rest }, { env: { BETTER_AUTH_SECRET: key } })).status, 503);
+    assert.equal((await f.app.fetch(new Request(`https://api.vapt.test/v1/realtime/restaurants/${rest}/socket`, {
+      headers: { Origin: origin, Upgrade: "websocket", "CF-Connecting-IP": "203.0.113.1", "Sec-WebSocket-Protocol": `vapt.realtime.v1, vapt.ticket.${proof()}` },
+    }), { ...f.env, BETTER_AUTH_SECRET: key }, context)).status, 503);
   }
   assert.deepEqual(f.counts(), { services: 0, rooms: 0 });
 });

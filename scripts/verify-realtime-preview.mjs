@@ -45,7 +45,9 @@ export function createPreviewClient(input, fetcher = fetch) {
 }
 export async function openPreviewSocket(input, ticket, {Socket=WebSocket}={}) {
   validateInput(input);
-  require(uuid.test(ticket?.restaurantId ?? '') && /^[A-Za-z0-9_-]{43}$/.test(ticket?.ticket ?? '') && ticket.expiresAt>Date.now());
+  const ingress=typeof ticket?.ticket==='string' ? ticket.ticket.match(/^rt1\.[A-Za-z0-9_-]{43}\.([1-9][0-9]{0,15})\.[A-Za-z0-9_-]{43}$/) : null;
+  require(uuid.test(ticket?.restaurantId ?? '') && ingress && Number(ingress[1])===ticket.expiresAt &&
+    Number.isSafeInteger(ticket.expiresAt) && ticket.expiresAt>Date.now() && ticket.expiresAt<=Date.now()+30000);
   const url = new URL(`/v1/realtime/restaurants/${ticket.restaurantId}/socket`,input.baseUrl); url.protocol='wss:';
   const socket = new Socket(url.toString(),['vapt.realtime.v1','vapt.ticket.'+ticket.ticket],{
     headers:{Origin:input.origin,'Cf-Access-Token':input.accessJwt,Authorization:'Bearer '+input.bearer},handshakeTimeout:10000,maxPayload:4096,closeTimeout:1000,
