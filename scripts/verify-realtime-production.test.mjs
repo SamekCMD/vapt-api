@@ -101,3 +101,14 @@ test('negative admission probe counts only real 403 rejection, never successful 
   class Success extends EventEmitter { constructor() { super(); queueMicrotask(() => this.emit('upgrade', { statusCode: 101 })); } terminate() {} }
   assert.equal(await reject(target(), id(1), ['vapt.realtime.v1'], { Socket: Success }), false);
 });
+test('socket failure reports only numeric handshake status without raw headers or body', async () => {
+  const open=await feature('openProductionSocket'),expiresAt=Date.now()+30000;
+  class Socket extends EventEmitter {
+    readyState=1;
+    constructor(){super();queueMicrotask(()=>this.emit('unexpected-response',null,{statusCode:403,headers:{'set-cookie':'synthetic-secret'},resume(){}}));}
+    terminate(){this.readyState=3;this.emit('close',1006);}
+    close(){this.terminate();}
+  }
+  await assert.rejects(open(target(),{restaurantId:id(1),expiresAt,ticket:`rt1.${'a'.repeat(43)}.${expiresAt}.${'b'.repeat(43)}`},{Socket}),
+    error=>{assert.deepEqual(error.diagnostic,{kind:'http',status:403});assert.doesNotMatch(JSON.stringify(error),/synthetic|cookie/);return true;});
+});

@@ -44,12 +44,17 @@ export async function openProductionSocket(input, ticket, { Socket = WebSocket }
   const url = socketUrl(input, ticket?.restaurantId);
   const now = Date.now();
   const match = typeof ticket?.ticket === 'string' ? ticket.ticket.match(/^rt1\.[A-Za-z0-9_-]{43}\.([1-9][0-9]{0,15})\.[A-Za-z0-9_-]{43}$/) : null;
-  require(match && Number(match[1]) === ticket.expiresAt && Number.isSafeInteger(ticket.expiresAt) && ticket.expiresAt > now && ticket.expiresAt <= now + 30000);
+  if (!(match && Number(match[1]) === ticket.expiresAt && Number.isSafeInteger(ticket.expiresAt) && ticket.expiresAt > now && ticket.expiresAt <= now + 30000)) {
+    throw Object.assign(new Error('Production socket admission failed'), { diagnostic: { kind: 'ticket' } });
+  }
   const socket = new Socket(url, ['vapt.realtime.v1', 'vapt.ticket.' + ticket.ticket], socketOptions(input));
-  const frames = []; let ready = false, upgraded = false, fault = false, closedCode = null;
-  socket.on('upgrade', response => { upgraded = response.statusCode === 101 && response.headers['sec-websocket-protocol'] === 'vapt.realtime.v1'; });
-  socket.on('error', () => { fault = true; });
-  socket.on('unexpected-response', (_request, response) => { fault = true; response.resume(); socket.terminate(); });
+  const frames = []; let ready = false, upgraded = false, fault = false, closedCode = null, diagnostic = { kind: 'timeout' };
+  socket.on('upgrade', response => { upgraded = response.statusCode === 101 && response.headers['sec-websocket-protocol'] === 'vapt.realtime.v1';
+    if (!upgraded) { fault = true; diagnostic = { kind: 'protocol' }; } });
+  socket.on('error', () => { fault = true; if (diagnostic.kind === 'timeout') diagnostic = { kind: 'network' }; });
+  socket.on('unexpected-response', (_request, response) => { fault = true;
+    diagnostic = Number.isInteger(response.statusCode) && response.statusCode >= 100 && response.statusCode <= 599 ? { kind: 'http', status: response.statusCode } : { kind: 'network' };
+    response.resume(); socket.terminate(); });
   socket.on('close', code => { closedCode = code; });
   socket.on('message', data => {
     try {
@@ -65,7 +70,7 @@ export async function openProductionSocket(input, ticket, { Socket = WebSocket }
           ['created', 'updated', 'cancelled', 'payment_changed', 'check_requested', 'closed', 'transferred'].includes(frame.reason) && frames.length < 128);
         frames.push(frame); socket.send(JSON.stringify({ version: 1, type: 'ack', sequence: frame.sequence }));
       }
-    } catch { fault = true; socket.terminate(); }
+    } catch { fault = true; diagnostic = { kind: 'frame' }; socket.terminate(); }
   });
   const waitFor = async predicate => {
     const deadline = Date.now() + 10000;
@@ -79,7 +84,7 @@ export async function openProductionSocket(input, ticket, { Socket = WebSocket }
     if (closedCode === null) socket.terminate();
   } };
   try { await waitFor(() => ready && upgraded); return connection; }
-  catch { await connection.close(); throw new Error('Production socket admission failed'); }
+  catch { await connection.close(); throw Object.assign(new Error('Production socket admission failed'), { diagnostic }); }
 }
 export async function rejectProductionSocket(input, restaurantId, protocols, { Socket = WebSocket } = {}) {
   const url = socketUrl(input, restaurantId);
@@ -142,12 +147,16 @@ export async function runRealtimeProduction(input, { fetcher = fetch, connect = 
     await ticket({ mode: 'owner', restaurantId: owners[0].restaurantId }, '', null, [401]);
     await ticket({ mode: 'owner', restaurantId: owners[1].restaurantId }, owners[0].cookie, null, [403]);
     const admission = await ticket({ mode: 'owner', restaurantId: owners[0].restaurantId }, owners[0].cookie);
-    phase = 'proof';
+    phase = 'proof-forged';
     const forged = `rt1.${'x'.repeat(43)}.${admission.expiresAt}.${'y'.repeat(43)}`;
     require(await rejectSocket(input, owners[0].restaurantId, ['vapt.realtime.v1', 'vapt.ticket.' + forged]));
+    phase = 'proof-transplant';
     require(await rejectSocket(input, owners[1].restaurantId, ['vapt.realtime.v1', 'vapt.ticket.' + admission.ticket]));
+    phase = 'admission-socket';
     owners[0].connection = await connect(input, admission); sockets.push(owners[0].connection); summary.counts.connections++;
+    phase = 'proof-replay';
     require(await rejectSocket(input, owners[0].restaurantId, ['vapt.realtime.v1', 'vapt.ticket.' + admission.ticket]));
+    phase = 'admission-socket';
     owners[1].connection = await open({ mode: 'owner', restaurantId: owners[1].restaurantId }, owners[1].cookie);
     summary.checks.proof = true; summary.checks.admission = true;
     phase = 'orders';
@@ -219,7 +228,14 @@ export async function runRealtimeProduction(input, { fetcher = fetch, connect = 
     await oldConnection.waitFor(() => oldConnection.closedCode() !== null);
     require(oldConnection.closedCode() === 1008 && oldConnection.frames.length === framesBefore);
     summary.checks.revocation = true; summary.ok = true;
-  } catch { summary.failure = phase; }
+  } catch (error) {
+    summary.failure = phase;
+    const detail = error?.diagnostic;
+    if (phase === 'admission-socket' && ['http','network','timeout','protocol','frame','ticket'].includes(detail?.kind)) {
+      summary.diagnostic = { kind: detail.kind };
+      if (detail.kind === 'http' && Number.isInteger(detail.status) && detail.status >= 100 && detail.status <= 599) summary.diagnostic.status = detail.status;
+    }
+  }
   finally {
     challenge = '';
     for (const connection of sockets) { try { await connection.close(); } catch { summary.ok = false; summary.failure = 'socket-cleanup'; } }

@@ -2,7 +2,9 @@
 
 ## Estado em 09/10/2026
 
-Preparação implementada, **ativação remota ainda não executada**. API `2f63b310-8435-438f-aa41-845732a15940` e frontend `28c56520-dcaf-4aeb-8d24-8258fbd0e124` continuam com realtime desligado. O CI dos commits anteriores API `728aece` e frontend `d1d29f4` passou em push e PR; os commits desta preparação precisam de checks próprios. Nenhuma mudança de main, DNS, recursos, secrets, cobrança, Stripe Live ou leitura pública de R2.
+Operador implementado; **primeira ativação controlada foi revertida após falha de admissão**. API `3fd2b685-02b7-4448-ab22-dff291b359db` ficou ligada com frontend desligado para o smoke. Os dois logins reais/identidade/cookies passaram, mas a fase de proof falhou antes de pedidos ou conexões admitidas. Cleanup confirmou zero resíduos nas12 tabelas e encerrou recursos locais. Rollback guardado publicou API `efd7a60e-68ce-4eda-bed7-bec699423edf`; readback confirmou realtime false, CPU1000, seis rates/oito nomes/mesmos recursos/ingress/Cron0/StripeTest/R2 privado e frontend `28c56520-dcaf-4aeb-8d24-8258fbd0e124` inalterado. CI API `aaf4ba5` e frontend `5730e2b` passaram em push e PR. Nenhuma mudança de main, DNS, recursos, secrets, cobrança, Stripe Live ou leitura pública de R2.
+
+Diagnóstico ainda aberto: o transporte sem credencial à rota desligada recebeu503JSON esperado. A fase agregada não distinguia proof forjada/transplantada/abertura; instrumentação agora separa essas fronteiras e registra somente status numérico ou categoria fixa, nunca ticket/header/body/erro bruto. Nenhuma proteção foi relaxada. Próximo é reprodução mínima via um pedido normal público/grant order, com manifesto próprio/cleanup/rollback, antes de retomar o smoke completo owner/order. Não declarar WebSocket production aprovado nem ativar o frontend.
 
 ## Caminhos explícitos e rollback
 

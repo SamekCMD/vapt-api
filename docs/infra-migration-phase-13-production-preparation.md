@@ -1,5 +1,9 @@
 # Etapa 13 — preparação da API production
 
+## Continuação atual — rollback do primeiro smoke realtime, 09/10/2026
+
+CI APIaaf4ba5/frontend5730e2b success push+PR. Ativação API3fd2b685 com frontend desligado/readback estrito passou; dois desafios humanos/logins/identidade/cookies passaram, mas proof falhou antes de pedidos/conexões. Cleanupzero12tabelas/pool/receivers fechados. Rollback APIefd7a60e confirmado false/CPU1000/seisrates/oito nomes/mesmos recursos/Cron0/StripeTest/R2privado/domínios e frontend28c56520 intocado. Diagnóstico de transporte na rota desligada recebeu503 esperado. Operador agora diferencia fases e erros sanitizados por RED2→GREEN20; nenhuma mudança de segurança/runtime. Reprodução mínima pública de um pedido/grant order ainda pendente; não retomar/ativar frontend sem causa comprovada e smoke completo. Etapa13 aberta, sem main/DNS/novo recurso/secret/plano/Live.
+
 ## Continuação atual — operador realtime production, 09/10/2026
 
 Operador production-only e driver de fixtures com manifesto imutável/cleanup próprio implementados por RED→GREEN;18 testes de fronteira e17 guards,550 API/22 workerd/auth-retention1/Preview10/TypeScript/dry-bundle passaram. Tela local de CAPTCHA one-shot tem modo realtime explícito; readback por modo/versões exige os mesmos seis rates/CPU1000/recursos/ingress e não enfraquece o checker false. Readback atual confirmou API2f63b310/frontend28c56520 desligados. Sem fixture/ativação/credencial nova, email/pagamento/upload ou main/DNS. Próximo: exactCI, primeiro desafio humano, APItrue/frontendfalse e smoke remoto com outros dois desafios e cleanup. Mocks locais não comprovam execução remota; Etapa13 continua aberta.

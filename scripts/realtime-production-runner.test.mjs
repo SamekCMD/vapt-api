@@ -46,6 +46,28 @@ test('malformed fixture results cannot skip cleanup or leak an unhandled excepti
     assert.equal(result.ok,false);assert.equal(result.failure,'fixtures');assert.equal(result.cleaned,true);assert.equal(cleanup,1);
   }
 });
+test('runner identifies exact admission boundary without reflecting tickets or auth data', async () => {
+  const run=await runner(), id=n=>`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
+  const owners=[0,1].map(n=>({userId:id(n+1),restaurantId:id(n+3),itemId:id(n+5),email:`synthetic-${n}@example.invalid`,password:'synthetic-secret'}));
+  for (const expectedFailure of ['proof-forged','proof-transplant','admission-socket','proof-replay']) {
+    let login=0,probes=0,closed=0;
+    const fetcher=async(url,options)=>{
+      const path=new URL(url).pathname,body=options.body?JSON.parse(options.body):null,cookie=options.headers.get('Cookie');
+      if(path==='/api/auth/sign-in/email'){login++;return Response.json({user:{id:owners[login-1].userId}},
+        {headers:{'Set-Cookie':`__Secure-better-auth.session_token=synthetic-${login}; Secure; HttpOnly; SameSite=Lax`}});}
+      if(path==='/auth/me')return Response.json({userId:owners[login-1].userId});
+      if(!cookie)return Response.json({}, {status:401});
+      if(body.restaurantId===owners[1].restaurantId)return Response.json({}, {status:403});
+      const expiresAt=Date.now()+30000;return Response.json({restaurantId:owners[0].restaurantId,expiresAt,ticket:`rt1.${'a'.repeat(43)}.${expiresAt}.${'b'.repeat(43)}`});
+    };
+    const result=await run(input,{fetcher,captchaProvider:async()=>'synthetic-challenge-valid-00000001',
+      fixtures:{async seed(){return owners.map(v=>({...v}));},async cleanup(){return {rows:0,tablesChecked:12};}},
+      rejectSocket:async()=>{probes++;return !(expectedFailure==='proof-forged'&&probes===1 || expectedFailure==='proof-transplant'&&probes===2 || expectedFailure==='proof-replay'&&probes===3);},
+      connect:async()=>{if(expectedFailure==='admission-socket')throw Error('synthetic-secret');return {async close(){closed++;}};}});
+    assert.equal(result.failure,expectedFailure);assert.equal(result.ok,false);assert.equal(result.cleaned,true);
+    assert.equal(closed,expectedFailure==='proof-replay'?1:0);assert.doesNotMatch(JSON.stringify(result),/synthetic|ticket|cookie|secret/);
+  }
+});
 test('two-tenant operator requires signed admission, filtering, snapshot and freshly renewed revocation socket', async () => {
   const run = await runner();
   const id = n => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
