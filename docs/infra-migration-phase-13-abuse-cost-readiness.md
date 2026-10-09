@@ -1,5 +1,15 @@
 # Etapa13 — custo previsível e proteção contra abuso
 
+## Avanço atual — protocolo de socket rejeitado antes da sala, 09/10/2026
+
+A rota Hono resolvia `getByName(UUID)` antes de validar `Sec-WebSocket-Protocol`; a construção da sala cria tabelas SQLite, mesmo quando o DO depois rejeita o pedido. Regressão RED comprovou uma resolução de sala para protocolo ausente. Agora o parser compartilhado rejeita antes do namespace cabeçalho ausente, maior que128 caracteres, versões/protocolos duplicados ou extras e ticket fora do formato base64url43. Rejeição403; UUID/Upgrade/query inválidos continuam400. O DO aplica a mesma validação independentemente, antes de consumir o ticket. Origin/flag/rate ingress, ticket30s e single-use, grants/isolamento, heartbeat/lease/caps/ACK e resposta101 original permanecem.
+
+GREEN: cinco testes reais Hono e cinco de policy; workerd preservou ticket válido após três handshakes malformados, upgrade101/ready e replay403. Suítes completas API543/543 e workerd22/22, TypeScript/publicguard/dry-run passaram; bundle4492.50KiB/gzip767.14. Sem instalação, credencial, recurso, schema ou contrato de cliente novo. CI dos heads anteriores API5a55af9/frontend9fcfd06 passou em push+PR.
+
+Publicado keep-vars somente no Worker API/domínio existentes: `8343b612-bce4-4a6a-b48f-a6ef7d6dd6b1` a100%, substituindo0623effb; frontend916951fb e billing preservados. Readback pós-deploy verificou CPU1000/mesmos8secret names/HD/R2/DO/namespace/ratebindings/Cron0/StripeTest/domínio/API workers.dev+PreviewURLs off/R2 público off. Oito controles públicos HTTP/CORS/index exato passaram, sem fixture ou evento de provedor. REALTIME_ENABLED continua **false**. Nenhuma ativação realtime production ou prova WebSocket remota nesta rodada.
+
+Limite importante: parser é controle **sintático**, não assinatura/autorização anterior ao DO. Um atacante ainda pode fabricar ticket de43 caracteres e UUID bem formado para alcançar uma sala; o ticket será rejeitado pelo storage, mas isso não impede alocação/SQL inicial. O próximo gate exige uma prova de admissão ligada à sala antes da resolução, mantendo grants single-use/revalidação e sem consulta SQL por cada tentativa inválida. Não declarar antiabuso completo, teto de fatura ou realtime pronto só com este patch. Preferir proteção vinculada à admissão já existente a recriar infraestrutura; ativação guardada/ensaio owner-order/isolamento/reconnect/revoke e frontend ainda pendentes.
+
 ## Avanço atual — heartbeat WebSocket limitado, 08/10/2026
 
 Antes da ativação realtime production, o handler aceitava quantidade ilimitada de JSON `ping` em uma conexão admitida. Rate limit HTTP não cobre frames após101; cada ping atravessava cleanup/SQLite. Regressão real em workerd confirmou quarto pong após hibernação, em vez de fechar. Correção restrita ao heartbeat da aplicação: burst3, reposição de um crédito a cada10s, fechamento1013 no excesso; orçamento validado e serializado no attachment, não Map volátil. ACKs continuam condicionados à sequência emitida, sem novo limite que atrapalhe cozinha/caixa. Cliente atual não envia JSON pings; frames ping/pong nativos do protocolo não foram alterados.

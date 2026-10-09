@@ -4,7 +4,7 @@ import type { DurableObjectNamespace, DurableObjectState, Request as PlatformReq
 import { createRealtimeGrantValidator, type RealtimeGrant } from "../../modules/realtime/authorization.js";
 import { parseRealtimeEnvelope, realtimeTopics, type CommittedChange, type RealtimeReady } from "../../modules/realtime/contracts.js";
 import { TicketStore } from "./ticket-store.js";
-import { consumePingBudget, hasCapacity, leaseExpiry, parseAdmission, parseAttachment, parseControl, scope, validId,
+import { consumePingBudget, hasCapacity, leaseExpiry, parseAdmission, parseAttachment, parseControl, scope, socketTicket, validId,
   type Attachment, type RoomAdmission, type RealtimeTicket } from "./room-policy.js";
 
 export type RealtimeRoomPort = {
@@ -98,10 +98,9 @@ export class RestaurantRealtime extends DurableObject<RoomEnvironment> implement
   async fetch(request: PlatformRequest): Promise<PlatformResponse> {
     if (request.method !== "GET") return reply(405);
     if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") return reply(400);
-    const protocols = (request.headers.get("Sec-WebSocket-Protocol") ?? "").split(",").map(value => value.trim());
-    if (protocols.length !== 2 || protocols.filter(value => value === "vapt.realtime.v1").length !== 1) return reply(403);
-    const ticket = protocols.find(value => value.startsWith("vapt.ticket."))?.slice(12);
-    const consumed = ticket ? await this.tickets.consume(ticket, this.now()) : null;
+    const ticket = socketTicket(request.headers.get("Sec-WebSocket-Protocol"));
+    if (!ticket) return reply(403);
+    const consumed = await this.tickets.consume(ticket, this.now());
     const admission = consumed?.admission;
     if (!admission || admission.origin !== request.headers.get("Origin") || admission.environment !== this.env.ENVIRONMENT ||
       !this.belongs(admission.grant.restaurantId)) { await this.cleanup(); return reply(403); }

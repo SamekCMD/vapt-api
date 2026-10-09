@@ -3,7 +3,7 @@ import { AppError } from "../../lib/errors.js";
 import { isRealtimeEnabled } from "../../modules/realtime/contracts.js";
 import type { WorkerHonoEnv } from "../app.js";
 import { readWorkerBody, workerRateLimit } from "../http.js";
-import { validId } from "../realtime/room-policy.js";
+import { socketTicket, validId } from "../realtime/room-policy.js";
 
 const unavailable = () => new AppError(503, "service_unavailable", "Service unavailable");
 const invalid = () => new AppError(400, "invalid_request", "Invalid request");
@@ -50,6 +50,7 @@ export function registerWorkerRealtimeRoutes(app: Hono<WorkerHonoEnv>): void {
     const restaurantId = context.req.param("restaurantId");
     if (!validId(restaurantId) || context.req.header("Upgrade")?.toLowerCase() !== "websocket" ||
       new URL(context.req.url).search !== "") throw invalid();
+    if (!socketTicket(context.req.header("Sec-WebSocket-Protocol"))) throw new AppError(403, "forbidden", "Forbidden");
     try {
       // Return the original 101, not a body/headers reconstruction.
       return await context.env.RESTAURANT_REALTIME!.getByName(restaurantId.toLowerCase())

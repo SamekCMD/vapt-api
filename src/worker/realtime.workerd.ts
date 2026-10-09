@@ -258,6 +258,10 @@ test("authorized 101 traverses Hono, rate limiting, CORS and protected operator 
     const ticket = await admitted.json() as { ticket: string };
     const socketUrl = `https://api.vapt.test/operator/v1/realtime/restaurants/${restaurant}/socket`;
     const upgradeHeaders = { ...headers, Upgrade: "websocket", "Sec-WebSocket-Protocol": `vapt.realtime.v1, vapt.ticket.${ticket.ticket}` };
+    for (const protocol of ["vapt.realtime.v1", "vapt.realtime.v1, vapt.ticket.short",
+      `vapt.realtime.v1, vapt.ticket.${ticket.ticket}, extra`]) {
+      assert.equal((await worker.fetch(socketUrl, { headers: { ...upgradeHeaders, "Sec-WebSocket-Protocol": protocol } })).status, 403);
+    }
     assert.equal((await worker.fetch(socketUrl, { headers: { ...upgradeHeaders, Authorization: "Bearer invalid" } })).status, 401);
     const upgrade = await worker.fetch(socketUrl, { headers: upgradeHeaders });
     assert.equal(upgrade.status, 101);

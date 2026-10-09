@@ -7,6 +7,14 @@ export type PingBudget = { tokens: number; refilledAt: number };
 export type Attachment = { version: 1; admission: RoomAdmission; expiresAt: number; lastSent: number; lastAck: number; pingBudget?: PingBudget };
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const validId = (value: unknown): value is string => typeof value === "string" && uuid.test(value);
+// Syntax gate only: the room still consumes the single-use ticket and validates its grant.
+export function socketTicket(protocolHeader: string | null | undefined): string | null {
+  if (!protocolHeader || protocolHeader.length > 128) return null;
+  const protocols = protocolHeader.split(",").map(value => value.trim());
+  if (protocols.length !== 2 || protocols.filter(value => value === "vapt.realtime.v1").length !== 1) return null;
+  const candidate = protocols.find(value => /^vapt\.ticket\.[A-Za-z0-9_-]{43}$/.test(value));
+  return candidate?.slice(12) ?? null;
+}
 const integer = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 function record(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value) &&

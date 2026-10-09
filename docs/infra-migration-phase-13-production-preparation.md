@@ -1,5 +1,9 @@
 # Etapa 13 — preparação da API production
 
+## Continuação atual — rejeição barata de protocolos de socket, 09/10/2026
+
+Parser compartilhado passou a rejeitar protocolo/ticket malformado antes de resolver o DO na rota Hono; regressão de rooms1→0 RED/GREEN e workerd101/ready/replay preservados. API543/workerd22/TypeScript/publicbundle aprovados, API `8343b612-bce4-4a6a-b48f-a6ef7d6dd6b1` publicada keep-vars a100% no domínio existente; readbackCPU1000/mesmos recursos/secrets/flags e oito controles públicos passaram. Realtime continua false. CI anteriores5a55af9/9fcfd06 push+PR success; novos heads exigem checks próprios. Parser não prova autenticidade: ticket sintaticamente válido+UUID arbitrário ainda pode resolver sala; fechar esse gate antes da ativação production, conforme `docs/infra-migration-phase-13-abuse-cost-readiness.md`. Sem fixture/main/DNS/novo recurso/secret/schema/billing/Live; versões anteriores abaixo históricas.
+
 ## Continuação atual — proteção de heartbeat antes do realtime, 08/10/2026
 
 JSONping limitado com burst3/refill1por10s/orçamento no attachment/close1013 no excesso; ACKs/auth/contratos e attachment legacy preservados. RED→GREEN puro+workerd após hibernação real, API541/workerd22/TypeScript/publicbundle aprovados. Runtime publicado keep-vars em API `0623effb-6550-4b46-9076-56645d16e8cd` a100%, mesmos recursos/secrets/CPU1000/domínio/flags; frontend916951fb intocado e oito controles públicos passaram. REALTIME_ENABLED continua false; não é prova de WebSocket production. Registro/limites/nextgate em `docs/infra-migration-phase-13-abuse-cost-readiness.md`: admissão de sockets inválidos/config de ativação/owner-order/isolamento/reconnect/revoke antes de frontend/cutover. Sem fixture/main/DNS/billing/Live/plano novo; versões anteriores abaixo históricas.

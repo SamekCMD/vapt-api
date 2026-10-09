@@ -32,7 +32,7 @@ function fixture() {
     PUBLIC_RATE_LIMIT: { async limit() { return { success: true }; } },
     RESTAURANT_REALTIME: { getByName(name: string) {
       rooms++; roomNames.push(name);
-      return { async issueTicket(admission: any) {
+      return { async fetch() { return new Response(null, { status: 403 }); }, async issueTicket(admission: any) {
         assert.equal(admission.grant.restaurantId, rest);
         assert.equal(admission.origin, origin);
         assert.equal(admission.environment, "preview");
@@ -85,4 +85,39 @@ test("owner/session and public order token admission use authoritative scope and
   assert.equal(publicAdmission.status, 200);
   assert.equal(f.admitted.at(-1).token, "synthetic-public-token");
   assert.deepEqual(f.roomNames, [rest, rest]);
+});
+
+test("malformed socket protocols are rejected before resolving any room or initializing SQL services", async () => {
+  const f = fixture();
+  const token = "x".repeat(43);
+  for (const protocol of [undefined, "", "vapt.realtime.v1", `vapt.ticket.${token}`,
+    `vapt.realtime.v2, vapt.ticket.${token}`, "vapt.realtime.v1, vapt.realtime.v1",
+    `vapt.realtime.v1, vapt.ticket.${token}, extra`, `vapt.realtime.v1, vapt.ticket.${token}, vapt.ticket.${token}`,
+    "vapt.realtime.v1, vapt.ticket.short", `vapt.realtime.v1, vapt.ticket.${"x".repeat(44)}`,
+    `vapt.realtime.v1, vapt.ticket.${"!".repeat(43)}`, `vapt.realtime.v1,${" ".repeat(100)}vapt.ticket.${token}`]) {
+    const headers = new Headers({ Origin: origin, Upgrade: "websocket", "CF-Connecting-IP": "203.0.113.1" });
+    if (protocol !== undefined) headers.set("Sec-WebSocket-Protocol", protocol);
+    const response = await f.app.fetch(new Request(`https://api.vapt.test/v1/realtime/restaurants/${rest}/socket`, { headers }), f.env, context);
+    assert.equal(response.status, 403);
+    assert.deepEqual(f.counts(), { services: 0, rooms: 0 }, "malformed handshakes must not allocate a room");
+  }
+});
+
+test("well-shaped socket pair preserves opaque ticket and original response without initializing services", async () => {
+  const f = fixture();
+  let received: Request | undefined;
+  const original = new Response("synthetic room rejection", { status: 403, headers: { "X-Room-Response": "unchanged" } });
+  const env = { ...f.env, RESTAURANT_REALTIME: { getByName(name: string) {
+    assert.equal(name, rest);
+    return { async fetch(request: Request) { received = request; return original; } };
+  } } } as unknown as WorkerBindings;
+  for (const pair of [`vapt.realtime.v1, vapt.ticket.${"x".repeat(43)}`, `vapt.ticket.${"x".repeat(43)}, vapt.realtime.v1`]) {
+    const response = await f.app.fetch(new Request(`https://api.vapt.test/v1/realtime/restaurants/${rest}/socket`, {
+      headers: { Origin: origin, Upgrade: "websocket", "CF-Connecting-IP": "203.0.113.1", "Sec-WebSocket-Protocol": pair },
+    }), env, context);
+    assert.equal(response.status, 403);
+    assert.equal(response.headers.get("X-Room-Response"), "unchanged");
+    assert.equal(received?.headers.get("Sec-WebSocket-Protocol"), pair);
+  }
+  assert.deepEqual(f.counts(), { services: 0, rooms: 0 });
 });
