@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test
+        run: npm test
+
+      - name: Test Worker in workerd
+        run: npm run test:worker
+
+      - name: Test auth invocation dependency retention
+        run: npm run test:auth-retention
+
+      - name: Build
+        run: npm run build
+
+      - name: Bundle Worker without deploying
+        run: npm run build:worker
+
+      - name: Validate isolated production preparation
+        run: |
+          node --test scripts/verify-production-preparation-config.test.mjs
+          node scripts/verify-production-preparation-config.mjs wrangler.worker-production.jsonc
+
+      - name: Bundle production preparation without deploying
+        run: npx --no-install wrangler deploy --dry-run --config wrangler.worker-production.jsonc
+
+      - name: Validate authorized public production configuration
+        run: node --test scripts/verify-public-production-config.test.mjs
+
+      - name: Bundle public production without deploying
+        run: npm run build:worker-production-public
+
+      - name: Validate explicit realtime activation without weakening disabled guards
+        run: node --test scripts/verify-realtime-production-config.test.mjs
+
+      - name: Test production-only operator boundaries without remote access
+        run: node --test scripts/verify-realtime-production.test.mjs scripts/realtime-production-fixtures.test.mjs scripts/realtime-production-runner.test.mjs scripts/production-runtime-readback.test.mjs
+
+      - name: Bundle realtime production without deploying
+        run: npm run build:worker-production-realtime

@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { createHmac } from "node:crypto";
 import test from "node:test";
 
 import Fastify from "fastify";
@@ -9,6 +8,7 @@ import { AppError } from "../../lib/errors.js";
 import type { OwnershipLookup } from "../../lib/permissions.js";
 import { registerAuthDecorator } from "../../plugins/auth.js";
 import { registerErrorHandler } from "../../plugins/error-handler.js";
+import type { SessionResolver } from "../auth/session-resolver.js";
 import { PaymentTransactionConflictError, type PaymentTransactionRecord } from "./repository.js";
 import { createManualPaymentRoutes } from "./routes.js";
 import { manualPaymentBodySchema } from "./schemas.js";
@@ -24,42 +24,35 @@ const validConfig: AppConfig = {
   host: "127.0.0.1",
   corsOrigins: ["http://localhost:5173"],
   logLevel: "silent",
-  n8n: {
-    baseUrl: new URL("https://n8n.example.com"),
-    timeoutMs: 5000,
-    secrets: {
-      app: "app-secret",
-      admin: "admin-secret",
-    },
+  frontendUrl: new URL("https://app.vapt.test"),
+  stripe: {
+    secretKey: "sk_test_vapt",
+    webhookSecret: "whsec_test",
+    webhookToleranceSeconds: 300,
+    environment: "test",
+    portalConfigurationId: "bpc_vapt",
+    prices: { starter: "price_starter", pro: "price_pro", business: "price_business" },
   },
-  webhooks: {
-    stripe: {
-      signingSecret: "whsec_test",
-      toleranceSeconds: 300,
+  security: { publicOrderTokenSecret: "public-order-token-secret" },
+  betterAuth: {
+    secret: "better-auth-secret-at-least-32-characters",
+    url: new URL("https://api.vapt.test"),
+    trustedOrigins: ["https://app.vapt.test"],
+    databaseUrl: "postgresql://vapt:password@db.vapt.test/vapt",
+    turnstileSecretKey: "turnstile-secret-key",
+    email: {
+      resendApiKey: "re_test_key",
+      from: "Vapt <noreply@vapt.test>",
+      verifyAccountTemplate: "verify-account-template",
+      resetPasswordTemplate: "reset-password-template",
     },
-  },
-  supabase: {
-    url: new URL("https://supabase.example.com"),
-    serviceRoleKey: "service-role-key",
-    jwtSecret: "jwt-secret",
   },
 };
 
-function createToken(payload: Record<string, unknown>): string {
-  const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
-  const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
-  const signature = createHmac("sha256", validConfig.supabase.jwtSecret)
-    .update(`${header}.${body}`)
-    .digest("base64url");
-  return `${header}.${body}.${signature}`;
-}
-
-const ownerToken = createToken({
-  sub: "user-1",
-  email: "owner@example.com",
-  role: "authenticated",
-  exp: Math.floor(Date.now() / 1000) + 3600,
-});
+const testSessionResolver: SessionResolver = async (headers) =>
+  String(headers.cookie ?? "").includes("better-auth.session_token=valid")
+    ? { userId: "user-1", email: "owner@example.com", role: "authenticated" }
+    : null;
 
 function paidTransaction(overrides: Partial<PaymentTransactionRecord> = {}): PaymentTransactionRecord {
   return {
@@ -91,7 +84,7 @@ function order(overrides: Record<string, unknown> = {}) {
   return {
     id: ORDER_ID,
     restaurantId: RESTAURANT_ID,
-    displayId: 42,
+    displayId: "42",
     totalPrice: "42.50",
     status: "ready",
     paymentStatus: null,
@@ -303,7 +296,7 @@ test("manual payment route requires authentication and a bounded idempotency key
     },
   };
   const app = Fastify({ logger: false });
-  registerAuthDecorator(app);
+  registerAuthDecorator(app, testSessionResolver);
   registerErrorHandler(app);
   await createManualPaymentRoutes(app, validConfig, fakeService);
 
@@ -319,7 +312,7 @@ test("manual payment route requires authentication and a bounded idempotency key
     method: "POST",
     url: `/orders/${ORDER_ID}/payments/manual-confirmation`,
     headers: {
-      authorization: `Bearer ${ownerToken}`,
+      cookie: "better-auth.session_token=valid",
       "idempotency-key": "manual-payment-1",
     },
     payload: { paymentMethod: "cash", amount: "0.01" },
@@ -339,7 +332,7 @@ test("manual payment route passes only authenticated identity and allowed fields
     },
   };
   const app = Fastify({ logger: false });
-  registerAuthDecorator(app);
+  registerAuthDecorator(app, testSessionResolver);
   registerErrorHandler(app);
   await createManualPaymentRoutes(app, validConfig, fakeService);
 
@@ -347,7 +340,7 @@ test("manual payment route passes only authenticated identity and allowed fields
     method: "POST",
     url: `/orders/${ORDER_ID}/payments/manual-confirmation`,
     headers: {
-      authorization: `Bearer ${ownerToken}`,
+      cookie: "better-auth.session_token=valid",
       "idempotency-key": "manual-payment-1",
     },
     payload: { paymentMethod: "external_pix" },

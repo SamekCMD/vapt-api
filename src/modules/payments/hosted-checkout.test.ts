@@ -15,13 +15,8 @@ const validConfig = {
   nodeEnv: "test",
   port: 3000,
   host: "127.0.0.1",
-  corsOrigins: ["http://localhost:5173", "https://vapt-preview.vercel.app"],
+  corsOrigins: ["http://localhost:5173", "https://infra-foundation-vapt-web.autoistloko.workers.dev"],
   logLevel: "silent",
-  n8n: {
-    baseUrl: new URL("https://n8n.example.com"),
-    timeoutMs: 5000,
-    secrets: { app: "app", admin: "admin" },
-  },
   frontendUrl: new URL("https://vapt.example.com"),
   apiPublicUrl: new URL("https://api.vapt.example.com"),
   mercadoPago: {
@@ -33,11 +28,27 @@ const validConfig = {
     credentialKeyId: "env-v1",
     environment: "sandbox",
   },
-  webhooks: { stripe: { signingSecret: "whsec_test", toleranceSeconds: 300 } },
-  supabase: {
-    url: new URL("https://supabase.example.com"),
-    serviceRoleKey: "service-role-key",
-    jwtSecret: "jwt-secret",
+  stripe: {
+    secretKey: "sk_test_vapt",
+    webhookSecret: "whsec_test",
+    webhookToleranceSeconds: 300,
+    environment: "test",
+    portalConfigurationId: "bpc_vapt",
+    prices: { starter: "price_starter", pro: "price_pro", business: "price_business" },
+  },
+  security: { publicOrderTokenSecret: "public-order-token-secret" },
+  betterAuth: {
+    secret: "better-auth-secret-at-least-32-characters",
+    url: new URL("https://api.vapt.test"),
+    trustedOrigins: ["https://app.vapt.test"],
+    databaseUrl: "postgresql://vapt:password@db.vapt.test/vapt",
+    turnstileSecretKey: "turnstile-secret-key",
+    email: {
+      resendApiKey: "re_test_key",
+      from: "Vapt <noreply@vapt.test>",
+      verifyAccountTemplate: "verify-account-template",
+      resetPasswordTemplate: "reset-password-template",
+    },
   },
 } satisfies AppConfig;
 
@@ -676,20 +687,20 @@ test("Mercado Pago return URLs use the API relay and preserve an allowed fronten
   assert.equal(typeof routesModule.createMercadoPagoReturnUrls, "function");
   const urls = routesModule.createMercadoPagoReturnUrls!(
     validConfig,
-    "https://vapt-preview.vercel.app",
+    "https://infra-foundation-vapt-web.autoistloko.workers.dev",
   );
 
   assert.equal(
     urls.success.toString(),
-    "https://api.vapt.example.com/payments/mercado-pago/return?result=success&return_origin=https%3A%2F%2Fvapt-preview.vercel.app",
+    "https://api.vapt.example.com/payments/mercado-pago/return?result=success&return_origin=https%3A%2F%2Finfra-foundation-vapt-web.autoistloko.workers.dev",
   );
   assert.equal(
     urls.pending.toString(),
-    "https://api.vapt.example.com/payments/mercado-pago/return?result=pending&return_origin=https%3A%2F%2Fvapt-preview.vercel.app",
+    "https://api.vapt.example.com/payments/mercado-pago/return?result=pending&return_origin=https%3A%2F%2Finfra-foundation-vapt-web.autoistloko.workers.dev",
   );
   assert.equal(
     urls.failure.toString(),
-    "https://api.vapt.example.com/payments/mercado-pago/return?result=failure&return_origin=https%3A%2F%2Fvapt-preview.vercel.app",
+    "https://api.vapt.example.com/payments/mercado-pago/return?result=failure&return_origin=https%3A%2F%2Finfra-foundation-vapt-web.autoistloko.workers.dev",
   );
 });
 
@@ -707,12 +718,12 @@ test("Mercado Pago return relay redirects to the allowed checkout origin and pre
 
   const response = await app.inject({
     method: "GET",
-    url: "/payments/mercado-pago/return?result=success&return_origin=https%3A%2F%2Fvapt-preview.vercel.app&payment_id=123&status=approved&external_reference=transaction-456&preference_id=preference-789&unsafe_secret=hidden",
+    url: "/payments/mercado-pago/return?result=success&return_origin=https%3A%2F%2Finfra-foundation-vapt-web.autoistloko.workers.dev&payment_id=123&status=approved&external_reference=transaction-456&preference_id=preference-789&unsafe_secret=hidden",
   });
 
   assert.equal(response.statusCode, 302);
   const location = new URL(response.headers.location!);
-  assert.equal(location.origin, "https://vapt-preview.vercel.app");
+  assert.equal(location.origin, "https://infra-foundation-vapt-web.autoistloko.workers.dev");
   assert.equal(location.pathname, "/payment/return");
   assert.equal(location.searchParams.get("result"), "success");
   assert.equal(location.searchParams.get("payment_id"), "123");

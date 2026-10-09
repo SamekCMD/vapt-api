@@ -1,13 +1,28 @@
 import type { FastifyInstance } from "fastify";
 
-import type { AppConfig } from "../../lib/config.js";
 import { validateWithSchema } from "../../lib/validation.js";
 import { requireAuth } from "../../plugins/auth.js";
-import { createN8nClient } from "../n8n/client.js";
+import type { FeedbackRepository } from "../feedback/repository.js";
+import { requireOrderToken } from "../feedback/routes.js";
+import { createFeedbackService } from "../feedback/service.js";
+import type { OrderService } from "../orders/service.js";
+import type { PushSubscriptionRepository } from "./repository.js";
 import { orderFeedbackBodySchema, pushSubscriptionBodySchema } from "./schemas.js";
 
-export async function registerIngestRoutes(app: FastifyInstance, config: AppConfig) {
-  const client = createN8nClient(config);
+export type IngestRouteDependencies = {
+  pushSubscriptions: PushSubscriptionRepository;
+  feedbackRepository: FeedbackRepository;
+  publicOrders: Pick<OrderService, "getPublicOrder">;
+};
+
+export async function registerIngestRoutes(
+  app: FastifyInstance,
+  dependencies: IngestRouteDependencies,
+) {
+  const feedback = createFeedbackService(
+    dependencies.feedbackRepository,
+    dependencies.publicOrders,
+  );
 
   app.post(
     "/ingest/order-feedback",
@@ -18,8 +33,12 @@ export async function registerIngestRoutes(app: FastifyInstance, config: AppConf
     },
     async (request) => {
       const body = validateWithSchema(orderFeedbackBodySchema, request.body);
-      const response = await client.call("ingest.orderFeedback", { body });
-      return response.data;
+      const token = requireOrderToken(request.headers);
+      return feedback.submitOrderFeedback(body.order_id, token, {
+        rating: body.rating,
+        reasons: body.reasons,
+        comment: body.comment,
+      });
     },
   );
 
@@ -29,12 +48,15 @@ export async function registerIngestRoutes(app: FastifyInstance, config: AppConf
       config: {
         rateLimitGroup: "billing",
       },
-      preHandler: async (request, reply) => requireAuth(request, reply, config),
+      preHandler: async (request, reply) =>
+        requireAuth(request, reply, app.authSessionResolver),
     },
     async (request) => {
       const body = validateWithSchema(pushSubscriptionBodySchema, request.body);
-      const response = await client.call("ingest.pushSubscription", { body });
-      return response.data;
+      return dependencies.pushSubscriptions.upsertOwnedSubscription(
+        request.auth!.userId,
+        body,
+      );
     },
   );
 }

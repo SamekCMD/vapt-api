@@ -1,11 +1,34 @@
+import { randomUUID } from "node:crypto";
 import Fastify from "fastify";
+import { Pool } from "pg";
 
+import { createApiServices } from "./composition/api-services.js";
 import type { AppConfig } from "./lib/config.js";
-import { createSupabaseAdminClient } from "./lib/supabase.js";
+import type { Database } from "./lib/database.js";
+import {
+  createRestaurantAccessChecker,
+} from "./lib/permissions.js";
 import { registerStripeBillingRoutes } from "./modules/billing/stripe/routes.js";
+import { createStripeBillingRepository } from "./modules/billing/stripe/repository.js";
+import type { StripeGateway } from "./modules/billing/stripe/types.js";
+import { createStripeWebhookRepository } from "./modules/billing/stripe/webhook-repository.js";
+import { createStripeWebhookService } from "./modules/billing/stripe/webhook-service.js";
+import { registerStripeWebhookRoutes } from "./modules/billing/stripe/webhook-routes.js";
+import { createCatalogRepository } from "./modules/catalog/repository.js";
+import { registerCatalogRoutes } from "./modules/catalog/routes.js";
+import { registerBetterAuthHandler } from "./modules/auth/fastify-handler.js";
 import { registerAuthRoutes } from "./modules/auth/routes.js";
+import type { AuthRuntime, BackgroundTaskRunner } from "./modules/auth/runtime.js";
+import { createSessionResolver } from "./modules/auth/session-resolver.js";
 import { registerIngestRoutes } from "./modules/ingest/routes.js";
+import { createPushSubscriptionRepository } from "./modules/ingest/repository.js";
+import { createFeedbackRepository } from "./modules/feedback/repository.js";
+import { registerFeedbackRoutes } from "./modules/feedback/routes.js";
 import { registerHealthRoutes } from "./modules/health/routes.js";
+import { createKitchenRepository } from "./modules/kitchen/repository.js";
+import { registerKitchenRoutes } from "./modules/kitchen/routes.js";
+import { createMenuRepository } from "./modules/menu/repository.js";
+import { registerMenuRoutes } from "./modules/menu/routes.js";
 import type { PaymentProvider } from "./modules/payments/provider.js";
 import { createManualPaymentProvider } from "./modules/payments/providers/manual.js";
 import {
@@ -37,27 +60,82 @@ import {
 import { createOrderRepository } from "./modules/orders/repository.js";
 import { registerOrderRoutes } from "./modules/orders/routes.js";
 import { createOrderService } from "./modules/orders/service.js";
-import { registerWebhookRoutes } from "./modules/webhooks/routes.js";
+import { createOverviewRepository } from "./modules/overview/repository.js";
+import { registerOverviewRoutes } from "./modules/overview/routes.js";
+import { createRestaurantRepository } from "./modules/restaurants/repository.js";
+import { registerRestaurantRoutes } from "./modules/restaurants/routes.js";
+import { createMenuItemExists } from "./modules/storage/repository.js";
+import { createR2MenuImageGateway } from "./modules/storage/r2.js";
+import { registerMenuImageRoutes } from "./modules/storage/routes.js";
+import { createMenuImageService } from "./modules/storage/service.js";
+import { createTableSessionRepository } from "./modules/table-sessions/repository.js";
+import { registerTableSessionRoutes } from "./modules/table-sessions/routes.js";
 import { registerCors } from "./plugins/cors.js";
 import { registerAuthDecorator } from "./plugins/auth.js";
 import { registerErrorHandler } from "./plugins/error-handler.js";
 import { createLoggerConfig } from "./plugins/logger.js";
-import { registerRateLimit } from "./plugins/rate-limit.js";
+import { registerRateLimit, type RateLimitBackend } from "./plugins/rate-limit.js";
 import { registerRawBody } from "./plugins/raw-body.js";
 
-export async function buildApp(config: AppConfig) {
+export type BuildAppDependencies = {
+  authRuntime?: AuthRuntime;
+  database?: Database;
+  stripeGateway?: StripeGateway;
+  rateLimitBackend?: RateLimitBackend;
+  runInBackground?: BackgroundTaskRunner;
+  startPaymentReconciliation?: boolean;
+  workerId?: string;
+};
+
+export async function buildApp(
+  config: AppConfig,
+  dependencies: BuildAppDependencies = {},
+) {
   const app = Fastify({
     logger: createLoggerConfig(config),
     trustProxy: true,
   });
 
-  registerAuthDecorator(app);
-  registerErrorHandler(app);
-  registerRateLimit(app);
-
+  const ownedDatabase = dependencies.database
+    ? null
+    : new Pool({ connectionString: config.betterAuth.databaseUrl });
+  const database = dependencies.database ?? ownedDatabase!;
   const paymentProviders: PaymentProvider[] = [createManualPaymentProvider()];
+  const services = createApiServices(config, {
+    database,
+    authRuntime: dependencies.authRuntime,
+    stripeGateway: dependencies.stripeGateway,
+    paymentProviders,
+    runInBackground: dependencies.runInBackground,
+    workerId: dependencies.workerId ?? `payment-effects-${process.pid}-${randomUUID()}`,
+    onError: (error) => app.log.error({ err: error }, "Payment effect reconciliation failed"),
+    onBackgroundError: (error) => app.log.error({ err: error }, "Better Auth background task failed"),
+    onInfo: (fields, message) => app.log.info(fields, message),
+  });
+  const authRuntime = services.authRuntime;
+  const stripeGateway = services.stripeGateway;
+  const sessionResolver = createSessionResolver(authRuntime);
+
+  registerAuthDecorator(app, sessionResolver);
+  app.addHook("onClose", async () => {
+    try {
+      await authRuntime.close();
+    } finally {
+      await ownedDatabase?.end();
+    }
+  });
+  registerErrorHandler(app);
+  registerRateLimit(app, { backend: dependencies.rateLimitBackend });
+
+  const ownershipLookup = services.ownershipLookup;
+  const orderRepository = createOrderRepository(database);
+  const publicOrderService = createOrderService(
+    orderRepository,
+    config.security.publicOrderTokenSecret,
+  );
+
   const mercadoPagoOAuth = config.mercadoPago && config.frontendUrl && config.apiPublicUrl
-    ? createMercadoPagoOAuthServiceFromConfig(config)
+    ? createMercadoPagoOAuthServiceFromConfig(config, database, ownershipLookup)
     : null;
   const mercadoPagoPaymentClient = config.mercadoPago
     ? createMercadoPagoPaymentClient()
@@ -79,14 +157,52 @@ export async function buildApp(config: AppConfig) {
       notificationUrl: new URL("/webhooks/payments/mercado-pago", config.apiPublicUrl),
     }));
   }
-  const paymentModule = registerPaymentModule(app, config, paymentProviders);
+  const paymentModule = registerPaymentModule(app, config, database, paymentProviders, {
+    startPaymentReconciliation: dependencies.startPaymentReconciliation,
+    workerId: dependencies.workerId,
+    module: services.payments,
+  });
   await registerRawBody(app);
   await registerCors(app, config);
+  await registerBetterAuthHandler(app, config.betterAuth.url, authRuntime.handler);
   await registerHealthRoutes(app);
-  await registerAuthRoutes(app, config);
-  await registerStripeBillingRoutes(app, config);
-  await registerOrderRoutes(app, config);
-  await createManualPaymentRoutes(app, config);
+  await registerCatalogRoutes(app, createCatalogRepository(database));
+  await registerRestaurantRoutes(app, createRestaurantRepository(database));
+  await registerMenuRoutes(app, createMenuRepository(database), {
+    publicBaseUrl: config.r2?.publicBaseUrl ?? null,
+  });
+  await registerKitchenRoutes(app, createKitchenRepository(database));
+  await registerOverviewRoutes(app, createOverviewRepository(database));
+  await registerTableSessionRoutes(
+    app,
+    createTableSessionRepository(database),
+    publicOrderService,
+  );
+  const feedbackRepository = createFeedbackRepository(database);
+  await registerFeedbackRoutes(app, feedbackRepository, publicOrderService);
+  await registerAuthRoutes(app, config, ownershipLookup);
+  await registerStripeBillingRoutes(
+    app,
+    config,
+    ownershipLookup,
+    createStripeBillingRepository(database),
+    stripeGateway,
+  );
+  await registerOrderRoutes(app, config, orderRepository);
+  if (config.r2) {
+    await registerMenuImageRoutes(
+      app,
+      config,
+      createMenuImageService({
+        assertRestaurantAccess: createRestaurantAccessChecker(ownershipLookup),
+        menuItemExists: createMenuItemExists(database),
+        gateway: createR2MenuImageGateway(config.r2),
+        publicBaseUrl: config.r2.publicBaseUrl,
+        uploadUrlTtlSeconds: config.r2.uploadUrlTtlSeconds,
+      }),
+    );
+  }
+  await createManualPaymentRoutes(app, config, undefined, ownershipLookup);
   if (
     config.mercadoPago &&
     config.frontendUrl &&
@@ -107,14 +223,14 @@ export async function buildApp(config: AppConfig) {
         client: mercadoPagoPaymentClient,
       }),
     );
-    await registerHostedCheckoutRoutes(app, config);
+    await registerHostedCheckoutRoutes(app, config, undefined, orderRepository);
     await registerMercadoPagoDiagnosticsRoutes(
       app,
       config,
       createMercadoPagoPaymentDiagnosticsService({
         orderService: createOrderService(
-          createOrderRepository(createSupabaseAdminClient(config)),
-          config.supabase.jwtSecret,
+          orderRepository,
+          config.security.publicOrderTokenSecret,
         ),
         paymentService: paymentModule.service,
         resolveAccessToken: mercadoPagoAccessTokenResolver,
@@ -135,8 +251,16 @@ export async function buildApp(config: AppConfig) {
     );
   }
   await registerPaymentEffectRoutes(app, config);
-  await registerIngestRoutes(app, config);
-  await registerWebhookRoutes(app, config);
+  await registerIngestRoutes(app, {
+    pushSubscriptions: createPushSubscriptionRepository(database),
+    feedbackRepository,
+    publicOrders: publicOrderService,
+  });
+  await registerStripeWebhookRoutes(app, config, {
+    service: createStripeWebhookService(config.stripe, createStripeWebhookRepository(database), stripeGateway, {
+      logger: { info(fields, message) { app.log.info(fields, message); } },
+    }),
+  });
 
   return app;
 }

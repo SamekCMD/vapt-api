@@ -1,9 +1,8 @@
 import type { FastifyInstance } from "fastify";
 
 import type { AppConfig } from "../../lib/config.js";
-import { createSupabaseAdminClient } from "../../lib/supabase.js";
 import { validateWithSchema } from "../../lib/validation.js";
-import { createOrderRepository, type OrderRepository } from "./repository.js";
+import type { OrderRepository } from "./repository.js";
 import {
   createOrderBodySchema,
   createOrderHeadersSchema,
@@ -15,9 +14,12 @@ import { createOrderService } from "./service.js";
 export async function registerOrderRoutes(
   app: FastifyInstance,
   config: AppConfig,
-  repository: OrderRepository = createOrderRepository(createSupabaseAdminClient(config)),
+  repository: OrderRepository,
 ) {
-  const service = createOrderService(repository, config.supabase.jwtSecret);
+  const service = createOrderService(
+    repository,
+    config.security.publicOrderTokenSecret,
+  );
 
   app.post(
     "/public/orders",

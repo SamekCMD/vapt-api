@@ -1,35 +1,46 @@
 import type { FastifyInstance } from "fastify";
 
 import type { AppConfig } from "../../../lib/config.js";
+import { AppError } from "../../../lib/errors.js";
 import {
-  createSupabaseOwnershipLookup,
   testOwnershipLookup,
   type OwnershipLookup,
 } from "../../../lib/permissions.js";
-import { createSupabaseAdminClient } from "../../../lib/supabase.js";
 import { validateWithSchema } from "../../../lib/validation.js";
 import { requireAuth } from "../../../plugins/auth.js";
-import { createN8nClient } from "../../n8n/client.js";
+import { createStripeClient, createStripeGateway } from "./client.js";
+import type { StripeGateway } from "./types.js";
 import {
-  stripeCancelSubscriptionBodySchema,
-  stripeChangeSubscriptionBodySchema,
   stripeCheckoutBodySchema,
+  stripePortalBodySchema,
   stripeSubscriptionStatusQuerySchema,
 } from "./schemas.js";
 import { createStripeBillingService } from "./service.js";
+import type { StripeBillingStore } from "./repository.js";
 
 export async function registerStripeBillingRoutes(
   app: FastifyInstance,
   config: AppConfig,
   ownershipLookup?: OwnershipLookup,
+  repository?: StripeBillingStore,
+  gateway?: StripeGateway,
 ) {
   const resolvedOwnershipLookup =
     ownershipLookup ??
     (config.nodeEnv === "test"
       ? testOwnershipLookup
-      : createSupabaseOwnershipLookup(createSupabaseAdminClient(config) as never));
-  const client = createN8nClient(config);
-  const service = createStripeBillingService(client, resolvedOwnershipLookup);
+      : (() => {
+          throw new AppError(500, "internal_error", "Ownership lookup is not configured");
+        })());
+  if (!repository) {
+    throw new AppError(500, "internal_error", "Stripe billing repository is not configured");
+  }
+  const service = createStripeBillingService(
+    gateway ?? createStripeGateway(createStripeClient(config.stripe)),
+    resolvedOwnershipLookup,
+    repository,
+    config,
+  );
 
   app.post(
     "/billing/stripe/checkout",
@@ -37,7 +48,8 @@ export async function registerStripeBillingRoutes(
       config: {
         rateLimitGroup: "billing",
       },
-      preHandler: async (request, reply) => requireAuth(request, reply, config),
+      preHandler: async (request, reply) =>
+        requireAuth(request, reply, app.authSessionResolver),
     },
     async (request) => {
       const body = validateWithSchema(stripeCheckoutBodySchema, request.body);
@@ -45,48 +57,25 @@ export async function registerStripeBillingRoutes(
       return service.createCheckout({
         userId: request.auth!.userId,
         restaurantId: body.restaurantId,
-        email: body.email,
+        email: request.auth!.email ?? (() => {
+          throw new AppError(400, "invalid_request", "Authenticated email is required");
+        })(),
         planType: body.planType,
-        priceId: body.priceId,
+        idempotencyKey: typeof request.headers["idempotency-key"] === "string"
+          ? request.headers["idempotency-key"] : "",
       });
     },
   );
 
   app.post(
-    "/billing/stripe/subscription/change",
+    "/billing/stripe/portal",
     {
-      config: {
-        rateLimitGroup: "billing",
-      },
-      preHandler: async (request, reply) => requireAuth(request, reply, config),
+      config: { rateLimitGroup: "billing" },
+      preHandler: async (request, reply) => requireAuth(request, reply, app.authSessionResolver),
     },
     async (request) => {
-      const body = validateWithSchema(stripeChangeSubscriptionBodySchema, request.body);
-
-      return service.changeSubscription({
-        userId: request.auth!.userId,
-        restaurantId: body.restaurantId,
-        targetPlanType: body.targetPlanType,
-        targetPriceId: body.targetPriceId,
-      });
-    },
-  );
-
-  app.post(
-    "/billing/stripe/subscription/cancel",
-    {
-      config: {
-        rateLimitGroup: "billing",
-      },
-      preHandler: async (request, reply) => requireAuth(request, reply, config),
-    },
-    async (request) => {
-      const body = validateWithSchema(stripeCancelSubscriptionBodySchema, request.body);
-
-      return service.cancelSubscription({
-        userId: request.auth!.userId,
-        restaurantId: body.restaurantId,
-      });
+      const body = validateWithSchema(stripePortalBodySchema, request.body);
+      return service.createPortal({ userId: request.auth!.userId, restaurantId: body.restaurantId });
     },
   );
 
@@ -96,7 +85,8 @@ export async function registerStripeBillingRoutes(
       config: {
         rateLimitGroup: "billing",
       },
-      preHandler: async (request, reply) => requireAuth(request, reply, config),
+      preHandler: async (request, reply) =>
+        requireAuth(request, reply, app.authSessionResolver),
     },
     async (request) => {
       const query = validateWithSchema(stripeSubscriptionStatusQuerySchema, request.query);

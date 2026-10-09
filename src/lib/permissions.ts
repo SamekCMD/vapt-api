@@ -1,3 +1,6 @@
+import { z } from "zod";
+
+import type { Queryable } from "./database.js";
 import { AppError } from "./errors.js";
 
 export type OwnershipLookup = (input: {
@@ -25,36 +28,26 @@ export function createRestaurantAccessChecker(
 export const testOwnershipLookup: OwnershipLookup = async ({ userId, restaurantId }) =>
   userId === "user-1" && restaurantId === "rest-1";
 
-type OwnershipLookupClient = {
-  from: (table: "restaurants") => {
-    select: (columns: "id") => {
-      eq: (column: "id", value: string) => {
-        eq: (column: "owner_id", value: string) => {
-          maybeSingle: () => Promise<{ data: { id: string } | null; error: { message?: string } | null }>;
-        };
-      };
-    };
-  };
-};
+const uuidSchema = z.string().uuid();
 
-export function createSupabaseOwnershipLookup(client: OwnershipLookupClient): OwnershipLookup {
+export function createOwnershipLookup(database: Queryable): OwnershipLookup {
   return async ({ userId, restaurantId }) => {
-    const result = await client
-      .from("restaurants")
-      .select("id")
-      .eq("id", restaurantId)
-      .eq("owner_id", userId)
-      .maybeSingle();
-
-    if (result.error) {
-      const details = result.error.message?.trim() || "unknown supabase error";
-      throw new AppError(
-        500,
-        "internal_error",
-        `Failed to verify restaurant access: ${details}`,
-      );
+    if (!uuidSchema.safeParse(restaurantId).success || !uuidSchema.safeParse(userId).success) {
+      throw new AppError(400, "invalid_request", "Invalid request");
     }
 
-    return Boolean(result.data);
+    try {
+      const result = await database.query<{ allowed: boolean }>(
+        `select exists (
+          select 1
+          from public.restaurants
+          where id = $1::uuid and owner_id = $2::uuid
+        ) as allowed`,
+        [restaurantId, userId],
+      );
+      return result.rows[0]?.allowed === true;
+    } catch {
+      throw new AppError(500, "internal_error", "Failed to verify restaurant access");
+    }
   };
 }

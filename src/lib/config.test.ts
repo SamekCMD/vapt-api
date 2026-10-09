@@ -1,7 +1,307 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { ConfigError, createConfig } from "./config.js";
+import { ConfigError, createConfig as createAppConfig } from "./config.js";
+
+const validBetterAuthEnv = {
+  BETTER_AUTH_SECRET: "better-auth-secret-at-least-32-characters",
+  BETTER_AUTH_URL: "https://api.vapt.test",
+  BETTER_AUTH_TRUSTED_ORIGINS: "https://app.vapt.test",
+  DATABASE_URL: "postgresql://vapt:password@db.vapt.test/vapt",
+  TURNSTILE_SECRET_KEY: "turnstile-secret-key",
+  RESEND_API_KEY: "re_test_key",
+  RESEND_TEMPLATE_VERIFY_ACCOUNT: "verify-account-template",
+  RESEND_TEMPLATE_RESET_PASSWORD: "reset-password-template",
+  EMAIL_FROM: "Vapt <noreply@vapt.test>",
+};
+
+const validEnv = {
+  CORS_ORIGINS: "http://localhost:5173",
+  STRIPE_SECRET_KEY: "sk_test_vapt",
+  STRIPE_WEBHOOK_SECRET: "whsec_vapt",
+  STRIPE_ENVIRONMENT: "test",
+  STRIPE_PORTAL_CONFIGURATION_ID: "bpc_vapt",
+  STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
+  STRIPE_PRICE_STARTER: "price_server_starter",
+  STRIPE_PRICE_PRO: "price_server_pro",
+  STRIPE_PRICE_BUSINESS: "price_server_business",
+  SUPABASE_URL: "https://supabase.example.com",
+  SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
+  PUBLIC_ORDER_TOKEN_SECRET: "public-order-token-secret",
+  ...validBetterAuthEnv,
+};
+
+function createConfig(env: NodeJS.ProcessEnv) {
+  return createAppConfig({
+    ...validBetterAuthEnv,
+    STRIPE_PRICE_STARTER: "price_server_starter",
+    STRIPE_PRICE_PRO: "price_server_pro",
+    STRIPE_PRICE_BUSINESS: "price_server_business",
+    STRIPE_SECRET_KEY: "sk_test_vapt",
+    STRIPE_WEBHOOK_SECRET: "whsec_vapt",
+    STRIPE_ENVIRONMENT: "test",
+    STRIPE_PORTAL_CONFIGURATION_ID: "bpc_vapt",
+    FRONTEND_URL: "https://app.vapt.test",
+    ...env,
+  });
+}
+
+const requiredBetterAuthVariables = [
+  "BETTER_AUTH_SECRET",
+  "BETTER_AUTH_URL",
+  "BETTER_AUTH_TRUSTED_ORIGINS",
+  "DATABASE_URL",
+  "TURNSTILE_SECRET_KEY",
+  "RESEND_API_KEY",
+  "RESEND_TEMPLATE_VERIFY_ACCOUNT",
+  "RESEND_TEMPLATE_RESET_PASSWORD",
+  "EMAIL_FROM",
+] as const;
+
+const requiredStripePriceVariables = [
+  "STRIPE_PRICE_STARTER",
+  "STRIPE_PRICE_PRO",
+  "STRIPE_PRICE_BUSINESS",
+] as const;
+
+const requiredStripeVariables = [
+  "STRIPE_SECRET_KEY",
+  "STRIPE_WEBHOOK_SECRET",
+  "STRIPE_ENVIRONMENT",
+  "STRIPE_PORTAL_CONFIGURATION_ID",
+  "STRIPE_PRICE_STARTER",
+  "STRIPE_PRICE_PRO",
+  "STRIPE_PRICE_BUSINESS",
+  "FRONTEND_URL",
+] as const;
+
+const validStripeEnv = {
+  ...validEnv,
+  FRONTEND_URL: "https://app.vapt.test",
+  API_PUBLIC_URL: "https://api.vapt.test",
+  MERCADO_PAGO_CLIENT_ID: "app-123",
+  MERCADO_PAGO_CLIENT_SECRET: "client-secret",
+  MERCADO_PAGO_REDIRECT_URI:
+    "https://api.vapt.test/payments/mercado-pago/oauth/callback",
+  MERCADO_PAGO_WEBHOOK_SECRET: "webhook-secret",
+  PAYMENT_TOKEN_ENCRYPTION_KEY: Buffer.alloc(32, 4).toString("base64"),
+};
+
+for (const variable of requiredBetterAuthVariables) {
+  test(`createConfig requires ${variable}`, () => {
+    assert.throws(
+      () => createConfig({ ...validEnv, [variable]: "" }),
+      new RegExp(`Missing required environment variable: ${variable}`),
+    );
+  });
+}
+
+for (const variable of requiredStripePriceVariables) {
+  test(`createConfig requires ${variable}`, () => {
+    assert.throws(
+      () => createConfig({ ...validEnv, [variable]: "" }),
+      new RegExp(`Missing required environment variable: ${variable}`),
+    );
+  });
+}
+
+for (const variable of requiredStripeVariables) {
+  test(`createConfig requires canonical Stripe variable ${variable}`, () => {
+    const env = variable === "FRONTEND_URL" ? validEnv : validStripeEnv;
+    assert.throws(
+      () => createConfig({ ...env, [variable]: "" }),
+      new RegExp(`Missing required environment variable: ${variable}`),
+    );
+  });
+}
+
+test("createConfig maps the complete Stripe billing runtime", () => {
+  const config = createConfig(validStripeEnv);
+
+  assert.deepEqual(config.stripe, {
+    secretKey: "sk_test_vapt",
+    webhookSecret: "whsec_vapt",
+    webhookToleranceSeconds: 300,
+    environment: "test",
+    portalConfigurationId: "bpc_vapt",
+    prices: {
+      starter: "price_server_starter",
+      pro: "price_server_pro",
+      business: "price_server_business",
+    },
+  });
+  assert.equal(config.frontendUrl.toString(), "https://app.vapt.test/");
+});
+
+test("createConfig rejects an unsupported Stripe environment", () => {
+  assert.throws(
+    () => createConfig({ ...validStripeEnv, STRIPE_ENVIRONMENT: "sandbox" }),
+    /STRIPE_ENVIRONMENT must be one of: test, live/,
+  );
+});
+
+test("createConfig requires a Stripe Portal configuration identifier", () => {
+  assert.throws(
+    () => createConfig({ ...validStripeEnv, STRIPE_PORTAL_CONFIGURATION_ID: "portal_vapt" }),
+    /STRIPE_PORTAL_CONFIGURATION_ID must start with bpc_/,
+  );
+});
+
+test("createConfig rejects a Portal prefix without an identifier", () => {
+  assert.throws(
+    () => createConfig({ ...validStripeEnv, STRIPE_PORTAL_CONFIGURATION_ID: "bpc_" }),
+    /STRIPE_PORTAL_CONFIGURATION_ID/,
+  );
+});
+
+test("createConfig supports live mode without enabling Mercado Pago", () => {
+  const config = createConfig({ ...validEnv, STRIPE_ENVIRONMENT: "live" });
+
+  assert.equal(config.stripe.environment, "live");
+  assert.equal(config.mercadoPago, undefined);
+  assert.equal(config.apiPublicUrl, undefined);
+});
+
+for (const frontendUrl of [
+  "/dashboard",
+  "https://app.vapt.test?return=other",
+  "https://app.vapt.test#fragment",
+  "http://remote.vapt.test",
+]) {
+  test(`createConfig rejects unsafe frontend destination ${frontendUrl}`, () => {
+    assert.throws(
+      () => createConfig({ ...validEnv, NODE_ENV: "development", FRONTEND_URL: frontendUrl }),
+      /FRONTEND_URL/,
+    );
+  });
+}
+
+test("createConfig rejects an insecure frontend URL outside local development", () => {
+  assert.throws(
+    () => createConfig({
+      ...validStripeEnv,
+      NODE_ENV: "production",
+      FRONTEND_URL: "http://app.vapt.test",
+    }),
+    /FRONTEND_URL must use https/,
+  );
+});
+
+test("createConfig rejects credentials in the frontend URL", () => {
+  assert.throws(
+    () => createConfig({
+      ...validStripeEnv,
+      FRONTEND_URL: "https://user:password@app.vapt.test",
+    }),
+    /FRONTEND_URL must not contain credentials/,
+  );
+});
+
+test("createConfig permits an HTTP localhost frontend in development", () => {
+  const config = createConfig({
+    ...validStripeEnv,
+    NODE_ENV: "development",
+    FRONTEND_URL: "http://localhost:5173",
+  });
+
+  assert.equal(config.frontendUrl.toString(), "http://localhost:5173/");
+});
+
+test("createConfig does not accept the retired Stripe signing secret by itself", () => {
+  assert.throws(
+    () => createConfig({
+      ...validStripeEnv,
+      STRIPE_WEBHOOK_SECRET: "",
+      STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_legacy",
+    }),
+    /Missing required environment variable: STRIPE_WEBHOOK_SECRET/,
+  );
+});
+
+test("createConfig requires a Better Auth secret with at least 32 characters", () => {
+  assert.throws(
+    () => createConfig({ ...validEnv, BETTER_AUTH_SECRET: "too-short" }),
+    /BETTER_AUTH_SECRET must contain at least 32 characters/,
+  );
+});
+
+test("createConfig rejects a non-absolute Better Auth URL", () => {
+  assert.throws(
+    () => createConfig({ ...validEnv, BETTER_AUTH_URL: "/api/auth" }),
+    /BETTER_AUTH_URL must be a valid absolute URL/,
+  );
+});
+
+test("createConfig normalizes Better Auth trusted origins", () => {
+  const config = createConfig({
+    ...validEnv,
+    BETTER_AUTH_TRUSTED_ORIGINS:
+      "https://app.vapt.test/path?source=test#fragment, https://user:password@preview.vapt.test/dashboard",
+  });
+
+  assert.deepEqual(config.betterAuth.trustedOrigins, [
+    "https://app.vapt.test",
+    "https://preview.vapt.test",
+  ]);
+});
+
+test("createConfig rejects duplicate normalized Better Auth trusted origins", () => {
+  assert.throws(
+    () => createConfig({
+      ...validEnv,
+      BETTER_AUTH_TRUSTED_ORIGINS:
+        "https://app.vapt.test,https://app.vapt.test/dashboard",
+    }),
+    /BETTER_AUTH_TRUSTED_ORIGINS must not contain duplicate origins/,
+  );
+});
+
+test("createConfig maps Better Auth runtime settings", () => {
+  const config = createConfig(validEnv);
+
+  assert.deepEqual(config.betterAuth, {
+    secret: "better-auth-secret-at-least-32-characters",
+    url: new URL("https://api.vapt.test"),
+    trustedOrigins: ["https://app.vapt.test"],
+    databaseUrl: "postgresql://vapt:password@db.vapt.test/vapt",
+    turnstileSecretKey: "turnstile-secret-key",
+    email: {
+      resendApiKey: "re_test_key",
+      from: "Vapt <noreply@vapt.test>",
+      verifyAccountTemplate: "verify-account-template",
+      resetPasswordTemplate: "reset-password-template",
+    },
+  });
+});
+
+test("createConfig requires a dedicated public order token secret", () => {
+  assert.throws(
+    () => createConfig({ ...validEnv, PUBLIC_ORDER_TOKEN_SECRET: "" }),
+    /PUBLIC_ORDER_TOKEN_SECRET/,
+  );
+});
+
+test("createConfig keeps public order tokens independent after Supabase auth removal", () => {
+  const config = createConfig({
+    ...validEnv,
+    PUBLIC_ORDER_TOKEN_SECRET: "public-order-token-secret",
+  });
+
+  assert.equal(
+    config.security.publicOrderTokenSecret,
+    "public-order-token-secret",
+  );
+});
+
+test("createConfig no longer requires Supabase runtime credentials", () => {
+  const {
+    SUPABASE_URL: _supabaseUrl,
+    SUPABASE_SERVICE_ROLE_KEY: _supabaseServiceRoleKey,
+    ...neonOnlyEnv
+  } = validEnv;
+
+  assert.doesNotThrow(() => createConfig(neonOnlyEnv));
+});
 
 test("createConfig parses valid environment values", () => {
   const config = createConfig({
@@ -10,14 +310,10 @@ test("createConfig parses valid environment values", () => {
     HOST: "0.0.0.0",
     CORS_ORIGINS: "http://localhost:5173,https://app.example.com",
     LOG_LEVEL: "info",
-    N8N_BASE_URL: "https://n8n.example.com",
-    N8N_TIMEOUT_MS: "5000",
-    VAPT_APP_ENDPOINT_SECRET: "app-secret",
-    VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
     STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
     SUPABASE_URL: "https://supabase.example.com",
     SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
-    SUPABASE_JWT_SECRET: "jwt-secret",
+    PUBLIC_ORDER_TOKEN_SECRET: "public-order-token-secret",
   });
 
   assert.equal(config.nodeEnv, "development");
@@ -27,13 +323,13 @@ test("createConfig parses valid environment values", () => {
   assert.deepEqual(config.corsOrigins, [
     "http://localhost:5173",
     "https://app.example.com",
-  ]);
-  assert.equal(config.n8n.baseUrl.toString(), "https://n8n.example.com/");
-  assert.equal(config.n8n.timeoutMs, 5000);
-  assert.equal(config.n8n.secrets.app, "app-secret");
-  assert.equal(config.webhooks.stripe.signingSecret, "whsec_test");
-  assert.equal(config.webhooks.stripe.toleranceSeconds, 300);
-  assert.equal(config.supabase.url.toString(), "https://supabase.example.com/");
+  ]);  assert.equal(config.stripe.webhookSecret, "whsec_vapt");
+  assert.equal(config.stripe.webhookToleranceSeconds, 300);
+  assert.deepEqual(config.stripe.prices, {
+    starter: "price_server_starter",
+    pro: "price_server_pro",
+    business: "price_server_business",
+  });
   assert.deepEqual(config.paymentEffects, {
     pollIntervalMs: 5_000,
     batchSize: 25,
@@ -46,14 +342,10 @@ test("createConfig parses valid environment values", () => {
 test("createConfig falls back to safe infrastructure defaults", () => {
   const config = createConfig({
     CORS_ORIGINS: "http://localhost:5173",
-    N8N_BASE_URL: "https://n8n.example.com",
-    N8N_TIMEOUT_MS: "5000",
-    VAPT_APP_ENDPOINT_SECRET: "app-secret",
-    VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
     STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
     SUPABASE_URL: "https://supabase.example.com",
     SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
-    SUPABASE_JWT_SECRET: "jwt-secret",
+    PUBLIC_ORDER_TOKEN_SECRET: "public-order-token-secret",
   });
 
   assert.equal(config.nodeEnv, "production");
@@ -65,18 +357,11 @@ test("createConfig falls back to safe infrastructure defaults", () => {
 test("createConfig does not require the retired Asaas setup secret", () => {
   const config = createConfig({
     CORS_ORIGINS: "http://localhost:5173",
-    N8N_BASE_URL: "https://n8n.example.com",
-    N8N_TIMEOUT_MS: "5000",
-    VAPT_APP_ENDPOINT_SECRET: "app-secret",
-    VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
     STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
     SUPABASE_URL: "https://supabase.example.com",
     SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
-    SUPABASE_JWT_SECRET: "jwt-secret",
-  });
-
-  assert.equal(config.n8n.secrets.app, "app-secret");
-  assert.equal(config.n8n.secrets.admin, "admin-secret");
+    PUBLIC_ORDER_TOKEN_SECRET: "public-order-token-secret",
+  });  assert.equal(config.stripe.environment, "test");
 });
 
 test("createConfig throws when a required env is missing", () => {
@@ -86,14 +371,10 @@ test("createConfig throws when a required env is missing", () => {
         NODE_ENV: "development",
         PORT: "3000",
         LOG_LEVEL: "info",
-        N8N_BASE_URL: "https://n8n.example.com",
-        N8N_TIMEOUT_MS: "5000",
-        VAPT_APP_ENDPOINT_SECRET: "app-secret",
-        VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
         STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
         SUPABASE_URL: "https://supabase.example.com",
         SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
-        SUPABASE_JWT_SECRET: "jwt-secret",
+        PUBLIC_ORDER_TOKEN_SECRET: "public-order-token-secret",
       }),
     ConfigError,
   );
@@ -108,14 +389,10 @@ test("createConfig throws when port is invalid", () => {
         HOST: "0.0.0.0",
         CORS_ORIGINS: "http://localhost:5173",
         LOG_LEVEL: "info",
-        N8N_BASE_URL: "https://n8n.example.com",
-        N8N_TIMEOUT_MS: "5000",
-        VAPT_APP_ENDPOINT_SECRET: "app-secret",
-        VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
         STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
         SUPABASE_URL: "https://supabase.example.com",
         SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
-        SUPABASE_JWT_SECRET: "jwt-secret",
+        PUBLIC_ORDER_TOKEN_SECRET: "public-order-token-secret",
       }),
     ConfigError,
   );
@@ -130,67 +407,10 @@ test("createConfig throws when cors origins is empty", () => {
         HOST: "0.0.0.0",
         CORS_ORIGINS: "   ",
         LOG_LEVEL: "info",
-        N8N_BASE_URL: "https://n8n.example.com",
-        N8N_TIMEOUT_MS: "5000",
-        VAPT_APP_ENDPOINT_SECRET: "app-secret",
-        VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
         STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
         SUPABASE_URL: "https://supabase.example.com",
         SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
-        SUPABASE_JWT_SECRET: "jwt-secret",
-      }),
-    ConfigError,
-  );
-});
-
-test("createConfig throws when n8n base url is invalid", () => {
-  assert.throws(
-    () =>
-      createConfig({
-        CORS_ORIGINS: "http://localhost:5173",
-        N8N_BASE_URL: "not-a-url",
-        N8N_TIMEOUT_MS: "5000",
-        VAPT_APP_ENDPOINT_SECRET: "app-secret",
-        VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
-        STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
-        SUPABASE_URL: "https://supabase.example.com",
-        SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
-        SUPABASE_JWT_SECRET: "jwt-secret",
-      }),
-    ConfigError,
-  );
-});
-
-test("createConfig throws when n8n timeout is invalid", () => {
-  assert.throws(
-    () =>
-      createConfig({
-        CORS_ORIGINS: "http://localhost:5173",
-        N8N_BASE_URL: "https://n8n.example.com",
-        N8N_TIMEOUT_MS: "0",
-        VAPT_APP_ENDPOINT_SECRET: "app-secret",
-        VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
-        STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
-        SUPABASE_URL: "https://supabase.example.com",
-        SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
-        SUPABASE_JWT_SECRET: "jwt-secret",
-      }),
-    ConfigError,
-  );
-});
-
-test("createConfig throws when supabase jwt secret is missing", () => {
-  assert.throws(
-    () =>
-      createConfig({
-        CORS_ORIGINS: "http://localhost:5173",
-        N8N_BASE_URL: "https://n8n.example.com",
-        N8N_TIMEOUT_MS: "5000",
-        VAPT_APP_ENDPOINT_SECRET: "app-secret",
-        VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
-        STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
-        SUPABASE_URL: "https://supabase.example.com",
-        SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
+        PUBLIC_ORDER_TOKEN_SECRET: "public-order-token-secret",
       }),
     ConfigError,
   );
@@ -200,14 +420,10 @@ test("createConfig enables Mercado Pago only with a complete secure configuratio
   const encryptionKey = Buffer.alloc(32, 4).toString("base64");
   const config = createConfig({
     CORS_ORIGINS: "https://app.vapt.test",
-    N8N_BASE_URL: "https://n8n.example.com",
-    N8N_TIMEOUT_MS: "5000",
-    VAPT_APP_ENDPOINT_SECRET: "app-secret",
-    VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
     STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
     SUPABASE_URL: "https://supabase.example.com",
     SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
-    SUPABASE_JWT_SECRET: "jwt-secret",
+    PUBLIC_ORDER_TOKEN_SECRET: "public-order-token-secret",
     MERCADO_PAGO_CLIENT_ID: "app-123",
     MERCADO_PAGO_CLIENT_SECRET: "client-secret",
     MERCADO_PAGO_REDIRECT_URI: "https://api.vapt.test/payments/mercado-pago/oauth/callback",
@@ -234,14 +450,10 @@ test("createConfig rejects partial Mercado Pago configuration", () => {
   assert.throws(
     () => createConfig({
       CORS_ORIGINS: "https://app.vapt.test",
-      N8N_BASE_URL: "https://n8n.example.com",
-      N8N_TIMEOUT_MS: "5000",
-      VAPT_APP_ENDPOINT_SECRET: "app-secret",
-      VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
       STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
       SUPABASE_URL: "https://supabase.example.com",
       SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
-      SUPABASE_JWT_SECRET: "jwt-secret",
+      PUBLIC_ORDER_TOKEN_SECRET: "public-order-token-secret",
       MERCADO_PAGO_CLIENT_ID: "app-123",
     }),
     ConfigError,
@@ -251,14 +463,10 @@ test("createConfig rejects a Mercado Pago redirect outside API_PUBLIC_URL", () =
   assert.throws(
     () => createConfig({
       CORS_ORIGINS: "https://app.vapt.test",
-      N8N_BASE_URL: "https://n8n.example.com",
-      N8N_TIMEOUT_MS: "5000",
-      VAPT_APP_ENDPOINT_SECRET: "app-secret",
-      VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
       STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
       SUPABASE_URL: "https://supabase.example.com",
       SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
-      SUPABASE_JWT_SECRET: "jwt-secret",
+      PUBLIC_ORDER_TOKEN_SECRET: "public-order-token-secret",
       MERCADO_PAGO_CLIENT_ID: "app-123",
       MERCADO_PAGO_CLIENT_SECRET: "client-secret",
       MERCADO_PAGO_REDIRECT_URI: "https://evil.example.com/oauth/callback",
@@ -274,14 +482,10 @@ test("createConfig rejects a Mercado Pago redirect outside API_PUBLIC_URL", () =
 test("createConfig reads the Mercado Pago test access token only in sandbox", () => {
   const config = createConfig({
     CORS_ORIGINS: "https://app.vapt.test",
-    N8N_BASE_URL: "https://n8n.example.com",
-    N8N_TIMEOUT_MS: "5000",
-    VAPT_APP_ENDPOINT_SECRET: "app-secret",
-    VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
     STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
     SUPABASE_URL: "https://supabase.example.com",
     SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
-    SUPABASE_JWT_SECRET: "jwt-secret",
+    PUBLIC_ORDER_TOKEN_SECRET: "public-order-token-secret",
     MERCADO_PAGO_CLIENT_ID: "app-123",
     MERCADO_PAGO_CLIENT_SECRET: "client-secret",
     MERCADO_PAGO_REDIRECT_URI: "https://api.vapt.test/payments/mercado-pago/oauth/callback",
@@ -300,14 +504,10 @@ test("createConfig rejects the Mercado Pago test access token in production", ()
   assert.throws(
     () => createConfig({
       CORS_ORIGINS: "https://app.vapt.test",
-      N8N_BASE_URL: "https://n8n.example.com",
-      N8N_TIMEOUT_MS: "5000",
-      VAPT_APP_ENDPOINT_SECRET: "app-secret",
-      VAPT_ADMIN_ENDPOINT_SECRET: "admin-secret",
       STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
       SUPABASE_URL: "https://supabase.example.com",
       SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
-      SUPABASE_JWT_SECRET: "jwt-secret",
+      PUBLIC_ORDER_TOKEN_SECRET: "public-order-token-secret",
       MERCADO_PAGO_CLIENT_ID: "app-123",
       MERCADO_PAGO_CLIENT_SECRET: "client-secret",
       MERCADO_PAGO_REDIRECT_URI: "https://api.vapt.test/payments/mercado-pago/oauth/callback",
@@ -320,4 +520,89 @@ test("createConfig rejects the Mercado Pago test access token in production", ()
     }),
     /MERCADO_PAGO_TEST_ACCESS_TOKEN can only be used in sandbox/,
   );
+});
+
+test("createConfig enables R2 only with a complete configuration", () => {
+  const config = createConfig({
+    CORS_ORIGINS: "https://app.vapt.test",
+    STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
+    SUPABASE_URL: "https://supabase.example.com",
+    SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
+    PUBLIC_ORDER_TOKEN_SECRET: "public-order-token-secret",
+    R2_ACCOUNT_ID: "account-id",
+    R2_ACCESS_KEY_ID: "access-key-id",
+    R2_SECRET_ACCESS_KEY: "secret-access-key",
+    R2_BUCKET_NAME: "vapt-assets-preview",
+    R2_PUBLIC_BASE_URL: "https://assets-preview.vapt.test",
+    R2_UPLOAD_URL_TTL_SECONDS: "240",
+  });
+
+  assert.deepEqual(config.r2, {
+    accountId: "account-id",
+    accessKeyId: "access-key-id",
+    secretAccessKey: "secret-access-key",
+    bucketName: "vapt-assets-preview",
+    publicBaseUrl: new URL("https://assets-preview.vapt.test"),
+    uploadUrlTtlSeconds: 240,
+  });
+});
+
+test("createConfig rejects partial R2 configuration", () => {
+  assert.throws(
+    () => createConfig({
+      CORS_ORIGINS: "https://app.vapt.test",
+      STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
+      SUPABASE_URL: "https://supabase.example.com",
+      SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
+      PUBLIC_ORDER_TOKEN_SECRET: "public-order-token-secret",
+      R2_BUCKET_NAME: "vapt-assets-production",
+    }),
+    /R2_ACCOUNT_ID/,
+  );
+});
+
+test("createConfig rejects an R2 upload URL lifetime outside the safe range", () => {
+  assert.throws(
+    () => createConfig({
+      CORS_ORIGINS: "https://app.vapt.test",
+      STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
+      SUPABASE_URL: "https://supabase.example.com",
+      SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
+      PUBLIC_ORDER_TOKEN_SECRET: "public-order-token-secret",
+      R2_ACCOUNT_ID: "account-id",
+      R2_ACCESS_KEY_ID: "access-key-id",
+      R2_SECRET_ACCESS_KEY: "secret-access-key",
+      R2_BUCKET_NAME: "vapt-assets-production",
+      R2_PUBLIC_BASE_URL: "https://assets.vapt.test",
+      R2_UPLOAD_URL_TTL_SECONDS: "3600",
+    }),
+    /R2_UPLOAD_URL_TTL_SECONDS/,
+  );
+});
+
+test("createConfig requires a credential-free HTTPS origin for public R2 assets", () => {
+  assert.throws(
+    () => createConfig({
+      CORS_ORIGINS: "https://app.vapt.test",
+      STRIPE_WEBHOOK_SIGNING_SECRET: "whsec_test",
+      SUPABASE_URL: "https://supabase.example.com",
+      SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
+      PUBLIC_ORDER_TOKEN_SECRET: "public-order-token-secret",
+      R2_ACCOUNT_ID: "account-id",
+      R2_ACCESS_KEY_ID: "access-key-id",
+      R2_SECRET_ACCESS_KEY: "secret-access-key",
+      R2_BUCKET_NAME: "vapt-assets-production",
+      R2_PUBLIC_BASE_URL: "http://user:password@assets.vapt.test",
+    }),
+    /R2_PUBLIC_BASE_URL/,
+  );
+});
+test("createConfig no longer requires or exposes the retired n8n runtime", () => {
+  assert.equal("n8n" in createConfig(validEnv), false);
+});
+test("payment effect maintenance uses an independent optional strong admin secret", () => {
+  const secret = "payment-effects-admin-secret-at-least-32-characters";
+  assert.equal(createConfig(validEnv).security.paymentEffectsAdminSecret, undefined);
+  assert.equal(createConfig({ ...validEnv, PAYMENT_EFFECTS_ADMIN_SECRET: secret }).security.paymentEffectsAdminSecret, secret);
+  assert.throws(() => createConfig({ ...validEnv, PAYMENT_EFFECTS_ADMIN_SECRET: "short" }), /PAYMENT_EFFECTS_ADMIN_SECRET/);
 });

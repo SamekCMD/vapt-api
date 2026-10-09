@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { AppConfig } from "./lib/config.js";
-import { buildApp } from "./app.js";
+import type { Database } from "./lib/database.js";
+import { buildApp as buildVaptApp } from "./app.js";
+import type { AuthRuntime } from "./modules/auth/runtime.js";
+import Stripe from "stripe";
+import { createStripeClient } from "./modules/billing/stripe/client.js";
 
 const validConfig: AppConfig = {
   nodeEnv: "test",
@@ -10,26 +14,84 @@ const validConfig: AppConfig = {
   host: "127.0.0.1",
   corsOrigins: ["http://localhost:5173"],
   logLevel: "silent",
-  n8n: {
-    baseUrl: new URL("https://n8n.example.com"),
-    timeoutMs: 5000,
-    secrets: {
-      app: "app-secret",
-      admin: "admin-secret",
-    },
+  frontendUrl: new URL("https://app.vapt.test"),
+  stripe: {
+    secretKey: "sk_test_vapt",
+    webhookSecret: "whsec_test",
+    webhookToleranceSeconds: 300,
+    environment: "test",
+    portalConfigurationId: "bpc_vapt",
+    prices: { starter: "price_starter", pro: "price_pro", business: "price_business" },
   },
-  webhooks: {
-    stripe: {
-      signingSecret: "whsec_test",
-      toleranceSeconds: 300,
+  security: { publicOrderTokenSecret: "public-order-token-secret" },
+  betterAuth: {
+    secret: "better-auth-secret-at-least-32-characters",
+    url: new URL("https://api.vapt.test"),
+    trustedOrigins: ["https://app.vapt.test"],
+    databaseUrl: "postgresql://vapt:password@db.vapt.test/vapt",
+    turnstileSecretKey: "turnstile-secret-key",
+    email: {
+      resendApiKey: "re_test_key",
+      from: "Vapt <noreply@vapt.test>",
+      verifyAccountTemplate: "verify-account-template",
+      resetPasswordTemplate: "reset-password-template",
     },
-  },
-  supabase: {
-    url: new URL("https://supabase.example.com"),
-    serviceRoleKey: "service-role-key",
-    jwtSecret: "jwt-secret",
   },
 };
+
+const testAuthRuntime: AuthRuntime = {
+  async handler() {
+    return new Response(null, { status: 404 });
+  },
+  async getSession() {
+    return null;
+  },
+  async close() {},
+};
+
+function buildApp(config: AppConfig) {
+  return buildVaptApp(config, { authRuntime: testAuthRuntime });
+}
+
+test("Worker app composition skips the payment timer while Node production retains it", async () => {
+  const database = { async query() { return { rows: [] }; } } as unknown as Database;
+  for (const [startPaymentReconciliation, expectedStarts] of [[false, 0], [undefined, 1]] as const) {
+    const app = await buildVaptApp({ ...validConfig, nodeEnv: "production" }, {
+      authRuntime: testAuthRuntime,
+      database,
+      startPaymentReconciliation,
+    });
+    let starts = 0;
+    app.payments.reconciliation.start = () => { starts += 1; };
+    await app.ready();
+    assert.equal(starts, expectedStarts);
+    await app.close();
+  }
+});
+
+test("buildApp composes SDK-verified billing webhooks into the injected Neon event transaction", async () => {
+  const operations: string[] = [];
+  const query = async (sql: string) => {
+    operations.push(sql);
+    if (sql.includes("insert into public.billing_provider_events")) return { rows: [{ attemptCount: 1 }] };
+    if (sql.includes("for update")) return { rows: [{ attemptCount: 1, processingStatus: "processing" }] };
+    return { rows: [] };
+  };
+  const database = { query, async connect() { return { query, release() {} }; } } as unknown as Database;
+  const app = await buildVaptApp(validConfig, { database, authRuntime: testAuthRuntime });
+  const raw = JSON.stringify({ id: "evt_composed", type: "customer.created", created: 1790500000,
+    livemode: false, data: { object: { id: "cus_vapt", object: "customer" } } });
+  const client = createStripeClient(validConfig.stripe);
+  const signature = await client.webhooks.generateTestHeaderStringAsync({ payload: raw,
+    secret: validConfig.stripe.webhookSecret, cryptoProvider: Stripe.createSubtleCryptoProvider() });
+  const response = await app.inject({ method: "POST", url: "/webhooks/stripe", payload: raw,
+    headers: { "content-type": "application/json", "stripe-signature": signature } });
+  assert.equal(response.statusCode, 200); assert.equal(response.json().ignored, true);
+  assert.ok(operations.some(sql => sql.includes("processing_status = $3::text")));
+  assert.ok(operations.includes("COMMIT"));
+  assert.equal((await app.inject({ method: "POST", url: "/webhooks/asaas" })).statusCode, 404);
+  await app.close();
+});
 
 test("GET /health returns ok", async () => {
   const app = await buildApp(validConfig);
@@ -42,6 +104,20 @@ test("GET /health returns ok", async () => {
   assert.equal(response.statusCode, 200);
   assert.deepEqual(response.json(), { status: "ok" });
 
+  await app.close();
+});
+
+test("Fastify body parser rejects non-JSON and oversized public order bodies", async () => {
+  const app = await buildApp(validConfig);
+  const cases = [
+    { name: "text/plain", headers: { "content-type": "text/plain" }, payload: "{}", expected: 400 },
+    { name: "missing type", headers: {}, payload: "{}", expected: 500 },
+    { name: "oversized", headers: { "content-type": "application/json" }, payload: JSON.stringify({ filler: "x".repeat(1_048_576) }), expected: 500 },
+  ];
+  for (const input of cases) {
+    const response = await app.inject({ method: "POST", url: "/public/orders", headers: input.headers, payload: input.payload });
+    assert.equal(response.statusCode, input.expected, input.name);
+  }
   await app.close();
 });
 
@@ -107,7 +183,7 @@ test("allowed CORS origin is echoed back", async () => {
   await app.close();
 });
 
-test("CORS preflight allows authenticated DELETE requests", async () => {
+test("CORS preflight allows credentialed DELETE requests and CAPTCHA headers", async () => {
   const app = await buildApp(validConfig);
 
   const response = await app.inject({
@@ -116,7 +192,7 @@ test("CORS preflight allows authenticated DELETE requests", async () => {
     headers: {
       origin: "http://localhost:5173",
       "access-control-request-method": "DELETE",
-      "access-control-request-headers": "authorization",
+      "access-control-request-headers": "content-type,x-captcha-response",
     },
   });
 
@@ -125,19 +201,57 @@ test("CORS preflight allows authenticated DELETE requests", async () => {
     String(response.headers["access-control-allow-methods"]),
     /(?:^|,\s*)DELETE(?:,|$)/,
   );
+  assert.equal(response.headers["access-control-allow-origin"], "http://localhost:5173");
+  assert.equal(response.headers["access-control-allow-credentials"], "true");
+  assert.match(
+    String(response.headers["access-control-allow-headers"]),
+    /X-Captcha-Response/i,
+  );
 
   await app.close();
 });
 
-test("only Vercel previews from a configured project are allowed", async () => {
+test("CORS preflight allows public order idempotency and token headers", async () => {
+  const app = await buildApp(validConfig);
+
+  const response = await app.inject({
+    method: "OPTIONS",
+    url: "/public/orders/10000000-0000-4000-8000-000000000001/feedback",
+    headers: {
+      origin: "http://localhost:5173",
+      "access-control-request-method": "PUT",
+      "access-control-request-headers": "content-type,idempotency-key,x-vapt-order-token",
+    },
+  });
+
+  assert.equal(response.statusCode, 204);
+  assert.equal(response.headers["access-control-allow-origin"], "http://localhost:5173");
+  assert.equal(response.headers["access-control-allow-credentials"], "true");
+  assert.match(
+    String(response.headers["access-control-allow-methods"]),
+    /(?:^|,\s*)PUT(?:,|$)/,
+  );
+  assert.match(
+    String(response.headers["access-control-allow-headers"]),
+    /(?:^|,\s*)Idempotency-Key(?:,|$)/i,
+  );
+  assert.match(
+    String(response.headers["access-control-allow-headers"]),
+    /(?:^|,\s*)X-Vapt-Order-Token(?:,|$)/i,
+  );
+
+  await app.close();
+});
+
+test("CORS requires an exact configured preview origin", async () => {
   const app = await buildApp({
     ...validConfig,
     corsOrigins: [
-      "https://vaptmesaflow-*-contatoupboost-2301s-projects.vercel.app",
+      "https://infra-foundation-vapt-web.autoistloko.workers.dev",
+      "https://legacy-*.vercel.app",
     ],
   });
-  const previewOrigin =
-    "https://vaptmesaflow-m9w5rado2-contatoupboost-2301s-projects.vercel.app";
+  const previewOrigin = "https://infra-foundation-vapt-web.autoistloko.workers.dev";
 
   const allowedResponse = await app.inject({
     method: "GET",
@@ -152,7 +266,7 @@ test("only Vercel previews from a configured project are allowed", async () => {
     method: "GET",
     url: "/health",
     headers: {
-      origin: "https://another-project-m9w5rado2-example-team.vercel.app",
+      origin: "https://legacy-preview.vercel.app",
     },
   });
 
@@ -165,10 +279,12 @@ test("blocked CORS origin is rejected", async () => {
   const app = await buildApp(validConfig);
 
   const response = await app.inject({
-    method: "GET",
-    url: "/health",
+    method: "OPTIONS",
+    url: "/api/auth/sign-in/email",
     headers: {
       origin: "https://evil.example.com",
+      "access-control-request-method": "POST",
+      "access-control-request-headers": "content-type,x-captcha-response",
     },
   });
 
@@ -180,6 +296,75 @@ test("blocked CORS origin is rejected", async () => {
     },
   });
 
+  await app.close();
+});
+
+test("app close releases the injected Better Auth runtime", async () => {
+  let closeCalls = 0;
+  const app = await buildVaptApp(validConfig, {
+    authRuntime: {
+      ...testAuthRuntime,
+      async close() {
+        closeCalls += 1;
+      },
+    },
+  });
+
+  await app.close();
+
+  assert.equal(closeCalls, 1);
+});
+
+test("buildApp wires the injected Neon database into public order routes", async () => {
+  const calls: Array<{ sql: string; values: unknown[] | undefined }> = [];
+  const database = {
+    async query(sql: string, values?: unknown[]) {
+      calls.push({ sql, values });
+      return { rows: [{
+        order_id: "10000000-0000-4000-8000-000000000001",
+        display_id: "9007199254740993",
+        restaurant_id: "20000000-0000-4000-8000-000000000002",
+        table_session_id: null,
+        total_price: "42.90",
+        status: "waiting_payment",
+        payment_status: null,
+        idempotent_replay: false,
+      }] };
+    },
+    async connect() {
+      throw new Error("not used");
+    },
+  } as unknown as Database;
+  const app = await buildVaptApp(validConfig, {
+    authRuntime: testAuthRuntime,
+    database,
+  });
+
+  const response = await app.inject({
+    method: "POST",
+    url: "/public/orders",
+    headers: { "idempotency-key": "order-attempt-0001" },
+    payload: {
+      restaurantSlug: "restaurante-teste",
+      channel: "delivery",
+      items: [{
+        menuItemId: "30000000-0000-4000-8000-000000000003",
+        quantity: 1,
+      }],
+      delivery: {
+        name: "Cliente Teste",
+        phone: "61999999999",
+        street: "Rua Um",
+        number: "42",
+        neighborhood: "Centro",
+        paymentMode: "online",
+      },
+    },
+  });
+
+  assert.equal(response.statusCode, 201);
+  assert.equal(response.json().displayId, "9007199254740993");
+  assert.match(calls[0]?.sql ?? "", /public\.create_public_order_v3/i);
   await app.close();
 });
 
