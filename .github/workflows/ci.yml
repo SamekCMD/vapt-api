@@ -66,3 +66,9 @@ jobs:
 
       - name: Bundle realtime production without deploying
         run: npm run build:worker-production-realtime
+
+      - name: Validate opt-in sanitized observability policy
+        run: node --test scripts/verify-observability-production-config.test.mjs
+
+      - name: Bundle observability production without deploying
+        run: npm run build:worker-production-observability

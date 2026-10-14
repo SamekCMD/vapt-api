@@ -47,6 +47,35 @@ export default {
     try {
       await createWorkerAuthRuntimeFactory()(config, syntheticSchemaAuthDependencies("bad", [], true), "preview").getSession(new Headers());
     } catch (error) { badSchema = (error as { code: string }).code === "SCHEMA_MISMATCH"; }
-    return Response.json({ results, events, missing, expired, taskCounts: owners.map(dep => dep.tasks.length), sessions, authEvents, badSchema, concurrentEvents, concurrentSessions });
+    // Test-worker-only console capture: real default engine + synthetic SQL.
+    // This never enters the production bundle or inspects real credentials.
+    const loggingFailures: { path: string; failed: boolean; entries: unknown[][] }[] = [];
+    for (const path of ["handler", "getSession"] as const) {
+      const dep = syntheticSchemaAuthDependencies("logging", []);
+      const connect = dep.pool.connect.bind(dep.pool);
+      dep.pool.connect = async () => {
+        const client = await connect(), query = client.query.bind(client);
+        client.query = (async (sql: string, parameters: readonly unknown[]) => {
+          if (sql.includes('"better_auth"."session"')) throw new Error("synthetic-private@example.invalid token=synthetic-private-cookie password=synthetic-private-password");
+          return query(sql, parameters);
+        }) as typeof client.query;
+        return client;
+      };
+      const entries: unknown[][] = [];
+      const original = { error: console.error, warn: console.warn, log: console.log };
+      console.error = console.warn = console.log = (...args: unknown[]) => { entries.push(args); };
+      let failed = false;
+      try {
+        const runtime = createWorkerAuthRuntimeFactory()(config, dep, "production");
+        const headers = new Headers({ cookie: unknownCookie, origin: "https://app.vapt.test", "cf-connecting-ip": "203.0.113.61" });
+        if (path === "handler") {
+          failed = (await runtime.handler(new Request("https://api.vapt.test/api/auth/get-session?token=synthetic-private-query", { headers }))).status === 500;
+        } else {
+          try { await runtime.getSession(headers); } catch { failed = true; }
+        }
+      } finally { Object.assign(console, original); }
+      loggingFailures.push({ path, failed, entries });
+    }
+    return Response.json({ results, events, missing, expired, taskCounts: owners.map(dep => dep.tasks.length), sessions, authEvents, badSchema, concurrentEvents, concurrentSessions, loggingFailures });
   },
 };

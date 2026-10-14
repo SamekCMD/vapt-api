@@ -11,6 +11,10 @@ const buildEngine: WorkerAuthEngineBuilder = (config, dependencies) => {
   const options = createBetterAuthOptions(config, dependencies);
   const auth = betterAuth({
     ...options,
+    // Worker observability must never persist dependency messages or arguments:
+    // SQL failures may carry credentials, session tokens or personal data.
+    // Keep a fixed diagnostic code; Node/Coolify retains its existing logger.
+    logger: { level: "error", log() { console.error("auth_operation_failed"); } },
     // Explicit in workerd regardless of NODE_ENV; supplementary per-isolate
     // protection, not a distributed quota or replacement for the edge limiter.
     rateLimit: { enabled: true, storage: "memory" },

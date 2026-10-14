@@ -8,7 +8,7 @@ test("workerd auth bridge isolates concurrent SQL transactions and email runners
     await server.listen();
     const response = await server.getWorker("vapt-api-auth-context-test").fetch("https://auth-context.vapt.test/");
     assert.equal(response.status, 200);
-    const body = await response.json() as { results: string[]; events: string[]; missing: boolean; expired: boolean; taskCounts: number[]; sessions: unknown[]; authEvents: string[]; badSchema: boolean; concurrentEvents: string[]; concurrentSessions: unknown[] };
+    const body = await response.json() as { results: string[]; events: string[]; missing: boolean; expired: boolean; taskCounts: number[]; sessions: unknown[]; authEvents: string[]; badSchema: boolean; concurrentEvents: string[]; concurrentSessions: unknown[]; loggingFailures: { path: string; failed: boolean; entries: unknown[][] }[] };
     assert.deepEqual(body.results, ["a", "b"]);
     assert.equal(body.missing, true);
     assert.equal(body.expired, true);
@@ -24,5 +24,10 @@ test("workerd auth bridge isolates concurrent SQL transactions and email runners
     assert.deepEqual(body.concurrentSessions, [null, null]);
     assert.equal(body.concurrentEvents.filter(x => x.endsWith(":schema")).length, 1);
     for (const owner of ["p", "q"]) assert.ok(body.concurrentEvents.includes(`${owner}:session`));
+    assert.deepEqual(body.loggingFailures.map(result => [result.path, result.failed]), [["handler", true], ["getSession", true]]);
+    for (const result of body.loggingFailures) {
+      assert.ok(result.entries.length > 0);
+      for (const entry of result.entries) assert.deepEqual(entry, ["auth_operation_failed"]);
+    }
   } finally { await server.close(); }
 });

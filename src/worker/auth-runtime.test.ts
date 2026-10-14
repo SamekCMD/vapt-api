@@ -162,3 +162,40 @@ test("default engine fails closed on missing schema and retries with a healthy i
   assert.equal(await factory(syntheticAuthConfig(), syntheticSchemaAuthDependencies("good", events), "preview").getSession(new Headers()), null);
   assert.ok(events.includes("bad:schema")); assert.ok(events.includes("good:schema"));
 });
+
+for (const path of ["handler", "getSession"] as const) {
+  test(`default Worker auth ${path} failure logs only a fixed code, never SQL/session credentials`, async () => {
+    const config = syntheticAuthConfig();
+    const dep = syntheticSchemaAuthDependencies("logging", []);
+    const connect = dep.pool.connect.bind(dep.pool);
+    const sensitive = "synthetic-private@example.invalid token=synthetic-sensitive-cookie postgresql://user:synthetic-password@db.test/vapt";
+    dep.pool.connect = async () => {
+      const client = await connect();
+      const query = client.query.bind(client);
+      client.query = (async (sql: string, parameters: readonly unknown[]) => {
+        if (sql.includes('"better_auth"."session"')) throw new Error(sensitive);
+        return query(sql, parameters);
+      }) as typeof client.query;
+      return client;
+    };
+    const cookie = (await serializeSignedCookie("__Secure-better-auth.session_token", "synthetic-sensitive-cookie", config.secret)).split(";")[0];
+    const headers = new Headers({ cookie, origin: "https://app.vapt.test", "cf-connecting-ip": "203.0.113.60" });
+    const entries: unknown[][] = [];
+    const original = { error: console.error, warn: console.warn, log: console.log };
+    console.error = console.warn = console.log = (...args: unknown[]) => { entries.push(args); };
+    try {
+      const runtime = createWorkerAuthRuntimeFactory()(config, dep, "production");
+      if (path === "handler") {
+        const response = await runtime.handler(new Request("https://api.vapt.test/api/auth/get-session?private=synthetic-query-token", { headers }));
+        assert.equal(response.status, 500);
+        assert.doesNotMatch(await response.text(), /synthetic-private|synthetic-password|synthetic-sensitive-cookie|synthetic-query-token/);
+      } else {
+        await assert.rejects(runtime.getSession(headers));
+      }
+      assert.ok(entries.length > 0, "failure must remain diagnosable");
+      assert.ok(entries.every(entry => entry.length === 1 && entry[0] === "auth_operation_failed"), "auth error output must contain only the fixed code");
+    } finally {
+      Object.assign(console, original);
+    }
+  });
+}
