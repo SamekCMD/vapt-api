@@ -165,7 +165,7 @@ test("a full tenant quota rejects before creating a reservation or R2 staging ob
   const value = fixture();
   try {
     value.ports.bucket = { ...value.bucket, async list() { return { truncated: false,
-      objects: [{ key: `${restaurantId}/retained-image`, size: 52_428_800 }] }; } } as unknown as ImageUploadPorts["bucket"];
+      objects: [{ key: `${restaurantId}/retained-image`, size: 104_857_600 }] }; } } as unknown as ImageUploadPorts["bucket"];
     await assert.rejects(createImageUploads(value.ports).prepare(input), error => error instanceof AppError && error.statusCode === 413);
     assert.equal(value.budget.get(leaseId), null);
     assert.equal(value.signerInputs.length, 0);

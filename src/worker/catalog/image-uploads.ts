@@ -1,5 +1,6 @@
 import type { R2Bucket } from "@cloudflare/workers-types";
 import { AppError } from "../../lib/errors.js";
+import { RESTAURANT_IMAGE_QUOTA_BYTES } from "../../modules/storage/policy.js";
 import type { MenuImageGateway, MenuImageContentType } from "../../modules/storage/service.js";
 import type { ImageInventoryEntry, ImageReservation, ImageReservationInput, SqliteImageBudget } from "./image-budget.js";
 
@@ -67,7 +68,7 @@ export function createImageUploads(ports: ImageUploadPorts) {
     prepare(input: ImageReservationInput): Promise<ImageUploadDescriptor> { return run(async () => {
       const objects = await inventory(input.restaurantId);
       let lease = await ports.atomic(() => budget.reserve({ ...input, now: ports.now() }, objects));
-      if (budget.usage(input.restaurantId, objects) > 52_428_800) {
+      if (budget.usage(input.restaurantId, objects) > RESTAURANT_IMAGE_QUOTA_BYTES) {
         throw new AppError(413, "menu_image_quota_exceeded", "Restaurant image quota exceeded");
       }
       if (lease.state === "retired") throw gone();

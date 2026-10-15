@@ -1,6 +1,7 @@
 import type { SqlStorage } from "@cloudflare/workers-types";
 import { AppError } from "../../lib/errors.js";
 import type { MenuImageContentType } from "../../modules/storage/service.js";
+import { MENU_IMAGE_MAX_BYTES, RESTAURANT_IMAGE_QUOTA_BYTES } from "../../modules/storage/policy.js";
 
 export type ImageInventoryEntry = { key: string; size: number };
 export type ImageReservation = {
@@ -14,7 +15,6 @@ export type ImageReservationInput = Pick<ImageReservation, "leaseId" | "restaura
 };
 
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
-const quota = 52_428_800;
 const fenceBytes = 36;
 const unavailable = () => new AppError(503, "menu_image_inventory_unavailable", "Image inventory unavailable");
 
@@ -28,7 +28,7 @@ export class SqliteImageBudget {
   // creating any R2 object or signing a PUT. Time alone never releases bytes.
   reserve(input: ImageReservationInput, inventory: readonly ImageInventoryEntry[]): ImageReservation {
     if (![input.restaurantId, input.itemId, input.leaseId].every(value => typeof value === "string" && uuid.test(value))
-      || !Number.isSafeInteger(input.bytes) || input.bytes < 1 || input.bytes > 5_242_880
+      || !Number.isSafeInteger(input.bytes) || input.bytes < 1 || input.bytes > MENU_IMAGE_MAX_BYTES
       || !["image/jpeg", "image/png", "image/webp"].includes(input.contentType)
       || !Number.isSafeInteger(input.now) || input.now < 0
       || !Number.isSafeInteger(input.ttlMs) || input.ttlMs < 1 || input.ttlMs > 900_000
@@ -47,7 +47,7 @@ export class SqliteImageBudget {
       return existing;
     }
     const currentUsage = this.inventoryUsage(input.restaurantId, inventory);
-    if (currentUsage.bytes + Math.max(input.bytes, fenceBytes) > quota) {
+    if (currentUsage.bytes + Math.max(input.bytes, fenceBytes) > RESTAURANT_IMAGE_QUOTA_BYTES) {
       throw new AppError(413, "menu_image_quota_exceeded", "Restaurant image quota exceeded");
     }
     if (currentUsage.objects >= 1000) throw new AppError(429, "menu_image_inventory_full", "Image storage requires cleanup");

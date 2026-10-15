@@ -80,7 +80,7 @@ test("menu image upload rejects unsupported or oversized files before signing", 
 
   for (const payload of [
     { contentType: "image/svg+xml", contentLength: 100 },
-    { contentType: "image/jpeg", contentLength: 5 * 1024 * 1024 + 1 },
+    { contentType: "image/jpeg", contentLength: 1024 * 1024 + 1 },
   ]) {
     const response = await app.inject({
       method: "POST",

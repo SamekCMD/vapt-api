@@ -9,7 +9,7 @@ const restaurantId = "11111111-1111-4111-8111-111111111111";
 const itemId = "22222222-2222-4222-8222-222222222222";
 const leaseId = "33333333-3333-4333-8333-333333333333";
 const now = 1_800_000_000_000;
-const input: ImageReservationInput = { leaseId, restaurantId, itemId, contentType: "image/webp", bytes: 5_242_880, now, ttlMs: 300_000 };
+const input: ImageReservationInput = { leaseId, restaurantId, itemId, contentType: "image/webp", bytes: 1_048_576, now, ttlMs: 300_000 };
 function fixture() {
   const database = new DatabaseSync(":memory:");
   const sql = { exec(query: string, ...bindings: SQLInputValue[]) {
@@ -23,13 +23,13 @@ const quotaError = (error: unknown) => error instanceof AppError && error.status
 
 // Removing durable reservations, double-counting uploaded bytes, or refunding expired
 // URLs would all break these observable admission/usage assertions.
-test("50 MiB includes retained images and pending uploads; the exact boundary is admitted", () => {
+test("100 MiB includes retained images and pending uploads; the exact boundary is admitted", () => {
   const { database, budget } = fixture();
   try {
-    const inventory = [{ key: `${restaurantId}/old-item/old-image`, size: 47_185_920 }];
+    const inventory = [{ key: `${restaurantId}/old-item/old-image`, size: 103_809_024 }];
     const reservation = budget.reserve(input, inventory);
     assert.match(reservation.objectKey, new RegExp(`^${restaurantId}/${itemId}/[a-f0-9-]{36}$`));
-    assert.equal(budget.usage(restaurantId, inventory), 52_428_800);
+    assert.equal(budget.usage(restaurantId, inventory), 104_857_600);
     assert.throws(() => budget.reserve({ ...input, leaseId: "44444444-4444-4444-8444-444444444444", bytes: 1 }, inventory), quotaError);
   } finally { database.close(); }
 });
@@ -38,20 +38,20 @@ test("successful uploads are counted once, but a smaller object does not refund 
   const { database, budget } = fixture();
   try {
     const reservation = budget.reserve(input, []);
-    assert.equal(budget.usage(restaurantId, [{ key: reservation.objectKey, size: 5_242_880 }]), 5_242_880);
-    assert.equal(budget.usage(restaurantId, [{ key: reservation.objectKey, size: 36 }]), 5_242_880);
-    assert.equal(budget.usage(restaurantId, [{ key: reservation.objectKey, size: 5_242_881 }]), 5_242_881);
+    assert.equal(budget.usage(restaurantId, [{ key: reservation.objectKey, size: 1_048_576 }]), 1_048_576);
+    assert.equal(budget.usage(restaurantId, [{ key: reservation.objectKey, size: 36 }]), 1_048_576);
+    assert.equal(budget.usage(restaurantId, [{ key: reservation.objectKey, size: 1_048_577 }]), 1_048_577);
   } finally { database.close(); }
 });
 
 test("restart and URL expiry do not release potentially in-flight upload bytes", () => {
   const { database, sql, budget } = fixture();
   try {
-    budget.reserve(input, [{ key: `${restaurantId}/legacy`, size: 47_185_920 }]);
+    budget.reserve(input, [{ key: `${restaurantId}/legacy`, size: 103_809_024 }]);
     const restarted = new SqliteImageBudget(sql);
     assert.equal(restarted.get(leaseId)?.expiresAt, now + 300_000);
     assert.throws(() => restarted.reserve({ ...input, leaseId: "44444444-4444-4444-8444-444444444444", bytes: 1,
-      now: now + 86_400_000 }, [{ key: `${restaurantId}/legacy`, size: 47_185_920 }]), quotaError);
+      now: now + 86_400_000 }, [{ key: `${restaurantId}/legacy`, size: 103_809_024 }]), quotaError);
   } finally { database.close(); }
 });
 
@@ -90,10 +90,10 @@ test("invalid or cross-restaurant inventories fail closed instead of undercounti
   } finally { database.close(); }
 });
 
-test("invalid byte sizes and non-image types cannot bypass the 5 MiB per-file limit", () => {
+test("invalid byte sizes and non-image types cannot bypass the 1 MiB optimized-file limit", () => {
   const { database, budget } = fixture();
   try {
-    for (const bytes of [0, -1, 1.5, 5_242_881, Number.NaN, Infinity]) {
+    for (const bytes of [0, -1, 1.5, 1_048_577, Number.NaN, Infinity]) {
       assert.throws(() => budget.reserve({ ...input, bytes }, []), error => error instanceof AppError && error.statusCode === 400);
     }
     assert.throws(() => budget.reserve({ ...input, contentType: "text/html" } as never, []), error => error instanceof AppError && error.statusCode === 400);
@@ -131,6 +131,6 @@ test("safe retired metadata ages out after the seven-day replay window without r
     assert.throws(() => budget.reserve(input, []), error => error instanceof AppError && error.statusCode === 429);
     budget.reserve({ ...input, now: now + 604_800_000 }, []);
     assert.equal(budget.get("00000001-3333-4333-8333-333333333333"), null);
-    assert.equal(budget.usage(restaurantId, [{ key: `${restaurantId}/uncertain-retired-marker`, size: 36 }]), 5_242_916);
+    assert.equal(budget.usage(restaurantId, [{ key: `${restaurantId}/uncertain-retired-marker`, size: 36 }]), 1_048_612);
   } finally { database.close(); }
 });
