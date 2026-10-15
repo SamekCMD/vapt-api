@@ -1,4 +1,8 @@
 import type { Hono, MiddlewareHandler } from "hono";
+import { z } from "zod";
+import { AppError } from "../../lib/errors.js";
+import { affectsPublicCatalog } from "../../modules/catalog-publication/policy.js";
+import { catalogOperationId, controlCatalogOperation, isCatalogWriterEnabled, requireCatalogActor, respondCatalogMutation, submitCatalogMutation } from "../catalog/writer.js";
 
 import { validateWithSchema } from "../../lib/validation.js";
 import { kitchenOrderParamsSchema, updateKitchenOrderStatusBodySchema } from "../../modules/kitchen/schemas.js";
@@ -17,12 +21,15 @@ export function registerWorkerRestaurantRoutes(
     ? async (_context, next) => next()
     : workerRateLimit("auth");
   const authenticated: MiddlewareHandler<WorkerHonoEnv> = async (context, next) => {
-    await requireWorkerAuth(context);
+    if (isCatalogWriterEnabled(context.env)) await requireCatalogActor(context);
+    else await requireWorkerAuth(context);
     await next();
   };
 
   app.post("/onboarding", rate, authenticated, async (context) => {
     const body = validateWithSchema(onboardingBodySchema, await parseWorkerJson(context.req.raw));
+    if (isCatalogWriterEnabled(context.env)) return respondCatalogMutation(context,
+      await submitCatalogMutation(context, { type: "onboarding", input: body }), 201);
     const services = await context.get("getServices")();
     return context.json(await services.restaurants.createOwnedRestaurant(context.get("auth").userId, body), 201);
   });
@@ -32,8 +39,14 @@ export function registerWorkerRestaurantRoutes(
   });
   app.patch("/restaurants/me", rate, authenticated, async (context) => {
     const body = validateWithSchema(updateOwnedRestaurantBodySchema, await parseWorkerJson(context.req.raw));
+    if (isCatalogWriterEnabled(context.env) && affectsPublicCatalog(body)) return respondCatalogMutation(context,
+      await submitCatalogMutation(context, { type: "restaurant.patch", input: body }), 200);
+    const operationId = isCatalogWriterEnabled(context.env) ? catalogOperationId(context) : null;
     const services = await context.get("getServices")();
-    return context.json(await services.restaurants.updateOwnedRestaurant(context.get("auth").userId, body));
+    const saved = await services.restaurants.updateOwnedRestaurant(context.get("auth").userId, body);
+    if (operationId && context.req.header("X-Vapt-Catalog-Protocol") === "1") return context.json({ result: saved,
+      receipt: { operationId, restaurantId: saved.id, phase: "ready", version: null, committed: true, retryable: false } });
+    return context.json(saved);
   });
 
   app.get("/restaurants/me/menu-items", rate, authenticated, async (context) => {
@@ -42,20 +55,41 @@ export function registerWorkerRestaurantRoutes(
   });
   app.post("/restaurants/me/menu-items", rate, authenticated, async (context) => {
     const body = validateWithSchema(createMenuItemBodySchema, await parseWorkerJson(context.req.raw));
+    if (isCatalogWriterEnabled(context.env)) return respondCatalogMutation(context,
+      await submitCatalogMutation(context, { type: "item.create", input: body }), 201);
     const services = await context.get("getServices")();
     return context.json(await services.menu.createOwnedMenuItem(context.get("auth").userId, body), 201);
   });
   app.patch("/restaurants/me/menu-items/:itemId", rate, authenticated, async (context) => {
     const params = validateWithSchema(menuItemParamsSchema, context.req.param());
     const body = validateWithSchema(updateMenuItemBodySchema, await parseWorkerJson(context.req.raw));
+    if (isCatalogWriterEnabled(context.env)) return respondCatalogMutation(context,
+      await submitCatalogMutation(context, { type: "item.patch", itemId: params.itemId, input: body }), 200);
     const services = await context.get("getServices")();
     return context.json(await services.menu.updateOwnedMenuItem(context.get("auth").userId, params.itemId, body));
   });
   app.delete("/restaurants/me/menu-items/:itemId", rate, authenticated, async (context) => {
     const params = validateWithSchema(menuItemParamsSchema, context.req.param());
+    if (isCatalogWriterEnabled(context.env)) return respondCatalogMutation(context,
+      await submitCatalogMutation(context, { type: "item.delete", itemId: params.itemId }), 204);
     const services = await context.get("getServices")();
     await services.menu.deleteOwnedMenuItem(context.get("auth").userId, params.itemId);
     return context.body(null, 204);
+  });
+
+  const enabledCatalog: MiddlewareHandler<WorkerHonoEnv> = async (context, next) => {
+    if (!isCatalogWriterEnabled(context.env)) throw new AppError(404, "not_found", "Not found");
+    await next();
+  };
+  app.get("/restaurants/me/catalog-operations/:operationId", rate, enabledCatalog, authenticated, async context =>
+    context.json(await controlCatalogOperation(context, "status")));
+  app.post("/restaurants/me/catalog-operations/:operationId/retry", rate, enabledCatalog, authenticated, async context => {
+    validateWithSchema(z.object({}).strict(), await parseWorkerJson(context.req.raw));
+    return context.json(await controlCatalogOperation(context, "retry"));
+  });
+  app.post("/restaurants/me/catalog/rebuild", rate, enabledCatalog, authenticated, async context => {
+    validateWithSchema(z.object({}).strict(), await parseWorkerJson(context.req.raw));
+    return respondCatalogMutation(context, await submitCatalogMutation(context, { type: "rebuild" }), 200);
   });
 
   app.get("/restaurants/me/kitchen/orders", rate, authenticated, async (context) => {

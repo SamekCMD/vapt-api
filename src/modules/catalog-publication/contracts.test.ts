@@ -41,7 +41,8 @@ test("deterministicOnboardingId reuses a server-derived UUID across retries", as
   assert.match(id, /^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
   assert.equal(await allocateOnboardingRestaurantId(userId, operationId), id);
   assert.notEqual(await allocateOnboardingRestaurantId(restaurantId, operationId), id);
-  assert.notEqual(await allocateOnboardingRestaurantId(userId, restaurantId), id);
+  assert.equal(await allocateOnboardingRestaurantId(userId, restaurantId), id,
+    "new operation keys for one owner must not allocate unbounded independent rooms");
   await assert.rejects(allocateOnboardingRestaurantId("not-a-uuid", operationId));
 });
 

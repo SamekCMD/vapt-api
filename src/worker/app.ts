@@ -5,6 +5,7 @@ import { installWorkerHttpPolicy } from "./http.js";
 import type { WorkerServicesFactory } from "./services.js";
 import type { ApiServices } from "../composition/api-services.js";
 import type { AuthContext } from "../plugins/auth.js";
+import type { CatalogActor } from "../modules/catalog-publication/contracts.js";
 import { registerWorkerAuthRoutes } from "./routes/auth.js";
 import { registerWorkerPublicRoutes } from "./routes/public.js";
 import { registerWorkerRestaurantRoutes } from "./routes/restaurant.js";
@@ -15,7 +16,7 @@ import { registerWorkerRealtimeRoutes } from "./routes/realtime.js";
 
 export type WorkerHonoEnv = {
   Bindings: WorkerBindings;
-  Variables: { getServices: () => Promise<ApiServices>; auth: AuthContext };
+  Variables: { getServices: () => Promise<ApiServices>; auth: AuthContext; catalogActor?: CatalogActor };
 };
 
 export function createWorkerApp(

@@ -11,7 +11,7 @@ import { createWorkerRateLimitBackend } from "./rate-limit.js";
 import type { WorkerServicesFactory } from "./services.js";
 
 const allowedMethods = "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS";
-const allowedHeaders = "Content-Type, X-Captcha-Response, Idempotency-Key, X-Vapt-Order-Token";
+const allowedHeaders = "Content-Type, X-Captcha-Response, Idempotency-Key, X-Vapt-Order-Token, X-Vapt-Catalog-Protocol";
 const maxBodyBytes = 1_048_576;
 const limits: Record<RateLimitGroup, number> = {
   auth: 20, billing: 60, orders: 30, storage: 30, webhooks: 300, public: 120,

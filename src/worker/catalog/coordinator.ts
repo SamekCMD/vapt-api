@@ -9,6 +9,7 @@ import type { WorkerBindings } from "../environment.js";
 import { SqliteCommandStore } from "./command-store.js";
 import { createCatalogProjection } from "./projection.js";
 import { createCatalogCoordinator, type CatalogCoordinator, type OperationAccess } from "./runner.js";
+import { catalogRpcReply } from "./rpc.js";
 
 // Not bound/exported by a deployed entry until the later writer/ingress gates.
 export class PublicCatalogCoordinator extends DurableObject<WorkerBindings> {
@@ -30,17 +31,17 @@ export class PublicCatalogCoordinator extends DurableObject<WorkerBindings> {
         transaction: work => ctx.storage.transaction(async () => work()),
         setAlarm: at => ctx.storage.setAlarm(at), deleteAlarm: () => ctx.storage.deleteAlarm(), sync: () => ctx.storage.sync(),
       },
-      apply: command => this.withDatabase(database => applyCatalogCommand(database, command, {
+      apply: command => this.#withDatabase(database => applyCatalogCommand(database, command, {
         publicBaseUrl: env.R2_PUBLIC_BASE_URL ? new URL(env.R2_PUBLIC_BASE_URL) : null,
       })),
-      findCommitted: identity => this.withDatabase(database => findCommittedCommand(database, identity)),
+      findCommitted: identity => this.#withDatabase(database => findCommittedCommand(database, identity)),
       project: value => projection().publish(value),
       signal: state => this.sendPublishedSignal(state),
       prune: (id, cursor) => projection().prune(id, cursor),
     });
   }
 
-  private async withDatabase<T>(work: (database: Pool) => Promise<T>): Promise<T> {
+  async #withDatabase<T>(work: (database: Pool) => Promise<T>): Promise<T> {
     const database = createWorkerDatabase(this.env);
     try { return await work(database); } finally { await database.end(); }
   }
@@ -53,9 +54,9 @@ export class PublicCatalogCoordinator extends DurableObject<WorkerBindings> {
     }
   }
 
-  submit(command: CatalogCommand) { return this.runner.submit(command); }
-  status(access: OperationAccess) { return this.runner.status(access); }
-  retry(access: OperationAccess) { return this.runner.retry(access); }
+  submit(command: CatalogCommand) { return catalogRpcReply(() => this.runner.submit(command)); }
+  status(access: OperationAccess) { return catalogRpcReply(() => this.runner.status(access)); }
+  retry(access: OperationAccess) { return catalogRpcReply(() => this.runner.retry(access)); }
   alarm() { return this.runner.alarm(); }
   async fetch(): Promise<PlatformResponse> { return new Response(null, { status: 404 }) as unknown as PlatformResponse; }
 }

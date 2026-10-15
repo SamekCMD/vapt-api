@@ -110,6 +110,19 @@ test("successful publication erases private intent/result and preserves only the
   } finally { value.database.close(); }
 });
 
+test("an authenticated replay of a ready operation recovers its original result without another mutation", async () => {
+  const value = fixture();
+  try {
+    const runner = createCatalogCoordinator(value.ports);
+    const first = await runner.submit(command);
+    const replayed = await runner.submit(command);
+    assert.deepEqual(replayed.result, first.result);
+    assert.equal(value.counts().writes, 1);
+    assert.equal(value.counts().applies, 1);
+    assert.deepEqual(value.database.prepare("select payload from catalog_command_chunks").all(), []);
+  } finally { value.database.close(); }
+});
+
 for (const stage of ["apply", "project", "signal"] as const) {
   test(`crashAtEveryBoundary recovers ${stage} interruption without duplicate domain effects`, async () => {
     const value = fixture();

@@ -133,8 +133,13 @@ export function createCatalogCoordinator(ports: CatalogCoordinatorPorts): Catalo
       const fingerprint = await fingerprintCommand(command);
       return serial(async () => {
         await atomic(() => { store.expire(now()); store.accept(command, fingerprint, now()); });
-        const result = await drive(command.operationId, true);
+        let result = await drive(command.operationId, true);
         const operation = store.get(command.operationId)!;
+        if (result === undefined && operation.phase === "ready") {
+          const original = await ports.findCommitted({ operationId: command.operationId, restaurantId: command.restaurantId,
+            actor: command.actor, fingerprint });
+          if (original) result = original.result;
+        }
         return { receipt: receipt(operation), ...(result !== undefined ? { result } : {}) };
       });
     },

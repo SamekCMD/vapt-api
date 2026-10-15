@@ -71,7 +71,7 @@ const database = {
 } as unknown as Database;
 
 test("additive realtime contracts are Worker-only public-rate routes", () => {
-  assert.deepEqual(WORKER_ONLY_ROUTE_CONTRACTS, [
+  assert.deepEqual(WORKER_ONLY_ROUTE_CONTRACTS.filter(route => route.path.startsWith("/v1/realtime/")), [
     { method: "POST", path: "/v1/realtime/tickets", group: "public", auth: false },
     { method: "GET", path: "/v1/realtime/restaurants/:restaurantId/socket", group: "public", auth: false },
   ]);

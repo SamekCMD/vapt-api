@@ -47,7 +47,8 @@ async function digest(value: string): Promise<Uint8Array> {
 }
 
 export async function allocateOnboardingRestaurantId(userId: string, operationId: string): Promise<string> {
-  const bytes = (await digest(JSON.stringify(["vapt.catalog.onboarding.v1", uuid.parse(userId), uuid.parse(operationId)]))).slice(0, 16);
+  uuid.parse(operationId); // Validates the action key; it must not select a new room for the same owner.
+  const bytes = (await digest(JSON.stringify(["vapt.catalog.onboarding.v1", uuid.parse(userId)]))).slice(0, 16);
   // RFC 9562 custom UUIDv8; deterministic address only, never an authorization token.
   bytes[6] = (bytes[6] & 0x0f) | 0x80;
   bytes[8] = (bytes[8] & 0x3f) | 0x80;
