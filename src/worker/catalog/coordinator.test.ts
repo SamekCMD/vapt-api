@@ -270,3 +270,21 @@ test("a restarted invocation at the tenth consumed attempt parks work without an
     assert.equal(value.store.get(operationId)?.phase, "blocked");
   } finally { value.database.close(); }
 });
+
+test("image work shares the catalog serial queue so neither can overtake a live apply", async () => {
+  const value = fixture();
+  try {
+    const runner = createCatalogCoordinator(value.ports);
+    let release!: () => void; let started!: () => void;
+    const arrived = new Promise<void>(resolve => { started = resolve; });
+    const barrier = new Promise<void>(resolve => { release = resolve; });
+    const apply = value.ports.apply;
+    value.ports.apply = async input => { started(); await barrier; return apply(input); };
+    const submission = runner.submit(command); await arrived;
+    let imageEntered = false;
+    const imageWork = runner.exclusive(async () => { imageEntered = true; assert.equal(value.store.get(operationId)?.phase, "ready"); });
+    await Promise.resolve(); assert.equal(imageEntered, false);
+    release(); await submission; await imageWork;
+    assert.equal(imageEntered, true);
+  } finally { value.database.close(); }
+});

@@ -73,6 +73,19 @@ test("metadata expires at seven days and leaves no periodic alarm work", () => {
   } finally { database.close(); }
 });
 
+test("cleanup admission sees blocked unresolved commands but not already-ready cleanup work", () => {
+  const { database, store } = fixture();
+  try {
+    assert.equal(store.hasUnresolved(), false);
+    const accepted = store.accept(command, "a".repeat(64), now);
+    assert.equal(store.hasUnresolved(), true);
+    store.save({ ...accepted, phase: "blocked", work: "none", nextAt: null, intentPresent: false });
+    assert.equal(store.hasUnresolved(), true);
+    store.save({ ...accepted, phase: "ready", committed: true, work: "cleanup" });
+    assert.equal(store.hasUnresolved(), false);
+  } finally { database.close(); }
+});
+
 test("chunked intents preserve Unicode without an oversized SQLite row", () => {
   const { database, sql, store } = fixture();
   try {

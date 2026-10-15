@@ -30,7 +30,7 @@ export type WorkerBindings = Partial<Record<(typeof workerVariables)[number], st
   PUBLIC_CATALOG_COORDINATOR?: DurableObjectNamespace<PublicCatalogCoordinator>;
   RESTAURANT_REALTIME?: DurableObjectNamespace<RestaurantRealtime>;
   HYPERDRIVE?: { connectionString: string };
-  R2_BUCKET?: WorkerR2Bucket & Partial<Pick<R2Bucket, "get" | "put" | "list">>;
+  R2_BUCKET?: WorkerR2Bucket & Partial<Pick<R2Bucket, "get" | "head" | "put" | "list">>;
   AUTH_RATE_LIMIT?: WorkerRateLimitBinding;
   BILLING_RATE_LIMIT?: WorkerRateLimitBinding;
   ORDERS_RATE_LIMIT?: WorkerRateLimitBinding;

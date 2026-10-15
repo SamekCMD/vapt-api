@@ -8,6 +8,7 @@ import { validAdminSecret } from "../../modules/payments/effects-admin.js";
 import { menuImageParamsSchema, prepareMenuImageUploadBodySchema } from "../../modules/storage/schemas.js";
 import type { WorkerHonoEnv } from "../app.js";
 import { parseWorkerJson, requireWorkerAuth, workerRateLimit } from "../http.js";
+import { isCatalogWriterEnabled, requireCatalogActor, prepareCatalogImage, retireCatalogImage } from "../catalog/writer.js";
 
 export function registerWorkerMiscRoutes(
   app: Hono<WorkerHonoEnv>,
@@ -20,6 +21,11 @@ export function registerWorkerMiscRoutes(
     await requireWorkerAuth(context);
     await next();
   };
+  const imageAuthenticated: MiddlewareHandler<WorkerHonoEnv> = async (context, next) => {
+    if (isCatalogWriterEnabled(context.env)) await requireCatalogActor(context);
+    else await requireWorkerAuth(context);
+    await next();
+  };
   const enabledStorage: MiddlewareHandler<WorkerHonoEnv> = async (context, next) => {
     if (!context.env.R2_BUCKET_NAME) {
       return context.json({ error: { code: "not_found", message: "Route not found" } }, 404);
@@ -27,17 +33,22 @@ export function registerWorkerMiscRoutes(
     await next();
   };
 
-  app.post("/restaurants/:restaurantId/menu-items/:itemId/image/upload", enabledStorage, storageRate, authenticated, async (context) => {
+  app.post("/restaurants/:restaurantId/menu-items/:itemId/image/upload", enabledStorage, storageRate, imageAuthenticated, async (context) => {
     const params = validateWithSchema(menuImageParamsSchema, context.req.param());
     const body = validateWithSchema(prepareMenuImageUploadBodySchema, await parseWorkerJson(context.req.raw));
+    if (isCatalogWriterEnabled(context.env)) return context.json(await prepareCatalogImage(context, params, body));
     const services = await context.get("getServices")();
     if (!services.menuImages) throw new AppError(503, "service_unavailable", "Service unavailable");
     return context.json(await services.menuImages.prepareUpload({
       userId: context.get("auth").userId, ...params, ...body,
     }));
   });
-  app.delete("/restaurants/:restaurantId/menu-items/:itemId/image", enabledStorage, storageRate, authenticated, async (context) => {
+  app.delete("/restaurants/:restaurantId/menu-items/:itemId/image", enabledStorage, storageRate, imageAuthenticated, async (context) => {
     const params = validateWithSchema(menuImageParamsSchema, context.req.param());
+    if (isCatalogWriterEnabled(context.env)) {
+      await retireCatalogImage(context, params);
+      return context.body(null, 204);
+    }
     const services = await context.get("getServices")();
     if (!services.menuImages) throw new AppError(503, "service_unavailable", "Service unavailable");
     await services.menuImages.delete({ userId: context.get("auth").userId, ...params });

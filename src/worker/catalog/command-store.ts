@@ -22,6 +22,7 @@ export class SqliteCommandStore {
     sql.exec("create table if not exists catalog_room_scope (singleton integer primary key check(singleton = 1), restaurant_id text not null)");
     sql.exec("create index if not exists catalog_command_due on catalog_commands(next_at)");
     sql.exec("create index if not exists catalog_command_expiry on catalog_commands(expires_at)");
+    sql.exec("create index if not exists catalog_command_unready on catalog_commands(json_extract(metadata, '$.phase'))");
   }
 
   // Mutators are called inside one ctx.storage.transaction with alarm updates.
@@ -51,6 +52,10 @@ export class SqliteCommandStore {
   get(operationId: string): StoredOperation | null {
     const row = this.sql.exec<{ metadata: string }>("select metadata from catalog_commands where operation_id = ?", operationId).toArray()[0];
     return row ? JSON.parse(row.metadata) as StoredOperation : null;
+  }
+
+  hasUnresolved(): boolean {
+    return this.sql.exec("select operation_id from catalog_commands where json_extract(metadata, '$.phase') in ('accepted', 'committed', 'projected', 'blocked') limit 1").toArray().length > 0;
   }
 
   intent(operationId: string): CatalogCommand | null { return this.readBody(operationId, "intent"); }

@@ -33,7 +33,9 @@ async function mutate(database: Database, client: PoolClient, command: CatalogCo
 }
 
 export async function applyCatalogCommand(
-  database: Database, input: CatalogCommand, options: { publicBaseUrl?: URL | null } = {},
+  database: Database, input: CatalogCommand, options: {
+    publicBaseUrl?: URL | null; validateImages?: (command: CatalogCommand) => Promise<void>;
+  } = {},
 ): Promise<CommittedCommand> {
   const command = validateCatalogCommand(input);
   if (command.mutation.type === "restaurant.patch" && !affectsPublicCatalog(command.mutation.input)) {
@@ -74,6 +76,14 @@ export async function applyCatalogCommand(
       where id = $1::uuid and "userId" = $2::uuid and "expiresAt" > clock_timestamp() for share`,
     [command.actor.sessionId, command.actor.userId]);
     if (!active.rows[0]) throw new AppError(401, "unauthorized", "Unauthorized");
+    const imageUrl = mutation.type === "restaurant.patch" ? mutation.input.logoUrl
+      : mutation.type === "item.create" || mutation.type === "item.patch" ? mutation.input.imageUrl : null;
+    if (imageUrl) {
+      if (!options.validateImages) throw new AppError(503, "catalog_image_validation_required", "Image validation unavailable");
+      // Same owner lock as image retirement. A delayed apply MUST verify after
+      // acquiring it, never rely on an object check made before waiting on SQL.
+      await options.validateImages(command);
+    }
     // Idempotency has a seven-day logical window; expired keys are not permanent tombstones.
     await client.query(`delete from public.catalog_publication_operations
       where operation_id = $1::uuid and expires_at <= clock_timestamp()`, [command.operationId]);

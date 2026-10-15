@@ -101,6 +101,32 @@ test("atomicJournalAndDomain commits one connection, consistent snapshot and no 
   assert.ok(fixture.journal());
 });
 
+test("image attachment is checked after owner/session locks and before any domain effect", async () => {
+  const fixture = databaseFixture();
+  const imageCommand: CatalogCommand = { ...command, mutation: { type: "restaurant.patch", input: {
+    logoUrl: `https://assets.test/${restaurant}/${session}/${operation}`,
+  } } };
+  let checked = false;
+  await assert.rejects(applyCatalogCommand(fixture.database, imageCommand, { validateImages: async () => {
+    checked = true;
+    assert.ok(fixture.calls.some(call => call.values.includes(`catalog:owner:${owner}`)));
+    assert.ok(fixture.calls.some(call => call.sql.includes('from better_auth."session"') && /for share/i.test(call.sql)));
+    assert.equal(fixture.calls.some(call => /update public\.restaurants/i.test(call.sql)), false);
+    throw new AppError(410, "menu_image_upload_expired", "Image was retired");
+  } } as never), error => error instanceof AppError && error.statusCode === 410);
+  assert.equal(checked, true);
+  assert.equal(fixture.committedMutations(), 0);
+  assert.equal(fixture.commits(), 0);
+});
+
+test("a new image reference cannot bypass validation through an alternate applier caller", async () => {
+  const fixture = databaseFixture();
+  await assert.rejects(applyCatalogCommand(fixture.database, { ...command, mutation: {
+    type: "restaurant.patch", input: { logoUrl: "https://assets.test/unchecked" },
+  } }), error => error instanceof AppError && error.code === "catalog_image_validation_required");
+  assert.equal(fixture.committedMutations(), 0);
+});
+
 test("journal failure rolls domain back instead of publishing an unjournaled mutation", async () => {
   const fixture = databaseFixture(); fixture.failJournal();
   await assert.rejects(applyCatalogCommand(fixture.database, command));

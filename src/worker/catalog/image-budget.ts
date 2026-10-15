@@ -69,6 +69,11 @@ export class SqliteImageBudget {
     return row ? JSON.parse(row.reservation) as ImageReservation : null;
   }
 
+  getByObjectKey(objectKey: string): ImageReservation | null {
+    const row = this.sql.exec<{ reservation: string }>("select reservation from catalog_image_leases where json_extract(reservation, '$.objectKey') = ? limit 1", objectKey).toArray()[0];
+    return row ? JSON.parse(row.reservation) as ImageReservation : null;
+  }
+
   stageAttempt(leaseId: string): ImageReservation {
     const lease = this.require(leaseId);
     if (lease.state !== "reserved") throw new AppError(409, "menu_image_upload_conflict", "Image upload conflicts with existing work");

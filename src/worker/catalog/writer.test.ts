@@ -22,6 +22,7 @@ function fixture(options: { enabled?: boolean; noRestaurant?: boolean; pending?:
   const commands: CatalogCommand[] = [];
   const roomNames: string[] = [];
   let authReads = 0; let legacyWrites = 0;
+  const imageCalls: { action: string; input: unknown }[] = [];
   const scope = { id: restaurantId, name: "Bistrô" };
   const receipt = (operation: string, restaurant: string): CommandReceipt => ({ operationId: operation, restaurantId: restaurant,
     phase: options.pending ? "committed" : "ready", version: "11", committed: true, retryable: Boolean(options.pending) });
@@ -45,13 +46,23 @@ function fixture(options: { enabled?: boolean; noRestaurant?: boolean; pending?:
       async updateOwnedMenuItem() { legacyWrites++; return { legacy: true }; },
       async deleteOwnedMenuItem() { legacyWrites++; },
     },
+    menuImages: {
+      async prepareUpload() { legacyWrites++; return { legacy: true }; },
+      async delete() { legacyWrites++; },
+    },
   } as unknown as ApiServices;
   const env = { ENVIRONMENT: "preview", CORS_ORIGINS: origin,
     PUBLIC_CATALOG_WRITER_ENABLED: options.enabled === false ? "false" : "true",
     AUTH_RATE_LIMIT: { async limit() { return { success: true }; } },
+    STORAGE_RATE_LIMIT: { async limit() { return { success: true }; } }, R2_BUCKET_NAME: "synthetic-bucket",
     PUBLIC_CATALOG_COORDINATOR: {
       idFromName(name: string) { roomNames.push(name); return name; },
       get() { return {
+        async prepareImage(input: unknown) { imageCalls.push({ action: "prepare", input }); return { ok: true, value: {
+          state: "upload_required", method: "PUT", publicUrl: "https://assets.test/unique", objectKey: "unique", uploadUrl: "https://synthetic.test/signed",
+          headers: { "Content-Type": "image/webp", "If-Match": '"synthetic-etag"' }, expiresInSeconds: 300,
+        } }; },
+        async retireImage(input: unknown) { imageCalls.push({ action: "retire", input }); return { ok: true, value: undefined }; },
         async submit(command: CatalogCommand) { commands.push(command); return { ok: true, value: { receipt: receipt(command.operationId, command.restaurantId), result: { saved: true } } }; },
         async status(access: { operationId: string; restaurantId: string }) { return { ok: true, value: receipt(access.operationId, access.restaurantId) }; },
         async retry(access: { operationId: string; restaurantId: string }) { return { ok: true, value: receipt(access.operationId, access.restaurantId) }; },
@@ -64,8 +75,37 @@ function fixture(options: { enabled?: boolean; noRestaurant?: boolean; pending?:
       "Content-Type": "application/json", "Idempotency-Key": operationId, "X-Vapt-Catalog-Protocol": "1", ...headers },
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
   }), env, execution);
-  return { request, commands, roomNames, env, authReads: () => authReads, legacyWrites: () => legacyWrites };
+  return { request, commands, roomNames, env, imageCalls, authReads: () => authReads, legacyWrites: () => legacyWrites };
 }
+
+test("image upload uses the same owner-scoped coordinator and sends no cookie/email in the lease", async () => {
+  const value = fixture();
+  const response = await value.request(`/restaurants/${restaurantId}/menu-items/${sessionId}/image/upload`, "POST", { contentType: "image/webp", contentLength: 123 });
+  assert.equal(response.status, 200);
+  assert.deepEqual(value.imageCalls, [{ action: "prepare", input: { restaurantId, itemId: sessionId, leaseId: operationId,
+    actor: { userId, sessionId, sessionExpiresAt: new Date("2030-01-01").getTime() }, contentType: "image/webp", contentLength: 123 } }]);
+  assert.equal(value.authReads(), 1); assert.equal(value.legacyWrites(), 0);
+});
+
+test("image retirement requires an explicit tenant image key and never falls through to mutable legacy deletion", async () => {
+  const value = fixture(); const path = `/restaurants/${restaurantId}/menu-items/${sessionId}/image`;
+  assert.equal((await value.request(path, "DELETE")).status, 400);
+  const objectKey = `${restaurantId}/${sessionId}/${operationId}`;
+  assert.equal((await value.request(`${path}?objectKey=${encodeURIComponent(objectKey)}`, "DELETE")).status, 204);
+  assert.equal(value.imageCalls[0]?.action, "retire");
+  assert.equal(value.legacyWrites(), 0);
+});
+
+test("foreign/anonymous/oversized image requests never select a coordinator; disabled flag preserves legacy", async () => {
+  const value = fixture(); const path = `/restaurants/${restaurantId}/menu-items/${sessionId}/image/upload`;
+  assert.equal((await value.request(path, "POST", { contentType: "image/webp", contentLength: 1_048_577 })).status, 400);
+  assert.equal((await value.request(path, "POST", { contentType: "image/webp", contentLength: 123 }, { Cookie: "session=revoked" })).status, 401);
+  assert.equal((await value.request(`/restaurants/${operationId}/menu-items/${sessionId}/image/upload`, "POST", { contentType: "image/webp", contentLength: 123 })).status, 403);
+  assert.equal(value.roomNames.length, 0);
+  const legacy = fixture({ enabled: false });
+  assert.equal((await legacy.request(path, "POST", { contentType: "image/webp", contentLength: 123 })).status, 200);
+  assert.equal(legacy.legacyWrites(), 1); assert.equal(legacy.imageCalls.length, 0);
+});
 
 test("allCatalogRoutesUseDurableWriter sends validated commands and only verified secret-free actor metadata", async () => {
   const cases = [

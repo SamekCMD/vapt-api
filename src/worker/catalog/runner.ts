@@ -16,6 +16,7 @@ export type CatalogCoordinatorPorts = {
   prune(restaurantId: string, cursor?: string): Promise<{ cursor?: string }>;
 };
 export type CatalogCoordinator = {
+  exclusive<T>(work: () => Promise<T>): Promise<T>;
   submit(command: CatalogCommand): Promise<CommandOutcome<unknown>>;
   status(access: OperationAccess): Promise<CommandReceipt>;
   retry(access: OperationAccess): Promise<CommandReceipt>;
@@ -128,6 +129,7 @@ export function createCatalogCoordinator(ports: CatalogCoordinatorPorts): Catalo
     return result;
   }
   return {
+    exclusive: serial,
     async submit(input) {
       const command = validateCatalogCommand(input);
       const fingerprint = await fingerprintCommand(command);
