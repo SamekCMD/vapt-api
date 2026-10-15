@@ -52,6 +52,17 @@ export interface CatalogRepository {
   findPublishedBySlug(slug: string): Promise<PublicCatalogDto | null>;
 }
 
+// Called with the domain transaction's client so projection cannot mix commits.
+export async function buildPublicCatalog(queryable: Queryable, restaurantId: string): Promise<PublicCatalogDto> {
+  const result = await queryable.query<{ slug: string }>(
+    "select slug from public.restaurants where id = $1::uuid", [restaurantId],
+  );
+  const row = result.rows[0];
+  const catalog = row ? await createCatalogRepository(queryable).findPublishedBySlug(row.slug) : null;
+  if (!catalog) throw new AppError(404, "not_found", "Restaurant not found");
+  return catalog;
+}
+
 function isoString(value: string | Date): string {
   return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
 }

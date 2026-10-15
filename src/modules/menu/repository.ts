@@ -1,3 +1,4 @@
+import type { PoolClient } from "pg";
 import type { Database, Queryable } from "../../lib/database.js";
 import { withTransaction } from "../../lib/database.js";
 import { AppError } from "../../lib/errors.js";
@@ -160,11 +161,14 @@ async function replaceVariations(
   }
 }
 
-export function createMenuRepository(database: Database): MenuRepository {
+export function createMenuRepository(database: Database, options: { transaction?: PoolClient } = {}): MenuRepository {
+  const queryable = options.transaction ?? database;
+  const inTransaction = <T>(work: (client: PoolClient) => Promise<T>): Promise<T> =>
+    options.transaction ? work(options.transaction) : withTransaction(database, work);
   return {
     async listOwnedMenuItems(userId) {
       try {
-        const result = await database.query<MenuItemRow>(
+        const result = await queryable.query<MenuItemRow>(
           `select ${ITEM_SELECT}
           from public.menu_items as item
           join public.restaurants as restaurant
@@ -184,7 +188,7 @@ export function createMenuRepository(database: Database): MenuRepository {
 
     async createOwnedMenuItem(userId, input) {
       try {
-        return await withTransaction(database, async (client) => {
+        return await inTransaction(async (client) => {
           const restaurantResult = await client.query<{ id: string }>(
             `select restaurant.id
             from public.restaurants as restaurant
@@ -267,7 +271,7 @@ export function createMenuRepository(database: Database): MenuRepository {
 
     async updateOwnedMenuItem(userId, itemId, patch) {
       try {
-        return await withTransaction(database, async (client) => {
+        return await inTransaction(async (client) => {
           const ownership = await client.query<{ restaurant_id: string }>(
             `select item.restaurant_id
             from public.menu_items as item
@@ -341,7 +345,7 @@ export function createMenuRepository(database: Database): MenuRepository {
 
     async deleteOwnedMenuItem(userId, itemId) {
       try {
-        const result = await database.query<{ id: string }>(
+        const result = await queryable.query<{ id: string }>(
           `delete from public.menu_items as item
           using public.restaurants as restaurant
           where item.id = $1::uuid

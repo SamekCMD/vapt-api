@@ -1,3 +1,4 @@
+import type { PoolClient } from "pg";
 import type { Database } from "../../lib/database.js";
 import { withTransaction } from "../../lib/database.js";
 import { AppError } from "../../lib/errors.js";
@@ -136,13 +137,20 @@ function mapStorageError(error: unknown): never {
   throw new AppError(500, "internal_error", "Failed to persist restaurant");
 }
 
-export function createRestaurantRepository(database: Database): RestaurantRepository {
+export function createRestaurantRepository(
+  database: Database,
+  options: { transaction?: PoolClient; onboardingRestaurantId?: string } = {},
+): RestaurantRepository {
+  const queryable = options.transaction ?? database;
+  const inTransaction = <T>(work: (client: PoolClient) => Promise<T>): Promise<T> =>
+    options.transaction ? work(options.transaction) : withTransaction(database, work);
   return {
     async createOwnedRestaurant(userId, input) {
       try {
-        return await withTransaction(database, async (client) => {
+        return await inTransaction(async (client) => {
           const restaurantResult = await client.query<RestaurantRow>(
             `insert into public.restaurants (
+              ${options.onboardingRestaurantId ? "id," : ""}
               owner_id,
               name,
               slug,
@@ -152,6 +160,7 @@ export function createRestaurantRepository(database: Database): RestaurantReposi
               onboarding_completed,
               onboarding_completed_at
             ) values (
+              ${options.onboardingRestaurantId ? "$4::uuid," : ""}
               $1::uuid,
               $2::text,
               $3::text,
@@ -162,7 +171,7 @@ export function createRestaurantRepository(database: Database): RestaurantReposi
               now()
             )
             returning ${RESTAURANT_COLUMNS}`,
-            [userId, input.restaurantName, input.slug],
+            [userId, input.restaurantName, input.slug, ...(options.onboardingRestaurantId ? [options.onboardingRestaurantId] : [])],
           );
           const restaurant = restaurantResult.rows[0];
           if (!restaurant) {
@@ -187,7 +196,7 @@ export function createRestaurantRepository(database: Database): RestaurantReposi
 
     async findOwnedRestaurant(userId) {
       try {
-        const result = await database.query<RestaurantRow>(
+        const result = await queryable.query<RestaurantRow>(
           `select ${RESTAURANT_COLUMNS}
           from public.restaurants
           where owner_id = $1::uuid
@@ -212,7 +221,7 @@ export function createRestaurantRepository(database: Database): RestaurantReposi
       values.push(userId);
 
       try {
-        const result = await database.query<RestaurantRow>(
+        const result = await queryable.query<RestaurantRow>(
           `update public.restaurants
           set ${assignments.join(", ")}, updated_at = now()
           where owner_id = $${entries.length + 1}::uuid
