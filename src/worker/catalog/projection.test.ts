@@ -172,3 +172,14 @@ test("pruning paginates bounded work while retaining only two complete snapshot 
   assert.deepEqual(complete.map(([, value]) => JSON.parse(value.body).version), ["104", "105"]);
   assert.equal((await projection.readBySlug("bistro")).version, "105");
 });
+
+test("image cleanup sees current AND previous catalogs even when the slug changed", async () => {
+  const fixture = bucketFixture(); const projection = createCatalogProjection(fixture.bucket, "preview");
+  const previous = committed("11", "bistro"); previous.state.catalog.restaurant.logoUrl = "https://assets.test/old-logo";
+  const current = committed("12", "novo-bistro", restaurantId, "bistro");
+  await projection.publish(previous); await projection.publish(current);
+  assert.deepEqual(await projection.readRetainedCatalogs(restaurantId), [current.state, previous.state]);
+  fixture.objects.delete(snapshotKey("11"));
+  await assert.rejects(projection.readRetainedCatalogs(restaurantId), unavailable,
+    "a missing retained version cannot be treated as proof that its images are unreferenced");
+});

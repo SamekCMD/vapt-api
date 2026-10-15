@@ -10,6 +10,7 @@ export type MenuImageGateway = {
     contentType: MenuImageContentType;
     contentLength: number;
     expiresInSeconds: number;
+    ifMatch?: string;
   }): Promise<string>;
   deleteObject(input: { objectKey: string }): Promise<void>;
 };

@@ -30,10 +30,11 @@ export function createR2MenuImageGateway(config: R2Config): MenuImageGateway {
           Key: input.objectKey,
           ContentType: input.contentType,
           ContentLength: input.contentLength,
+          ...(input.ifMatch ? { IfMatch: input.ifMatch } : {}),
         }),
         {
           expiresIn: input.expiresInSeconds,
-          signableHeaders: new Set(["content-length", "content-type"]),
+          signableHeaders: new Set(["content-length", "content-type", ...(input.ifMatch ? ["if-match"] : [])]),
         },
       );
     },

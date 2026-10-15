@@ -9,6 +9,7 @@ export type CatalogProjection = {
   publish(committed: CommittedCommand): Promise<CatalogState>;
   readBySlug(slug: string): Promise<CatalogState>;
   readRegistration(restaurantId: string): Promise<{ version: string; canonicalSlug: string }>;
+  readRetainedCatalogs(restaurantId: string): Promise<CatalogState[]>;
   prune(restaurantId: string, cursor?: string): Promise<{ cursor?: string }>;
 };
 
@@ -61,12 +62,12 @@ export function createCatalogProjection(bucket: Pick<R2Bucket, "get" | "put" | "
     if (value.restaurantId !== id || (value.previousVersion && compareVersion(value.previousVersion, value.version) >= 0)) throw unavailable();
     return { value, etag: object.etag };
   }
-  async function snapshot(value: Manifest): Promise<CatalogState> {
+  async function snapshot(value: Pick<Manifest, "restaurantId" | "version"> & { canonicalSlug?: string }): Promise<CatalogState> {
     const object = await bucket.get(snapshotKey(value.restaurantId, value.version));
     if (!object || object.size > 8_388_608) throw unavailable();
     const state = stateSchema.parse(await object.json());
     if (state.version !== value.version || state.catalog.restaurant.id !== value.restaurantId
-      || state.catalog.restaurant.slug !== value.canonicalSlug
+      || (value.canonicalSlug !== undefined && state.catalog.restaurant.slug !== value.canonicalSlug)
       || state.catalog.items.some(item => item.restaurantId !== value.restaurantId)) throw unavailable();
     return state;
   }
@@ -96,6 +97,14 @@ export function createCatalogProjection(bucket: Pick<R2Bucket, "get" | "put" | "
     throw unavailable();
   }
   return {
+    readRetainedCatalogs(id) { return safe(async () => {
+      if (!z.string().uuid().safeParse(id).success) throw missing();
+      const current = await manifest(id);
+      if (!current) throw missing();
+      const states = [await snapshot(current.value)];
+      if (current.value.previousVersion) states.push(await snapshot({ restaurantId: id, version: current.value.previousVersion }));
+      return states;
+    }); },
     readBySlug(name) { return safe(async () => {
       if (!slug.safeParse(name).success) throw missing();
       const address = await mapping(name);
