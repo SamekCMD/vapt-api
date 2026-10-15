@@ -1,6 +1,6 @@
 import { ConfigError, createConfig, type AppConfig } from "../lib/config.js";
 import type { WorkerR2Bucket } from "../modules/storage/r2-worker.js";
-import type { DurableObjectNamespace } from "@cloudflare/workers-types";
+import type { DurableObjectNamespace, R2Bucket } from "@cloudflare/workers-types";
 import type { RestaurantRealtime } from "./realtime/restaurant-room.js";
 
 const workerVariables = [
@@ -26,7 +26,7 @@ export type WorkerBindings = Partial<Record<(typeof workerVariables)[number], st
   REALTIME_ENABLED?: string;
   RESTAURANT_REALTIME?: DurableObjectNamespace<RestaurantRealtime>;
   HYPERDRIVE?: { connectionString: string };
-  R2_BUCKET?: WorkerR2Bucket;
+  R2_BUCKET?: WorkerR2Bucket & Partial<Pick<R2Bucket, "get" | "put" | "list">>;
   AUTH_RATE_LIMIT?: WorkerRateLimitBinding;
   BILLING_RATE_LIMIT?: WorkerRateLimitBinding;
   ORDERS_RATE_LIMIT?: WorkerRateLimitBinding;
