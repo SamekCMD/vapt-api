@@ -1,10 +1,30 @@
 import assert from "node:assert/strict";
-import { createHmac } from "node:crypto";
 import test from "node:test";
 
-import type { AppConfig } from "../../lib/config.js";
-import { AppError } from "../../lib/errors.js";
+import Fastify from "fastify";
+
 import { buildApp } from "../../app.js";
+import type { AppConfig } from "../../lib/config.js";
+import type { OwnershipLookup } from "../../lib/permissions.js";
+import { registerAuthDecorator } from "../../plugins/auth.js";
+import { registerErrorHandler } from "../../plugins/error-handler.js";
+import { registerAuthRoutes } from "./routes.js";
+import type { AuthRuntime, BetterAuthSession } from "./runtime.js";
+import { createSessionResolver } from "./session-resolver.js";
+
+const ownerId = "10000000-0000-4000-8000-000000000001";
+const ownerSession: BetterAuthSession = {
+  user: {
+    id: ownerId,
+    email: "owner@example.com",
+    name: "Owner",
+  },
+  session: {
+    id: "20000000-0000-4000-8000-000000000002",
+    userId: ownerId,
+    expiresAt: new Date("2030-01-01T00:00:00.000Z"),
+  },
+};
 
 const validConfig: AppConfig = {
   nodeEnv: "test",
@@ -12,148 +32,140 @@ const validConfig: AppConfig = {
   host: "127.0.0.1",
   corsOrigins: ["http://localhost:5173"],
   logLevel: "silent",
-  n8n: {
-    baseUrl: new URL("https://n8n.example.com"),
-    timeoutMs: 5000,
-    secrets: {
-      app: "app-secret",
-      admin: "admin-secret",
-    },
+  frontendUrl: new URL("https://app.vapt.test"),
+  stripe: {
+    secretKey: "sk_test_vapt",
+    webhookSecret: "whsec_test",
+    webhookToleranceSeconds: 300,
+    environment: "test",
+    portalConfigurationId: "bpc_vapt",
+    prices: { starter: "price_starter", pro: "price_pro", business: "price_business" },
   },
-  webhooks: {
-    stripe: {
-      signingSecret: "whsec_test",
-      toleranceSeconds: 300,
+  security: { publicOrderTokenSecret: "public-order-token-secret" },
+  betterAuth: {
+    secret: "better-auth-secret-at-least-32-characters",
+    url: new URL("https://api.vapt.test"),
+    trustedOrigins: ["https://app.vapt.test"],
+    databaseUrl: "postgresql://vapt:password@db.vapt.test/vapt",
+    turnstileSecretKey: "turnstile-secret-key",
+    email: {
+      resendApiKey: "re_test_key",
+      from: "Vapt <noreply@vapt.test>",
+      verifyAccountTemplate: "verify-account-template",
+      resetPasswordTemplate: "reset-password-template",
     },
-  },
-  supabase: {
-    url: new URL("https://supabase.example.com"),
-    serviceRoleKey: "service-role-key",
-    jwtSecret: "jwt-secret",
   },
 };
 
-function createToken(payload: Record<string, unknown>, secret: string): string {
-  const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
-  const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
-  const signature = createHmac("sha256", secret)
-    .update(`${header}.${body}`)
-    .digest("base64url");
-
-  return `${header}.${body}.${signature}`;
+function createFakeAuthRuntime(): AuthRuntime {
+  return {
+    async handler() {
+      return new Response(null, { status: 404 });
+    },
+    async getSession(headers) {
+      return headers.get("cookie")?.includes("better-auth.session_token=valid")
+        ? ownerSession
+        : null;
+    },
+    async close() {},
+  };
 }
 
-const validOwnerToken = createToken(
-  {
-    sub: "user-1",
-    email: "owner@example.com",
-    role: "authenticated",
-    exp: Math.floor(Date.now() / 1000) + 3600,
-  },
-  validConfig.supabase.jwtSecret,
-);
+test("protected route rejects a missing Better Auth session", async () => {
+  const app = await buildApp(validConfig, { authRuntime: createFakeAuthRuntime() });
 
-test("protected route rejects missing bearer token", async () => {
-  const app = await buildApp(validConfig);
-
-  const response = await app.inject({
-    method: "GET",
-    url: "/auth/me",
-  });
+  const response = await app.inject({ method: "GET", url: "/auth/me" });
 
   assert.equal(response.statusCode, 401);
   assert.deepEqual(response.json(), {
-    error: {
-      code: "unauthorized",
-      message: "Unauthorized",
-    },
+    error: { code: "unauthorized", message: "Unauthorized" },
   });
-
   await app.close();
 });
 
-test("protected route rejects invalid bearer token", async () => {
-  const app = await buildApp(validConfig);
+test("protected route rejects an invalid Better Auth session cookie", async () => {
+  const app = await buildApp(validConfig, { authRuntime: createFakeAuthRuntime() });
 
   const response = await app.inject({
     method: "GET",
     url: "/auth/me",
-    headers: {
-      authorization: "Bearer invalid-token",
-    },
+    headers: { cookie: "better-auth.session_token=invalid" },
   });
 
   assert.equal(response.statusCode, 401);
-  assert.deepEqual(response.json(), {
-    error: {
-      code: "unauthorized",
-      message: "Unauthorized",
-    },
-  });
-
   await app.close();
 });
 
-test("protected route accepts valid token and exposes request auth", async () => {
-  const app = await buildApp(validConfig);
+test("protected route exposes the authenticated Better Auth identity", async () => {
+  const app = await buildApp(validConfig, { authRuntime: createFakeAuthRuntime() });
 
   const response = await app.inject({
     method: "GET",
     url: "/auth/me",
-    headers: {
-      authorization: `Bearer ${validOwnerToken}`,
-    },
+    headers: { cookie: "better-auth.session_token=valid" },
   });
 
   assert.equal(response.statusCode, 200);
   assert.deepEqual(response.json(), {
-    userId: "user-1",
+    userId: ownerId,
     email: "owner@example.com",
     role: "authenticated",
   });
-
   await app.close();
 });
 
-test("protected restaurant route returns 403 when user cannot access restaurant", async () => {
-  const app = await buildApp(validConfig);
+test("legacy Supabase bearer tokens are ignored without a Better Auth cookie", async () => {
+  const app = await buildApp(validConfig, { authRuntime: createFakeAuthRuntime() });
 
   const response = await app.inject({
     method: "GET",
-    url: "/auth/restaurants/rest-2/access",
-    headers: {
-      authorization: `Bearer ${validOwnerToken}`,
-    },
+    url: "/auth/me",
+    headers: { authorization: "Bearer legacy-supabase-jwt" },
   });
 
-  assert.equal(response.statusCode, 403);
-  assert.deepEqual(response.json(), {
-    error: {
-      code: "forbidden",
-      message: "Forbidden",
-    },
-  });
-
+  assert.equal(response.statusCode, 401);
   await app.close();
 });
 
-test("protected restaurant route returns 200 when user owns restaurant", async () => {
-  const app = await buildApp(validConfig);
+async function buildOwnershipTestApp(ownershipLookup: OwnershipLookup) {
+  const app = Fastify({ logger: false });
+  const runtime = createFakeAuthRuntime();
+  registerAuthDecorator(app, createSessionResolver(runtime));
+  registerErrorHandler(app);
+  await registerAuthRoutes(app, validConfig, ownershipLookup);
+  return app;
+}
+
+test("ownership lookup receives the UUID returned by Better Auth", async () => {
+  const calls: Array<{ userId: string; restaurantId: string }> = [];
+  const app = await buildOwnershipTestApp(async (input) => {
+    calls.push(input);
+    return true;
+  });
 
   const response = await app.inject({
     method: "GET",
     url: "/auth/restaurants/rest-1/access",
-    headers: {
-      authorization: `Bearer ${validOwnerToken}`,
-    },
+    headers: { cookie: "better-auth.session_token=valid" },
   });
 
   assert.equal(response.statusCode, 200);
-  assert.deepEqual(response.json(), {
-    allowed: true,
-    restaurantId: "rest-1",
-    userId: "user-1",
+  assert.deepEqual(calls, [{ userId: ownerId, restaurantId: "rest-1" }]);
+  await app.close();
+});
+
+test("protected restaurant route remains forbidden when ownership fails", async () => {
+  const app = await buildOwnershipTestApp(async () => false);
+
+  const response = await app.inject({
+    method: "GET",
+    url: "/auth/restaurants/rest-2/access",
+    headers: { cookie: "better-auth.session_token=valid" },
   });
 
+  assert.equal(response.statusCode, 403);
+  assert.deepEqual(response.json(), {
+    error: { code: "forbidden", message: "Forbidden" },
+  });
   await app.close();
 });

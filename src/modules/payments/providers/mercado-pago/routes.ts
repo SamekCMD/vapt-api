@@ -1,107 +1,33 @@
 import type { FastifyInstance } from "fastify";
-import { z } from "zod";
-
 import type { AppConfig } from "../../../../lib/config.js";
-import { createSecretCipher } from "../../../../lib/crypto.js";
 import { AppError } from "../../../../lib/errors.js";
-import {
-  createSupabaseOwnershipLookup,
-  testOwnershipLookup,
-} from "../../../../lib/permissions.js";
-import { createSupabaseAdminClient } from "../../../../lib/supabase.js";
 import { validateWithSchema } from "../../../../lib/validation.js";
 import { requireAuth } from "../../../../plugins/auth.js";
-import { isAllowedOrigin } from "../../../../plugins/cors.js";
-import { createMercadoPagoOAuthClient } from "./client.js";
+import type { MercadoPagoOAuthService } from "./oauth.js";
 import {
-  createMercadoPagoOAuthRepository,
-  createMercadoPagoOAuthService,
-  type MercadoPagoOAuthService,
-} from "./oauth.js";
-
-const restaurantParamsSchema = z.object({
-  restaurantId: z.string().uuid(),
-}).strict();
-
-const environmentSchema = z.enum(["sandbox", "production"]);
-
-const connectBodySchema = z.object({
-  environment: environmentSchema,
-  returnOrigin: z.string().trim().min(1).max(255).optional(),
-}).strict();
-
-const environmentQuerySchema = z.object({
-  environment: environmentSchema,
-}).strict();
-
-const callbackQuerySchema = z.object({
-  state: z.string().min(16).max(512),
-  code: z.string().min(1).max(2048).optional(),
-  error: z.string().min(1).max(128).optional(),
-  error_description: z.string().max(512).optional(),
-}).strict().refine((value) => Boolean(value.code || value.error));
+  callbackQuerySchema,
+  connectBodySchema,
+  createMercadoPagoOAuthRedirect,
+  environmentQuerySchema,
+  resolveReturnOrigin,
+  restaurantParamsSchema,
+} from "./http-contract.js";
+export { createMercadoPagoOAuthServiceFromConfig } from "./composition.js";
+export { resolveReturnOrigin } from "./http-contract.js";
 
 export type MercadoPagoOAuthRouteService = Pick<
   MercadoPagoOAuthService,
   "beginConnection" | "handleCallback" | "getStatus" | "disconnect"
 >;
 
-function resolveReturnOrigin(value: string | undefined, config: AppConfig): string {
-  const fallbackOrigin = config.frontendUrl!.origin;
-  if (!value) return fallbackOrigin;
-
-  let origin: string;
-  try {
-    const parsed = new URL(value);
-    origin = parsed.origin;
-    if (value !== origin) throw new Error("origin_only");
-  } catch {
-    throw new AppError(400, "oauth_return_origin_invalid", "OAuth return origin is invalid");
-  }
-
-  if (origin !== fallbackOrigin && !isAllowedOrigin(origin, config.corsOrigins)) {
-    throw new AppError(400, "oauth_return_origin_invalid", "OAuth return origin is not allowed");
-  }
-
-  return origin;
-}
-
-export function createMercadoPagoOAuthServiceFromConfig(config: AppConfig): MercadoPagoOAuthService {
-  if (!config.mercadoPago || !config.frontendUrl) {
-    throw new AppError(
-      503,
-      "mercado_pago_not_configured",
-      "Mercado Pago OAuth is not configured",
-    );
-  }
-
-  const supabase = createSupabaseAdminClient(config);
-  return createMercadoPagoOAuthService({
-    repository: createMercadoPagoOAuthRepository(supabase),
-    client: createMercadoPagoOAuthClient({
-      clientId: config.mercadoPago.clientId,
-      clientSecret: config.mercadoPago.clientSecret,
-    }),
-    cipher: createSecretCipher(config.mercadoPago.tokenEncryptionKey),
-    ownershipLookup: config.nodeEnv === "test"
-      ? testOwnershipLookup
-      : createSupabaseOwnershipLookup(supabase as never),
-    config: {
-      clientId: config.mercadoPago.clientId,
-      redirectUri: config.mercadoPago.redirectUri,
-      frontendUrl: config.frontendUrl,
-      credentialKeyId: config.mercadoPago.credentialKeyId,
-      stateTtlMs: 10 * 60 * 1000,
-    },
-  });
-}
-
 export async function registerMercadoPagoOAuthRoutes(
   app: FastifyInstance,
   config: AppConfig,
   service?: MercadoPagoOAuthRouteService,
 ) {
-  const resolvedService = service ?? createMercadoPagoOAuthServiceFromConfig(config);
+  const resolvedService = service ?? (() => {
+    throw new AppError(500, "internal_error", "Mercado Pago OAuth service is not configured");
+  })();
   if (!config.frontendUrl) {
     throw new AppError(
       503,
@@ -114,7 +40,8 @@ export async function registerMercadoPagoOAuthRoutes(
     "/restaurants/:restaurantId/payments/mercado-pago/connect",
     {
       config: { rateLimitGroup: "billing" },
-      preHandler: async (request, reply) => requireAuth(request, reply, config),
+      preHandler: async (request, reply) =>
+        requireAuth(request, reply, app.authSessionResolver),
     },
     async (request) => {
       const params = validateWithSchema(restaurantParamsSchema, request.params);
@@ -140,12 +67,7 @@ export async function registerMercadoPagoOAuthRoutes(
         error: query.error,
         errorDescription: query.error_description,
       });
-      const redirect = new URL(
-        "/dashboard/settings",
-        result.returnOrigin ?? config.frontendUrl,
-      );
-      redirect.searchParams.set("payment_provider", "mercado_pago");
-      redirect.searchParams.set("connection", result.status);
+      const redirect = createMercadoPagoOAuthRedirect(config, result.status, result.returnOrigin);
       return reply.redirect(redirect.toString());
     },
   );
@@ -154,7 +76,8 @@ export async function registerMercadoPagoOAuthRoutes(
     "/restaurants/:restaurantId/payments/mercado-pago/status",
     {
       config: { rateLimitGroup: "billing" },
-      preHandler: async (request, reply) => requireAuth(request, reply, config),
+      preHandler: async (request, reply) =>
+        requireAuth(request, reply, app.authSessionResolver),
     },
     async (request) => {
       const params = validateWithSchema(restaurantParamsSchema, request.params);
@@ -171,7 +94,8 @@ export async function registerMercadoPagoOAuthRoutes(
     "/restaurants/:restaurantId/payments/mercado-pago/connection",
     {
       config: { rateLimitGroup: "billing" },
-      preHandler: async (request, reply) => requireAuth(request, reply, config),
+      preHandler: async (request, reply) =>
+        requireAuth(request, reply, app.authSessionResolver),
     },
     async (request) => {
       const params = validateWithSchema(restaurantParamsSchema, request.params);

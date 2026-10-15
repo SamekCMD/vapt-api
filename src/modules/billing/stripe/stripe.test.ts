@@ -1,296 +1,119 @@
 import assert from "node:assert/strict";
-import { createHmac } from "node:crypto";
-import { createServer } from "node:http";
 import test from "node:test";
+import type { Database } from "../../../lib/database.js";
+import { createStripeBillingRepository } from "./repository.js";
 
-import type { AppConfig } from "../../../lib/config.js";
-import { buildApp } from "../../../app.js";
-
-const validConfig: AppConfig = {
-  nodeEnv: "test",
-  port: 3000,
-  host: "127.0.0.1",
-  corsOrigins: ["http://localhost:5173"],
-  logLevel: "silent",
-  n8n: {
-    baseUrl: new URL("https://n8n.example.com"),
-    timeoutMs: 5000,
-    secrets: {
-      app: "app-secret",
-      admin: "admin-secret",
+function lockedBillingDatabase(options: { owned?: boolean; customerId?: string | null; writeError?: unknown } = {}) {
+  const operations: string[] = [];
+  const writes: unknown[][] = [];
+  const row = {
+    userId: "owner-1", restaurantId: "restaurant-1", planType: "starter",
+    planStatus: "trialing", stripeCustomerId: options.customerId ?? null,
+    stripeSubscriptionId: null, trialEndsAt: new Date("2026-10-01T00:00:00Z"),
+    currentPeriodEnd: null, cancelAtPeriodEnd: false, subscriptionCanceledAt: null,
+    checkoutSessionId: null, checkoutPlanType: null, checkoutExpiresAt: null,
+  };
+  const query = async (sql: string, values?: unknown[]) => {
+    operations.push(sql);
+    if (sql.includes("from public.restaurants")) {
+      assert.match(sql, /owner_id = \$2::uuid/);
+      assert.deepEqual(values?.slice(0, 2), ["restaurant-1", "owner-1"]);
+      return { rows: options.owned === false ? [] : [row] };
+    }
+    if (sql.includes("update public.restaurants")) {
+      writes.push(values ?? []);
+      if (options.writeError) throw options.writeError;
+      assert.match(sql, /owner_id = \$2::uuid/);
+      assert.deepEqual(values?.slice(0, 2), ["restaurant-1", "owner-1"]);
+      return { rows: [{ id: "restaurant-1" }] };
+    }
+    return { rows: [] };
+  };
+  const database = {
+    query,
+    async connect() {
+      operations.push("CONNECT");
+      return { query, release() { operations.push("RELEASE"); } };
     },
-  },
-  webhooks: {
-    stripe: {
-      signingSecret: "whsec_test",
-      toleranceSeconds: 300,
-    },
-  },
-  supabase: {
-    url: new URL("https://supabase.example.com"),
-    serviceRoleKey: "service-role-key",
-    jwtSecret: "jwt-secret",
-  },
-};
-
-function createToken(payload: Record<string, unknown>, secret: string): string {
-  const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
-  const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
-  const signature = createHmac("sha256", secret)
-    .update(`${header}.${body}`)
-    .digest("base64url");
-
-  return `${header}.${body}.${signature}`;
+  } as unknown as Database;
+  return { database, operations, writes };
 }
 
-const validOwnerToken = createToken(
-  {
-    sub: "user-1",
-    email: "owner@example.com",
-    role: "authenticated",
-    exp: Math.floor(Date.now() / 1000) + 3600,
-  },
-  validConfig.supabase.jwtSecret,
-);
+test("billing public status is owner-scoped and contains no provider identifiers", async () => {
+  const { database } = lockedBillingDatabase({ customerId: "cus_private" });
+  const repository = createStripeBillingRepository(database);
+  const status = await repository.getPublicStatus({ userId: "owner-1", restaurantId: "restaurant-1" });
 
-async function withN8nStub(
-  handler: (request: import("node:http").IncomingMessage, response: import("node:http").ServerResponse) => void,
-) {
-  const server = createServer(handler);
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
-
-  const address = server.address();
-  if (!address || typeof address === "string") {
-    throw new Error("Expected test n8n server to expose a TCP address");
-  }
-
-  const config: AppConfig = {
-    ...validConfig,
-    n8n: {
-      ...validConfig.n8n,
-      baseUrl: new URL(`http://127.0.0.1:${address.port}`),
-    },
-  };
-
-  return {
-    config,
-    close: () =>
-      new Promise<void>((resolve, reject) =>
-        server.close((error) => (error ? reject(error) : resolve())),
-      ),
-  };
-}
-
-test("stripe checkout rejects missing auth", async () => {
-  const app = await buildApp(validConfig);
-
-  const response = await app.inject({
-    method: "POST",
-    url: "/billing/stripe/checkout",
-    payload: {
-      restaurantId: "rest-1",
-      email: "owner@example.com",
-      planType: "starter",
-      priceId: "price_123",
-    },
+  assert.deepEqual(status, {
+    planType: "starter", planStatus: "trialing", trialEndsAt: "2026-10-01T00:00:00.000Z",
+    currentPeriodEnd: null, cancelAtPeriodEnd: false, subscriptionCanceledAt: null,
+    canManageBilling: true, canStartCheckout: true, requiresBillingAction: false,
   });
-
-  assert.equal(response.statusCode, 401);
-
-  await app.close();
+  assert.doesNotMatch(JSON.stringify(status), /cus_private|stripeCustomerId|stripeSubscriptionId|owner-1/);
 });
 
-test("stripe checkout rejects missing fields", async () => {
-  const app = await buildApp(validConfig);
+test("billing customer association holds the owner lock and uses compare-and-set", async () => {
+  const { database, operations, writes } = lockedBillingDatabase();
+  const repository = createStripeBillingRepository(database);
 
-  const response = await app.inject({
-    method: "POST",
-    url: "/billing/stripe/checkout",
-    headers: {
-      authorization: `Bearer ${validOwnerToken}`,
+  const result = await repository.withBillingLock(
+    { userId: "owner-1", restaurantId: "restaurant-1" },
+    async (lock) => {
+      assert.equal(lock.scope.stripeCustomerId, null);
+      assert.match(operations.at(-1) ?? "", /for update/i);
+      await lock.associateCustomer("cus_created");
+      await lock.savePendingCheckout({
+        id: "cs_test_pending", planType: "pro", expiresAt: "2026-10-01T01:00:00.000Z",
+      });
+      return lock.scope.stripeCustomerId;
     },
-    payload: {
-      restaurantId: "rest-1",
-      email: "owner@example.com",
-    },
-  });
+  );
 
-  assert.equal(response.statusCode, 400);
-  assert.deepEqual(response.json(), {
-    error: {
-      code: "invalid_request",
-      message: "Invalid request",
-    },
-  });
-
-  await app.close();
+  assert.equal(result, "cus_created");
+  assert.match(operations.find((sql) => sql.includes("update public.restaurants")) ?? "",
+    /stripe_customer_id is null or stripe_customer_id = \$3::text/i);
+  assert.equal(writes.length, 2);
+  assert.deepEqual(operations.slice(-2), ["COMMIT", "RELEASE"]);
+  assert.ok(operations.every((sql) => !/set\s+plan_(type|status)/i.test(sql)));
 });
 
-test("stripe checkout succeeds for authorized restaurant", async () => {
-  const stub = await withN8nStub((request, response) => {
-    assert.equal(request.url, "/stripe/subscription/create");
-    response.setHeader("content-type", "application/json");
-    response.end(
-      JSON.stringify({
-        clientSecret: "cs_test_123",
-        subscriptionId: "sub_123",
-        customerId: "cus_123",
-        autoCharged: false,
-      }),
-    );
-  });
-  const app = await buildApp(stub.config);
-
-  const response = await app.inject({
-    method: "POST",
-    url: "/billing/stripe/checkout",
-    headers: {
-      authorization: `Bearer ${validOwnerToken}`,
-    },
-    payload: {
-      restaurantId: "rest-1",
-      email: "owner@example.com",
-      planType: "starter",
-      priceId: "price_123",
-    },
-  });
-
-  assert.equal(response.statusCode, 200);
-  assert.deepEqual(response.json(), {
-    clientSecret: "cs_test_123",
-    subscriptionId: "sub_123",
-    customerId: "cus_123",
-    autoCharged: false,
-  });
-
-  await app.close();
-  await stub.close();
+test("billing lock rejects another tenant before calling the provider callback", async () => {
+  const { database, operations } = lockedBillingDatabase({ owned: false });
+  let providerCalled = false;
+  await assert.rejects(
+    createStripeBillingRepository(database).withBillingLock(
+      { userId: "owner-1", restaurantId: "restaurant-1" },
+      async () => { providerCalled = true; },
+    ),
+    (error: unknown) => error instanceof Error && "code" in error && error.code === "forbidden",
+  );
+  assert.equal(providerCalled, false);
+  assert.deepEqual(operations.slice(-2), ["ROLLBACK", "RELEASE"]);
 });
 
-test("stripe subscription change succeeds", async () => {
-  const stub = await withN8nStub((_request, response) => {
-    response.setHeader("content-type", "application/json");
-    response.end(
-      JSON.stringify({
-        subscriptionId: "sub_123",
-        plan_type: "pro",
-        status: "updated",
-        autoCharged: true,
-      }),
-    );
-  });
-  const app = await buildApp(stub.config);
-
-  const response = await app.inject({
-    method: "POST",
-    url: "/billing/stripe/subscription/change",
-    headers: {
-      authorization: `Bearer ${validOwnerToken}`,
-    },
-    payload: {
-      restaurantId: "rest-1",
-      targetPlanType: "pro",
-      targetPriceId: "price_pro",
-    },
-  });
-
-  assert.equal(response.statusCode, 200);
-  assert.deepEqual(response.json(), {
-    subscriptionId: "sub_123",
-    planType: "pro",
-    status: "updated",
-    autoCharged: true,
-  });
-
-  await app.close();
-  await stub.close();
+test("billing association prevents rebinding an existing Customer", async () => {
+  const { database, writes } = lockedBillingDatabase({ customerId: "cus_existing" });
+  await assert.rejects(
+    createStripeBillingRepository(database).withBillingLock(
+      { userId: "owner-1", restaurantId: "restaurant-1" },
+      async (lock) => lock.associateCustomer("cus_other"),
+    ),
+    /already associated/i,
+  );
+  assert.equal(writes.length, 0);
 });
 
-test("stripe subscription cancel succeeds", async () => {
-  const stub = await withN8nStub((_request, response) => {
-    response.setHeader("content-type", "application/json");
-    response.end(
-      JSON.stringify({
-        subscriptionId: "sub_123",
-        status: "canceled",
-      }),
-    );
+test("billing unique conflicts roll back without exposing storage details", async () => {
+  const { database, operations } = lockedBillingDatabase({
+    writeError: { code: "23505", message: "postgresql://secret@db cus_private duplicate SQL" },
   });
-  const app = await buildApp(stub.config);
-
-  const response = await app.inject({
-    method: "POST",
-    url: "/billing/stripe/subscription/cancel",
-    headers: {
-      authorization: `Bearer ${validOwnerToken}`,
-    },
-    payload: {
-      restaurantId: "rest-1",
-    },
-  });
-
-  assert.equal(response.statusCode, 200);
-  assert.deepEqual(response.json(), {
-    subscriptionId: "sub_123",
-    status: "canceled",
-  });
-
-  await app.close();
-  await stub.close();
-});
-
-test("stripe subscription status succeeds", async () => {
-  const stub = await withN8nStub((request, response) => {
-    assert.equal(request.url, "/stripe/subscription/status?restaurant_id=rest-1");
-    response.setHeader("content-type", "application/json");
-    response.end(
-      JSON.stringify({
-        plan_type: "starter",
-        plan_status: "active",
-        trial_ends_at: null,
-        stripe_customer_id: "cus_123",
-        stripe_subscription_id: "sub_123",
-      }),
-    );
-  });
-  const app = await buildApp(stub.config);
-
-  const response = await app.inject({
-    method: "GET",
-    url: "/billing/stripe/subscription?restaurantId=rest-1",
-    headers: {
-      authorization: `Bearer ${validOwnerToken}`,
-    },
-  });
-
-  assert.equal(response.statusCode, 200);
-  assert.deepEqual(response.json(), {
-    planType: "starter",
-    planStatus: "active",
-    trialEndsAt: null,
-    stripeCustomerId: "cus_123",
-    stripeSubscriptionId: "sub_123",
-  });
-
-  await app.close();
-  await stub.close();
-});
-
-test("stripe routes return 403 for unauthorized restaurant access", async () => {
-  const app = await buildApp(validConfig);
-
-  const response = await app.inject({
-    method: "POST",
-    url: "/billing/stripe/subscription/cancel",
-    headers: {
-      authorization: `Bearer ${validOwnerToken}`,
-    },
-    payload: {
-      restaurantId: "rest-2",
-    },
-  });
-
-  assert.equal(response.statusCode, 403);
-
-  await app.close();
+  await assert.rejects(
+    createStripeBillingRepository(database).withBillingLock(
+      { userId: "owner-1", restaurantId: "restaurant-1" },
+      async (lock) => lock.associateCustomer("cus_created"),
+    ),
+    (error: unknown) => error instanceof Error && "statusCode" in error &&
+      error.statusCode === 409 && !/secret|postgresql|cus_private|SQL/.test(error.message),
+  );
+  assert.deepEqual(operations.slice(-2), ["ROLLBACK", "RELEASE"]);
 });

@@ -10,7 +10,7 @@ import type { CreateOrderBody } from "./schemas.js";
 
 export type CreatePublicOrderResponse = {
   orderId: string;
-  displayId: number | null;
+  displayId: string | null;
   restaurantId: string;
   tableSessionId: string | null;
   totalPrice: string;

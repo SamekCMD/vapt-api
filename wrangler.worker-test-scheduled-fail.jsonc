@@ -1,0 +1,16 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "vapt-api-worker-scheduled-fail-test",
+  "main": "src/worker/test-fixture.ts",
+  "compatibility_date": "2026-09-28",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "vars": {
+    "ENVIRONMENT": "preview",
+    "CORS_ORIGINS": "https://app.vapt.test",
+    "TEST_GREETING": "synthetic",
+    "TEST_MISC": "enabled",
+    "TEST_SCHEDULED_FAIL": "enabled"
+  }
+}

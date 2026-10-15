@@ -1,42 +1,23 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { SupabaseClient } from "@supabase/supabase-js";
 
+import type { Queryable } from "../../lib/database.js";
 import { createPaymentRepository } from "./repository.js";
 
-test("failed webhook reservation is atomically reopened for a provider retry", async () => {
-  const updates: unknown[] = [];
-  let operation: "insert" | "select" | "update" = "insert";
-  const chain = {
-    insert() {
-      operation = "insert";
-      return Promise.resolve({ data: null, error: { code: "23505", message: "duplicate key" } });
+test("failed webhook reservation is atomically reopened for a single provider retry", async () => {
+  const calls: Array<{ sql: string; values: unknown[] | undefined }> = [];
+  const responses = [
+    { rows: [] },
+    { rows: [{ status: "failed", attempts: 1 }] },
+    { rows: [{ id: "event-1" }] },
+  ];
+  const database = {
+    async query(sql: string, values?: unknown[]) {
+      calls.push({ sql, values });
+      return responses.shift() ?? { rows: [] };
     },
-    select() {
-      if (operation !== "update") operation = "select";
-      return this;
-    },
-    update(value: unknown) {
-      operation = "update";
-      updates.push(value);
-      return this;
-    },
-    eq() {
-      return this;
-    },
-    async maybeSingle<T>() {
-      if (operation === "select") {
-        return { data: { status: "failed", attempts: 1 } as T, error: null };
-      }
-      return { data: { id: "event-1" } as T, error: null };
-    },
-  };
-  const client = {
-    from() {
-      return chain;
-    },
-  } as unknown as SupabaseClient;
-  const repository = createPaymentRepository(client);
+  } as unknown as Queryable;
+  const repository = createPaymentRepository(database);
 
   const result = await repository.reserveWebhookEvent({
     provider: "mercado_pago",
@@ -50,10 +31,34 @@ test("failed webhook reservation is atomically reopened for a provider retry", a
   });
 
   assert.deepEqual(result, { duplicate: false });
-  assert.deepEqual(updates, [{
-    status: "received",
-    attempts: 2,
-    last_error: null,
-    processed_at: null,
-  }]);
+  assert.match(calls[0]?.sql ?? "", /on conflict\s*\(provider,\s*external_event_id\)\s*do nothing/i);
+  assert.match(calls[2]?.sql ?? "", /status\s*=\s*'failed'/i);
+  assert.match(calls[2]?.sql ?? "", /attempts\s*=\s*\$3::integer/i);
+  assert.deepEqual(calls[2]?.values, ["mercado_pago", "987654321", 1]);
+});
+
+test("a reserved or processed webhook remains a duplicate", async () => {
+  const responses = [
+    { rows: [] },
+    { rows: [{ status: "processed", attempts: 1 }] },
+  ];
+  const database = {
+    async query() {
+      return responses.shift() ?? { rows: [] };
+    },
+  } as unknown as Queryable;
+  const repository = createPaymentRepository(database);
+
+  const result = await repository.reserveWebhookEvent({
+    provider: "mercado_pago",
+    externalEventId: "987654321",
+    eventType: "payment.updated",
+    restaurantId: null,
+    providerAccountId: null,
+    paymentTransactionId: null,
+    signatureValid: true,
+    payload: {},
+  });
+
+  assert.deepEqual(result, { duplicate: true });
 });
