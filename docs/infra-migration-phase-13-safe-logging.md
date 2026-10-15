@@ -1,5 +1,21 @@
 # Etapa 13 — preparação de logging seguro
 
+## Gate remoto de metadata — reprovado em 15/10/2026
+
+**Não executar `deploy:worker-production-observability` com base apenas no guard/dry-run.** A configuração estática passou, mas não satisfez o contrato de persistir somente códigos fixos sem dados sensíveis de requisição. A coleta na API real permanece ausente; o logger sanitizado local não foi implantado nesta rodada.
+
+Sonda descartável `vapt-log-metadata-probe-20261014`, sem ingress público, Cron, DB/R2/DO/Queue/serviços ou secrets; apenas marcador próprio, CPU25ms. Readback confirmou logs persistidos, invocation_logsfalse, traces/Issuesoff, queryredactiontrue e nenhum destino externo. Sampling100% **somente na sonda** para obter evidência positiva com uma chamada; configuração candidata da API segue1%, não ativada. Nenhum novo plano ou aceite de novos termos de preço.
+
+CLI não tinha WorkersObservabilityWrite (preflight403/10000 antes de criar recurso); não houve ampliação de token ou repetição da query recusada. Leitura foi feita no dashboard já autenticado, dataset CloudflareWorkers, filtro exato `$metadata.service` somente dessa sonda. Guard local de preflight UI recente/vazio rejeitou timestamp velho/futuro, conta/domínio/Worker/dataset/filtro divergentes: REDfeaturemissing→GREEN5/5 no conjunto. Nenhum cookie/header de sessão do navegador ou fetch interno foi usado; somente UI normal/DOM renderizado.
+
+Primeira tentativa falhou antes da confirmação do receipt; causa não determinada e nenhum sucesso inferido. Transporte encerrado, Worker próprio removido/404 e produção inalterada. Segunda tentativa acrescentou somente diagnóstico de status/flags:HTTP200, chegada das nove sentinelas fictícias confirmada e três códigos emitidos. Não houve mudança funcional que permita chamar a primeira falha de corrigida. UI retornou os três registros de error às03:09:47.125UTC (`auth_operation_failed`, `worker_request_failed`, `auth_email_failed`), com janela15min/filtro próprio. No detalhe renderizado do primeiro código, a URL de requisição reteve a sentinela de **email fictício no caminho**. Logo, queryredaction+invocation_logsoff não removem todo conteúdo do path; não aprovar o contrato com base em console sanitizado.
+
+Somente labels/booleans, status, códigos fixos e campos públicos de controle foram emitidos pelo operador. Nenhum log bruto, token/cookie/CAPTCHA/PII real foi impresso ou salvo. Não foi certificado que todos os outros campos estão ausentes; inspeção de UI não substitui auditoria exaustiva. A evidência negativa de um marcador já basta para reprovar essa policy. Nenhuma segunda chamada de exceção intencional foi feita; o caminho uncaught permanece não testado.
+
+Operador90645 encerrouexit0 após finish de lifecycle: transporte fechado, remoção somente da sonda própria confirmada404, pre/post API914f79f0/frontend e77339dd preservados, realtime ligado/CPU1000/rates/recursos/secrets por nome/ingress/StripeTest/R2privado intactos e coleção ausente. O operador não autocertifica privacy; a evidência UI acima é separada. A tentativa71223 anterior encerrouexit1 e também limpou o próprio recurso. Registros exclusivamente sintéticos podem permanecer pela retenção Cloudflare; não houve purge de logs alheios.
+
+Próximo passo: manter métricas agregadas existentes e coleta automática desligada; decidir um desenho capaz de sanitizar ou excluir metadata de requisição **antes** de qualquer persistência real. Não criar novo pipeline/serviço/destino ou aceitar exposição por inferência. Logging persistente/alertas/capacidade e Etapa13 global continuam abertos. NeonFree/cota e Cron billing30min não foram alterados por este ensaio; gates SQL dependem da recuperação de capacidade.
+
 ## Preparação local em 14/10/2026
 
 Desenho limitado aprovado pelo usuário: somente códigos fixos de falha, sem mensagens brutas/tokens/PII, sem logs automáticos de requisições ou traces, e amostragem de 1% na API production após verificação. Esta rodada prepara o código e as guardas; **não habilita coleta nem implanta o Worker**.
