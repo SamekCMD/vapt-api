@@ -110,6 +110,16 @@ test("a complete thousand-object inventory cannot admit a 1001st object even bel
   } finally { database.close(); }
 });
 
+test("unlisted pending PUTs still occupy slots in the thousand-object inventory budget", () => {
+  const { database, budget } = fixture();
+  try {
+    const inventory = Array.from({ length: 999 }, (_, index) => ({ key: `${restaurantId}/old-${index}`, size: 1 }));
+    budget.reserve({ ...input, bytes: 1 }, inventory);
+    assert.throws(() => budget.reserve({ ...input, bytes: 1, leaseId: "44444444-4444-4444-8444-444444444444" }, inventory),
+      error => error instanceof AppError && error.statusCode === 429);
+  } finally { database.close(); }
+});
+
 test("safe retired metadata ages out after the seven-day replay window without refunding uncertain fences", () => {
   const { database, budget } = fixture();
   try {

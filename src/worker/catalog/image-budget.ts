@@ -46,10 +46,11 @@ export class SqliteImageBudget {
       }
       return existing;
     }
-    if (this.usage(input.restaurantId, inventory) + Math.max(input.bytes, fenceBytes) > quota) {
+    const currentUsage = this.inventoryUsage(input.restaurantId, inventory);
+    if (currentUsage.bytes + Math.max(input.bytes, fenceBytes) > quota) {
       throw new AppError(413, "menu_image_quota_exceeded", "Restaurant image quota exceeded");
     }
-    if (inventory.length >= 1000) throw new AppError(429, "menu_image_inventory_full", "Image storage requires cleanup");
+    if (currentUsage.objects >= 1000) throw new AppError(429, "menu_image_inventory_full", "Image storage requires cleanup");
     const total = this.sql.exec<{ total: number; pending: number }>(`select count(*) as total,
       coalesce(sum(case when json_extract(reservation, '$.state') in ('reserved', 'staged') then 1 else 0 end), 0) as pending
       from catalog_image_leases`).toArray()[0]!;
@@ -84,6 +85,10 @@ export class SqliteImageBudget {
   }
 
   usage(restaurantId: string, inventory: readonly ImageInventoryEntry[]): number {
+    return this.inventoryUsage(restaurantId, inventory).bytes;
+  }
+
+  private inventoryUsage(restaurantId: string, inventory: readonly ImageInventoryEntry[]): { bytes: number; objects: number } {
     this.assertScope(restaurantId);
     // No truncated/paginated inventory is admissible. The R2 adapter must collect
     // the bounded listing first; metadata markers and legacy image keys count too.
@@ -97,14 +102,14 @@ export class SqliteImageBudget {
     for (const row of leases) {
       const lease = JSON.parse(row.reservation) as ImageReservation;
       const reserved = lease.state === "retired" ? lease.retiredBytes! : Math.max(lease.bytes, fenceBytes);
-      sizes.set(lease.objectKey, Math.max(sizes.get(lease.objectKey) ?? 0, reserved));
+      if (reserved > 0 || sizes.has(lease.objectKey)) sizes.set(lease.objectKey, Math.max(sizes.get(lease.objectKey) ?? 0, reserved));
     }
     let bytes = 0;
     for (const size of sizes.values()) {
       bytes += size;
       if (!Number.isSafeInteger(bytes)) throw unavailable();
     }
-    return bytes;
+    return { bytes, objects: sizes.size };
   }
 
   private assertScope(restaurantId: string): void {
