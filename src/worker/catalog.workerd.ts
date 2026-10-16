@@ -70,3 +70,74 @@ test("public catalog actual101, static heartbeat, hibernation and write rejectio
     await server.close();
   }
 });
+
+for (const [fault, phase] of [["accepted", "accepted"], ["committed", "accepted"], ["projection", "committed"], ["signal", "ready"]] as const) {
+  test(`crashRestartConverges on actual SQLite/alarm at ${fault}; reader rollback drains accepted writer`, { timeout: 90_000 }, async () => {
+    const server = createTestHarness({ workers: [{ configPath: "./wrangler.worker-catalog-test.jsonc" }] });
+    try {
+      await server.listen(); const worker = server.getWorker("vapt-catalog-test");
+      const call = async (action: string, body = {}) => {
+        const response = await worker.fetch(`https://api.test/_test/execution/${action}`, { method: "POST", body: JSON.stringify(body) });
+        assert.equal(response.status, 200, await response.clone().text()); return response.json() as Promise<any>;
+      };
+      const command = { operationId: "33333333-3333-4333-8333-333333333333", restaurantId,
+        actor: { userId: "22222222-2222-4222-8222-222222222222", sessionId: "44444444-4444-4444-8444-444444444444", sessionExpiresAt: 1_800_001_000_000 }, mutation: { type: "rebuild" } };
+      const first = await call("begin", { command, state: state("11"), fault });
+      assert.equal(first.receipt.phase, phase); assert.notEqual(first.alarm, null, "accepted recovery schedule is durable");
+      await worker.evictDurableObject("CATALOG_EXECUTION_PROBE", { name: "execution", webSockets: "hibernate" });
+      const done = await call("retry", { readerEnabled: false });
+      assert.equal(done.receipt.phase, "ready"); assert.equal(done.writes, 1, "simulated external journal applied only once");
+      assert.ok(done.constructors >= 2); assert.equal(done.privateChunks, false);
+      const response = await worker.fetch("https://api.test/public/restaurants/bistro/catalog-state");
+      assert.equal(response.status, 200); assert.equal((await response.json() as CatalogState).version, "11");
+      const before = done.writes; const idle = await call("idle"); assert.equal(idle.writes, before, "idle alarm does not query simulated PostgreSQL");
+      assert.equal(idle.lookups, done.lookups); assert.equal(idle.applies, done.applies);
+    } finally { await server.close(); }
+  });
+}
+
+test("maxPayloadBounded at 8MiB snapshot and 1MiB optimized image on actual workerd", { timeout: 90_000 }, async () => {
+  const server = createTestHarness({ workers: [{ configPath: "./wrangler.worker-catalog-test.jsonc" }] });
+  try {
+    await server.listen(); const worker = server.getWorker("vapt-catalog-test");
+    const oversizedImage = await worker.fetch("https://api.test/_test/image-budget", { method: "POST", body: JSON.stringify({ bytes: 1_048_577 }) });
+    assert.equal(oversizedImage.status, 400);
+    const image = await worker.fetch("https://api.test/_test/image-budget", { method: "POST", body: JSON.stringify({ bytes: 1_048_576 }) });
+    assert.equal(image.status, 200);
+    const value = state("11"); value.catalog.restaurant.description = "";
+    const base = Buffer.byteLength(JSON.stringify(value));
+    value.catalog.restaurant.description = "a".repeat(8_388_608 - base);
+    assert.equal(Buffer.byteLength(JSON.stringify(value)), 8_388_608);
+    const published = await worker.fetch("https://api.test/_test/publish", { method: "POST", body: JSON.stringify(value) });
+    assert.equal(published.status, 200);
+    const read = await worker.fetch("https://api.test/public/restaurants/bistro/catalog-state"); assert.equal(read.status, 200);
+    assert.equal(Buffer.byteLength(await read.text()), 8_388_608);
+    value.version = "12"; value.catalog.restaurant.description += "a";
+    const rejected = await worker.fetch("https://api.test/_test/publish", { method: "POST", body: JSON.stringify(value) });
+    assert.equal(rejected.status, 503);
+    const retained = await worker.fetch("https://api.test/public/restaurants/bistro/catalog-state");
+    assert.equal((await retained.json() as CatalogState).version, "11", "oversize revision never replaces readable state");
+  } finally { await server.close(); }
+});
+
+test("actual room caps 200 sockets across hibernation with no SQL/auth service", { timeout: 90_000 }, async () => {
+  const server = createTestHarness({ workers: [{ configPath: "./wrangler.worker-catalog-test.jsonc" }] });
+  const sockets: WebSocket[] = [];
+  try {
+    const { url } = await server.listen(); const worker = server.getWorker("vapt-catalog-test");
+    assert.equal((await worker.fetch("https://api.test/_test/publish", { method: "POST", body: JSON.stringify(state("11")) })).status, 200);
+    const endpoint = new URL(`/v1/catalog/restaurants/${restaurantId}/socket`, url); endpoint.protocol = "ws:";
+    for (let index = 0; index < 200; index++) {
+      await new Promise<void>((resolve, reject) => {
+        const socket = new WebSocket(endpoint, ["vapt.catalog.v1"], { origin, closeTimeout: 1000 } as WebSocket.ClientOptions); sockets.push(socket);
+        socket.once("message", () => resolve()); socket.once("error", reject);
+      });
+    }
+    await worker.evictDurableObject("PUBLIC_CATALOG_COORDINATOR", { name: `preview:${restaurantId}`, webSockets: "hibernate" });
+    const refused = await worker.fetch(`https://api.test/v1/catalog/restaurants/${restaurantId}/socket`, { headers: { Origin: origin, Upgrade: "websocket", "Sec-WebSocket-Protocol": "vapt.catalog.v1" } });
+    assert.equal(refused.status, 503);
+    const info = await (await worker.fetch(`https://api.test/_test/info/${restaurantId}`)).json() as any;
+    assert.equal(info.sockets, 200); assert.equal(info.alarm, null);
+    assert.deepEqual(await (await worker.fetch("https://api.test/_test/services")).json(), { calls: 0, hyperdrivePresent: false });
+  } finally { for (const socket of sockets) socket.terminate(); await server.close(); }
+});
