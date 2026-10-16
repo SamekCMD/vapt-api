@@ -17,6 +17,8 @@ import {
 } from "../../modules/table-sessions/schemas.js";
 import type { WorkerHonoEnv } from "../app.js";
 import { parseWorkerJson, workerRateLimit } from "../http.js";
+import { isCatalogReaderEnabled } from "../catalog/admission.js";
+import { publicCatalogProjection } from "./catalog.js";
 
 export function registerWorkerPublicRoutes(
   app: Hono<WorkerHonoEnv>,
@@ -28,6 +30,10 @@ export function registerWorkerPublicRoutes(
 
   app.get("/public/restaurants/:slug/catalog", publicRate, async (context) => {
     const params = validateWithSchema(catalogParamsSchema, context.req.param());
+    if (isCatalogReaderEnabled(context.env)) {
+      context.header("Cache-Control", "no-store");
+      return context.json((await publicCatalogProjection(context.env).readBySlug(params.slug)).catalog);
+    }
     const services = await context.get("getServices")();
     return context.json(await services.catalog.getPublishedCatalog(params.slug));
   });

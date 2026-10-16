@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import type { DurableObjectState, R2Bucket, Response as PlatformResponse } from "@cloudflare/workers-types";
+import type { DurableObjectState, R2Bucket, Request as PlatformRequest, Response as PlatformResponse, WebSocket as PlatformSocket, WebSocketRequestResponsePair as PlatformAutoResponse } from "@cloudflare/workers-types";
 import type { Pool } from "pg";
 import { AppError } from "../../lib/errors.js";
 import type { CatalogCommand, CatalogState } from "../../modules/catalog-publication/contracts.js";
@@ -13,18 +13,30 @@ import { catalogRpcReply } from "./rpc.js";
 import { SqliteImageBudget } from "./image-budget.js";
 import { createCatalogImageService, type CatalogImagePrepare, type CatalogImageRetire } from "./image-service.js";
 import { createWorkerMenuImageGateway } from "../../modules/storage/r2-worker.js";
+import { createPublicCatalogSockets } from "./public-sockets.js";
 
-// Not bound/exported by a deployed entry until the later writer/ingress gates.
+declare const WebSocketPair: { new(): { 0: PlatformSocket; 1: PlatformSocket } };
+declare const WebSocketRequestResponsePair: { new(request: string, response: string): PlatformAutoResponse };
+
+// Exported for the later append-only binding gate; no deployed config binds it.
 export class PublicCatalogCoordinator extends DurableObject<WorkerBindings> {
   private readonly runner: CatalogCoordinator;
   readonly #commands: SqliteCommandStore;
   readonly #images: SqliteImageBudget;
+  readonly #sockets: ReturnType<typeof createPublicCatalogSockets<PlatformSocket, PlatformSocket>>;
 
   constructor(ctx: DurableObjectState, env: WorkerBindings) {
     super(ctx, env);
     const store = new SqliteCommandStore(ctx.storage.sql);
     this.#commands = store;
     this.#images = new SqliteImageBudget(ctx.storage.sql);
+    ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("vapt.catalog.v1:ping", "vapt.catalog.v1:pong"));
+    this.#sockets = createPublicCatalogSockets({
+      env, belongs: id => !!env.PUBLIC_CATALOG_COORDINATOR && ctx.id.equals(env.PUBLIC_CATALOG_COORDINATOR.idFromName(`${env.ENVIRONMENT}:${id}`)),
+      readRegistration: id => this.#projection().readRegistration(id),
+      sockets: () => ctx.getWebSockets(), accept: socket => ctx.acceptWebSocket(socket),
+      pair: () => { const pair = new WebSocketPair(); return { client: pair[0], server: pair[1] }; },
+    });
     this.runner = createCatalogCoordinator({
       store, now: () => Date.now(),
       storage: {
@@ -70,13 +82,7 @@ export class PublicCatalogCoordinator extends DurableObject<WorkerBindings> {
     try { return await work(database); } finally { await database.end(); }
   }
 
-  protected async sendPublishedSignal(_state: CatalogState): Promise<void> {
-    // T6 installs the public socket adapter before ingress is enabled. A room
-    // without subscribers has nothing to send; never silently skip live sockets.
-    if (this.ctx.getWebSockets().length) {
-      throw new AppError(503, "catalog_signal_adapter_unavailable", "Catalog signal adapter unavailable");
-    }
-  }
+  protected sendPublishedSignal(state: CatalogState): Promise<void> { return this.#sockets.publish(state); }
 
   submit(command: CatalogCommand) { return catalogRpcReply(() => this.runner.submit(command)); }
   status(access: OperationAccess) { return catalogRpcReply(() => this.runner.status(access)); }
@@ -84,5 +90,25 @@ export class PublicCatalogCoordinator extends DurableObject<WorkerBindings> {
   prepareImage(input: CatalogImagePrepare) { return catalogRpcReply(() => this.#withDatabase(database => this.#imageService(database).prepare(input))); }
   retireImage(input: CatalogImageRetire) { return catalogRpcReply(() => this.#withDatabase(database => this.#imageService(database).retire(input))); }
   alarm() { return this.runner.alarm(); }
-  async fetch(): Promise<PlatformResponse> { return new Response(null, { status: 404 }) as unknown as PlatformResponse; }
+  async fetch(request: PlatformRequest): Promise<PlatformResponse> {
+    // Native fetch preserves the upgrade response. There is deliberately no
+    // anonymous HTTP dispatch to private submit/status/retry/image RPC methods.
+    if (request.method !== "GET" || !/^\/v1\/catalog\/restaurants\/[a-fA-F0-9-]{36}\/socket$/.test(new URL(request.url).pathname)) {
+      return new Response(null, { status: 404, headers: { "Cache-Control": "no-store" } }) as unknown as PlatformResponse;
+    }
+    try {
+      return await this.runner.exclusive(async () => {
+        const client = await this.#sockets.connect(request as unknown as Request);
+        const headers = new Headers();
+        if (request.headers.has("Sec-WebSocket-Protocol")) headers.set("Sec-WebSocket-Protocol", "vapt.catalog.v1");
+        return new Response(null, { status: 101, webSocket: client, headers } as ResponseInit) as unknown as PlatformResponse;
+      });
+    } catch (error) {
+      return new Response(null, { status: error instanceof AppError ? error.statusCode : 503,
+        headers: { "Cache-Control": "no-store" } }) as unknown as PlatformResponse;
+    }
+  }
+  webSocketMessage(socket: PlatformSocket, message: string | ArrayBuffer): void { this.#sockets.message(socket, message); }
+  webSocketClose(socket: PlatformSocket): void { this.#sockets.close(socket, 1000); }
+  webSocketError(socket: PlatformSocket): void { this.#sockets.close(socket, 1011); }
 }

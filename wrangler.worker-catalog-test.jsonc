@@ -1,0 +1,13 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "vapt-catalog-test",
+  "main": "src/worker/catalog-test-fixture.ts",
+  "compatibility_date": "2026-09-28",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "vars": { "ENVIRONMENT": "preview", "CORS_ORIGINS": "https://app.vapt.test", "PUBLIC_CATALOG_READER_ENABLED": "true", "PUBLIC_CATALOG_WRITER_ENABLED": "true" },
+  "r2_buckets": [{ "binding": "R2_BUCKET", "bucket_name": "vapt-local-catalog-test" }],
+  "durable_objects": { "bindings": [{ "name": "PUBLIC_CATALOG_COORDINATOR", "class_name": "CatalogRuntimeProbe" }] },
+  "migrations": [{ "tag": "local-catalog-v1", "new_sqlite_classes": ["CatalogRuntimeProbe"] }]
+}
