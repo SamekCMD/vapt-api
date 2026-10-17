@@ -9,7 +9,7 @@ import { createCatalogCoordinator } from "./catalog/runner.js";
 import { createCatalogProjection } from "./catalog/projection.js";
 
 type TestCase = { command: CatalogCommand; state: CatalogState; fault: "accepted" | "committed" | "projection" | "signal" };
-type Env = { R2_BUCKET: R2Bucket };
+type Env = { PUBLIC_CATALOG_BUCKET: R2Bucket };
 const now = 1_800_000_000_000;
 
 export class CatalogExecutionProbe extends DurableObject<Env> {
@@ -19,7 +19,7 @@ export class CatalogExecutionProbe extends DurableObject<Env> {
     super(ctx, env); this.commands = new SqliteCommandStore(ctx.storage.sql);
     ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS catalog_execution_test (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
     this.increment("constructors");
-    const bucket = env.R2_BUCKET;
+    const bucket = env.PUBLIC_CATALOG_BUCKET;
     const projection = createCatalogProjection({
       get: bucket.get.bind(bucket), list: bucket.list.bind(bucket),
       put: async (...args: Parameters<R2Bucket["put"]>) => {

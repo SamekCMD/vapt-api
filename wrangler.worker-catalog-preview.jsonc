@@ -68,6 +68,10 @@
       {
         "binding": "R2_BUCKET",
         "bucket_name": "vapt-assets-preview"
+      },
+      {
+        "binding": "PUBLIC_CATALOG_BUCKET",
+        "bucket_name": "vapt-catalog-preview"
       }
     ],
     "ratelimits": [

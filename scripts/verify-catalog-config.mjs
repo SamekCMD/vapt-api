@@ -18,6 +18,7 @@ export function expectedCatalogConfig(environment) {
   const active = config.previews ?? config;
   active.vars.PUBLIC_CATALOG_READER_ENABLED = 'false';
   active.vars.PUBLIC_CATALOG_WRITER_ENABLED = 'false';
+  active.r2_buckets.push({ binding: 'PUBLIC_CATALOG_BUCKET', bucket_name: `vapt-catalog-${environment}` });
   active.durable_objects.bindings.push({ name: 'PUBLIC_CATALOG_COORDINATOR', class_name: 'PublicCatalogCoordinator' });
   config.migrations.push({ tag: `catalog-publication-${environment}-sqlite-v1`, new_sqlite_classes: ['PublicCatalogCoordinator'] });
   return config;

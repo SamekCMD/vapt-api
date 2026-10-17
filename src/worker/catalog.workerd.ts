@@ -37,9 +37,14 @@ test("public catalog actual101, static heartbeat, hibernation and write rejectio
       return { socket, frames, closed: () => closed };
     };
     await publish("11"); await publish("12");
+    const initialStorage = await (await worker.fetch("https://api.test/_test/storage-audit")).json() as { imageKeys: string[]; catalogKeys: string[] };
+    assert.deepEqual(initialStorage.imageKeys, [], "publication never writes into image storage");
+    assert.ok(initialStorage.catalogKeys.some(key => key.endsWith("/snapshots/12.json")));
+    assert.equal((await worker.fetch("https://api.test/_test/image-catalog-decoy", { method: "POST", body: JSON.stringify(state("99")) })).status, 200);
     for (const path of ["/public/restaurants/bistro/catalog", "/public/restaurants/bistro/catalog-state"]) {
       const response = await worker.fetch(`https://api.test${path}`); assert.equal(response.status, 200);
       assert.equal(response.headers.get("Cache-Control"), "no-store");
+      if (path.endsWith("catalog-state")) assert.equal((await response.json() as CatalogState).version, "12", "public image bucket decoy must not win");
     }
     const a = await connect(); const before = await info();
     a.socket.send("vapt.catalog.v1:ping"); await waitFor(() => a.frames.length === 2);
@@ -50,6 +55,9 @@ test("public catalog actual101, static heartbeat, hibernation and write rejectio
     await publish("9007199254740993"); await waitFor(() => a.frames.length === 4);
     assert.deepEqual(JSON.parse(a.frames[3]!), { protocol: "vapt.catalog.v1", type: "catalog_changed", version: "9007199254740993", canonicalSlug: "bistro" });
     const after = await info(); assert.ok(after.constructors > before.constructors); assert.equal(after.messages, 0); assert.equal(after.alarm, null);
+    const storageAfter = await (await worker.fetch("https://api.test/_test/storage-audit")).json() as { imageKeys: string[]; catalogKeys: string[] };
+    assert.ok(storageAfter.imageKeys.every(key => !key.endsWith("/snapshots/9007199254740993.json")), "published signal revision stays out of images");
+    assert.ok(storageAfter.catalogKeys.some(key => key.endsWith("/snapshots/9007199254740993.json")));
     assert.deepEqual(after.attachments, [{ protocol: "vapt.catalog.v1", restaurantId, environment: "preview", lastSentVersion: "9007199254740993" }]);
     assert.equal((await worker.fetch(`https://api.test/_test/anonymous-command/${restaurantId}`)).status, 404);
     a.socket.send('{"type":"submit","mutation":{"type":"rebuild"}}'); await waitFor(() => a.closed() !== undefined); assert.equal(a.closed(), 1008);

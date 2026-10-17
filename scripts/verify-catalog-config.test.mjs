@@ -7,6 +7,13 @@ const feature = () => import('./verify-catalog-config.mjs');
 const candidate = environment => JSON.parse(readFileSync(new URL(`../wrangler.worker-catalog-${environment}.jsonc`, import.meta.url), 'utf8'));
 
 for (const environment of ['preview', 'production']) {
+  test(`${environment} snapshot bucket is dedicated and never reuses the image binding`, async () => {
+    const config = candidate(environment); const active = config.previews ?? config;
+    assert.deepEqual(active.r2_buckets, [
+      { binding: 'R2_BUCKET', bucket_name: environment === 'preview' ? 'vapt-assets-preview' : 'vapt-assets-production' },
+      { binding: 'PUBLIC_CATALOG_BUCKET', bucket_name: environment === 'preview' ? 'vapt-catalog-preview' : 'vapt-catalog-production' },
+    ]);
+  });
   test(`${environment} candidate preserves baseline and stays preparation-only`, async () => {
     const { checkCatalogConfig, expectedCatalogConfig } = await feature();
     const config = candidate(environment);
@@ -27,6 +34,10 @@ for (const environment of ['preview', 'production']) {
     rate: (value, active) => { active.ratelimits[0].simple.limit = 9999; },
     publicURL: value => { value.workers_dev = true; },
     bucket: (value, active) => { active.r2_buckets[0].bucket_name = environment === 'preview' ? 'vapt-assets-production' : 'vapt-assets-preview'; },
+    missingPrivateBucket: (value, active) => { active.r2_buckets.pop(); },
+    imageBucketAlias: (value, active) => { active.r2_buckets[1].bucket_name = active.r2_buckets[0].bucket_name; },
+    privateBucketCrossEnvironment: (value, active) => { active.r2_buckets[1].bucket_name = environment === 'preview' ? 'vapt-catalog-production' : 'vapt-catalog-preview'; },
+    privateBucketPublicAlias: (value, active) => { active.r2_buckets[1].binding = 'R2_BUCKET'; },
     sql: (value, active) => { active.hyperdrive[0].id = 'other-branch'; },
   };
   for (const [name, poison] of Object.entries(poisons)) test(`${environment} rejects ${name} drift without exposing values`, async () => {

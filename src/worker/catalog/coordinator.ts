@@ -55,7 +55,7 @@ export class PublicCatalogCoordinator extends DurableObject<WorkerBindings> {
   }
 
   #projection() {
-    const bucket = this.env.R2_BUCKET;
+    const bucket = this.env.PUBLIC_CATALOG_BUCKET;
     if (!bucket?.get || !bucket.put || !bucket.list) throw new AppError(503, "catalog_storage_unavailable", "Catalog storage unavailable");
     return createCatalogProjection(bucket as Pick<R2Bucket, "get" | "put" | "list">, this.env.ENVIRONMENT);
   }

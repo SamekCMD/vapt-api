@@ -8,7 +8,7 @@ import { admitCatalogSocket, isCatalogReaderEnabled } from "../catalog/admission
 import { createCatalogProjection } from "../catalog/projection.js";
 
 export function publicCatalogProjection(env: WorkerBindings) {
-  const bucket = env.R2_BUCKET;
+  const bucket = env.PUBLIC_CATALOG_BUCKET;
   if (!bucket?.get || !bucket.put || !bucket.list) throw new AppError(503, "catalog_storage_unavailable", "Public catalog unavailable");
   return createCatalogProjection(bucket as Pick<R2Bucket, "get" | "put" | "list">, env.ENVIRONMENT);
 }
@@ -19,6 +19,7 @@ export function registerWorkerCatalogRoutes(app: Hono<WorkerHonoEnv>): void {
     return context.json(await publicCatalogProjection(context.env).readBySlug(context.req.param("slug")));
   });
   app.get("/v1/catalog/restaurants/:restaurantId/socket", workerRateLimit("public"), async context => {
+    context.header("Cache-Control", "no-store");
     const admission = admitCatalogSocket(context.req.raw, context.env);
     const published = await publicCatalogProjection(context.env).readRegistration(admission.restaurantId);
     const namespace = context.env.PUBLIC_CATALOG_COORDINATOR;

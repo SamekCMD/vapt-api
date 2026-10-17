@@ -52,6 +52,10 @@
     {
       "binding": "R2_BUCKET",
       "bucket_name": "vapt-assets-production"
+    },
+    {
+      "binding": "PUBLIC_CATALOG_BUCKET",
+      "bucket_name": "vapt-catalog-production"
     }
   ],
   "durable_objects": {

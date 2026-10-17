@@ -11,7 +11,7 @@ import { SqliteImageBudget } from "./catalog/image-budget.js";
 import { AppError } from "../lib/errors.js";
 export { CatalogExecutionProbe };
 
-type Env = Omit<WorkerBindings, "PUBLIC_CATALOG_COORDINATOR" | "R2_BUCKET"> & { PUBLIC_CATALOG_COORDINATOR: DurableObjectNamespace<CatalogRuntimeProbe>; CATALOG_EXECUTION_PROBE: DurableObjectNamespace<CatalogExecutionProbe>; R2_BUCKET: R2Bucket };
+type Env = Omit<WorkerBindings, "PUBLIC_CATALOG_COORDINATOR" | "R2_BUCKET" | "PUBLIC_CATALOG_BUCKET"> & { PUBLIC_CATALOG_COORDINATOR: DurableObjectNamespace<CatalogRuntimeProbe>; CATALOG_EXECUTION_PROBE: DurableObjectNamespace<CatalogExecutionProbe>; R2_BUCKET: R2Bucket; PUBLIC_CATALOG_BUCKET: R2Bucket };
 let serviceCalls = 0;
 const app = createWorkerApp(async () => { serviceCalls++; throw new Error("Public reader must not construct SQL/auth services"); });
 export class CatalogRuntimeProbe extends PublicCatalogCoordinator {
@@ -47,6 +47,16 @@ export class CatalogRuntimeProbe extends PublicCatalogCoordinator {
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+    if (url.pathname === "/_test/storage-audit") {
+      const images = await env.R2_BUCKET.list(); const catalog = await env.PUBLIC_CATALOG_BUCKET.list();
+      return Response.json({ imageKeys: images.objects.map(object => object.key), catalogKeys: catalog.objects.map(object => object.key) });
+    }
+    if (url.pathname === "/_test/image-catalog-decoy") {
+      const state = await request.json() as CatalogState;
+      await createCatalogProjection(env.R2_BUCKET, env.ENVIRONMENT).publish({ state, result: null, previousSlug: null,
+        receipt: { operationId: state.catalog.restaurant.id, restaurantId: state.catalog.restaurant.id, phase: "committed", version: state.version, committed: true, retryable: true } });
+      return Response.json({ ok: true });
+    }
     if (url.pathname.startsWith("/_test/execution/")) {
       const room = env.CATALOG_EXECUTION_PROBE.get(env.CATALOG_EXECUTION_PROBE.idFromName("execution"));
       const action = url.pathname.split("/").at(-1);
@@ -64,7 +74,7 @@ export default {
     if (url.pathname === "/_test/publish") {
       const state = await request.json() as CatalogState;
       try {
-        await createCatalogProjection(env.R2_BUCKET, env.ENVIRONMENT).publish({ state, result: null, previousSlug: null,
+        await createCatalogProjection(env.PUBLIC_CATALOG_BUCKET, env.ENVIRONMENT).publish({ state, result: null, previousSlug: null,
           receipt: { operationId: state.catalog.restaurant.id, restaurantId: state.catalog.restaurant.id, phase: "committed", version: state.version, committed: true, retryable: true } });
         const room = env.PUBLIC_CATALOG_COORDINATOR.get(env.PUBLIC_CATALOG_COORDINATOR.idFromName(`${env.ENVIRONMENT}:${state.catalog.restaurant.id}`));
         await room.testSignal(state); return Response.json({ published: state.version });

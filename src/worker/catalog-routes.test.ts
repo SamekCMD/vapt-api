@@ -21,7 +21,7 @@ async function fixture() {
   let services = 0; const rooms: string[] = []; const ingressHeaders: Headers[] = []; let allowRate = true;
   const app = createWorkerApp(async () => { services++; throw new Error("Public catalog must never initialize SQL/auth/services"); });
   const env = { ENVIRONMENT: "preview", PUBLIC_CATALOG_READER_ENABLED: "true", PUBLIC_CATALOG_WRITER_ENABLED: "true", CORS_ORIGINS: origin,
-    PUBLIC_RATE_LIMIT: { async limit() { return { success: allowRate }; } }, R2_BUCKET: bucket,
+    PUBLIC_RATE_LIMIT: { async limit() { return { success: allowRate }; } }, R2_BUCKET: bucket, PUBLIC_CATALOG_BUCKET: bucket,
     PUBLIC_CATALOG_COORDINATOR: { idFromName(name: string) { rooms.push(name); return name; }, get() { return { async fetch(request: Request) {
       ingressHeaders.push(request.headers); return new Response(null, { status: 200, headers: { "X-Synthetic-Upgrade": "stub-only-not-real101" } });
     } }; } },
@@ -54,4 +54,33 @@ test("published socket ingress selects only its scoped room and strips private b
   assert.deepEqual(value.rooms, [`preview:${restaurantId}`]);
   assert.equal(value.ingressHeaders[0]?.has("cookie"), false); assert.equal(value.ingressHeaders[0]?.has("authorization"), false);
   assert.equal(value.services(), 0);
+});
+
+test("catalog GET and socket use the private catalog binding even when images are unavailable", async () => {
+  const value = await fixture(); let imageReads = 0;
+  value.env.R2_BUCKET = { async get() { imageReads++; throw new Error("Image bucket must not be read"); },
+    async put() { throw new Error("Image bucket must not be written"); }, async list() { throw new Error("Image bucket must not be listed"); } } as unknown as WorkerBindings["R2_BUCKET"];
+  for (const [path, expected] of [["/public/restaurants/bistro/catalog", state.catalog], ["/public/restaurants/bistro/catalog-state", state]] as const) {
+    const response = await value.request(path); assert.equal(response.status, 200); assert.deepEqual(await response.json(), expected);
+  }
+  const socket = await value.request(`/v1/catalog/restaurants/${restaurantId}/socket`, { Upgrade: "websocket" });
+  assert.equal(socket.headers.get("X-Synthetic-Upgrade"), "stub-only-not-real101");
+  assert.equal(imageReads, 0); assert.equal(value.services(), 0);
+});
+
+test("missing private catalog binding never falls back to a populated image bucket or SQL", async () => {
+  const value = await fixture();
+  delete value.env.PUBLIC_CATALOG_BUCKET;
+  for (const path of ["/public/restaurants/bistro/catalog", "/public/restaurants/bistro/catalog-state", `/v1/catalog/restaurants/${restaurantId}/socket`]) {
+    const response = await value.request(path, path.includes("socket") ? { Upgrade: "websocket" } : {});
+    assert.equal(response.status, 503); assert.equal(response.headers.get("Cache-Control"), "no-store");
+  }
+  assert.equal(value.services(), 0); assert.deepEqual(value.rooms, []);
+});
+
+test("incomplete private catalog binding fails closed rather than reusing image storage", async () => {
+  const value = await fixture();
+  value.env.PUBLIC_CATALOG_BUCKET = { get: value.env.PUBLIC_CATALOG_BUCKET!.get } as WorkerBindings["PUBLIC_CATALOG_BUCKET"];
+  assert.equal((await value.request("/public/restaurants/bistro/catalog-state")).status, 503);
+  assert.equal(value.services(), 0); assert.deepEqual(value.rooms, []);
 });
