@@ -1,0 +1,39 @@
+# Catálogo — integração PostgreSQL local
+
+Evidência de 17/10/2026. PostgreSQL **18.6**, Windows x64, listener somente `127.0.0.1`, cluster descartável dentro da pasta ignorada do projeto. Nenhum SQL, credencial, role, branch ou recurso remoto foi usado ou alterado. Sem instalação global, serviço Windows ou alteração de PATH; instância encerrada em `finally` depois dos testes.
+
+## Execução reproduzível
+
+O teste versionado é `src/modules/catalog-publication/transaction.pg-integration.ts`. Em um PostgreSQL local descartável, criar uma base vazia de nome `vapt_catalog_test_<sufixo>` e fornecer sua conexão por `CATALOG_TEST_DATABASE_URL`, apenas no ambiente do processo de teste. Não imprimir o valor nem usar credenciais de produção. Executar a partir da raiz da API:
+
+```text
+node --import tsx --test src/modules/catalog-publication/transaction.pg-integration.ts
+```
+
+`CATALOG_SCHEMA_ROOT` aponta para `infra/neon` do repositório frontend; o padrão `../../infra/neon` atende ao worktree atual. O teste recusa conexão ausente, remota, base de outro nome, parâmetros de redirecionamento e fragmentos. Não usa `DATABASE_URL` implicitamente. Aplica os SQLs001/003/004/009 somente quando a base isolada está vazia; limpa apenas as linhas da fixture identificada por UUID.
+
+O harness operacional desta execução inicializou um cluster novo, gerou senha aleatória em memória, entregou-a ao `initdb` por named pipe efêmero, escolheu porta local livre e encerrou o servidor ao final. Binários obtidos pelo [link oficial de ZIP do PostgreSQL](https://www.postgresql.org/download/windows/) para a [EDB](https://www.enterprisedb.com/download-postgresql-binaries): pacote `postgresql-18.6-5-windows-x64-binaries.zip`. SHA256 local `e2246ba91d22345bc3d017586c09ede52d9df180b1eeb480f050445f1cad84e2` é apenas identificação do download, **não** comparação com checksum independente publicado; executável sem assinatura Authenticode. Nenhum pacote ou dado de cluster entra no Git.
+
+## Resultado SQL real
+
+Sete testes, zero falhas (teste principal e seis subtestes):
+
+- Onboarding concorrente: três tentativas, um restaurante, um primeiro item e um journal; mesma resposta recuperada. Falha SQL no journal reverte o domínio e não deixa operação gravada.
+- Criação e exclusão concorrentes de item: efeito único por operação, sem duplicação; mesma chave com outro payload retorna409.
+- Snapshot UTF8 acima de8MiB: alteração de domínio, revisão e journal não são confirmados. Snapshot aceito permanece dentro do limite.
+- Dois donos disputando o mesmo slug: um sucesso e um409; após liberação, o novo dono recebe revisão global maior que a do anterior.
+- Sessão realmente expirada no banco: rejeição antes da mutação, mesmo com expiry futuro no comando aceito.
+- Sessão apagada enquanto o comando realmente aguarda advisory lock: nenhuma mutação/journal. Trabalho já confirmado continua recuperável após revogação; nova operação é recusada.
+- Limpeza oportunística de101 entradas expiradas remove somente100; chave vencida pode ser reaplicada com revisão nova, não é tombstone permanente.
+
+## Grants009 — prova separada no mesmo cluster descartável
+
+Os arquivos de grants exigem o nome `vapt`. Para não enfraquecer esse guard nem apontar o teste transacional para uma base normal, o harness criou **outra base `vapt` apenas no cluster recém-inicializado**, mais duas roles locais `NOLOGIN`, sem superuser, criação de roles/bases, replicação, bypassRLS ou membership. Não são as roles remotas.
+
+SQL001/003/004/009 e ambos `009_worker_*_catalog_grants.sql` foram executados sem edição. `verify-public-catalog-publication.sql` confirmou journal, revisões, sequência e os acessos de ambas as roles. Asserções SQL adicionais confirmaram SELECT/INSERT/DELETE no journal e USAGE na sequência, com UPDATE/TRUNCATE/TRIGGER do journal, reset da sequência e CREATE no schema negados. Tentativas reais de DDL, UPDATE no journal e `setval` sob cada role falharam com42501.
+
+Isso valida os grants incrementais009, não substitui auditoria das permissões anteriores006/007 nem prova Hyperdrive/Neon remoto. Não há autorização de migração ou ativação implícita.
+
+## Limites desta evidência
+
+Transações foram exercitadas pelo pool administrativo **local da fixture**, não por credenciais remotas. Os grants009 têm prova separada acima. A suíte normal `npm test` não inclui este arquivo; é obrigatório executá-lo explicitamente. A prova workerd usa outro harness e journal sintético, não deve ser confundida com este PostgreSQL real. CPU8MiB sob o limite Workers1000ms, privacidade dos buckets remotos, writers ativos, deploy, bootstrap e revisão final continuam gates independentes.
