@@ -72,3 +72,13 @@ jobs:
 
       - name: Bundle observability production without deploying
         run: npm run build:worker-production-observability
+
+      - name: Validate catalog preparation and blocked deployment aliases
+        run: |
+          npm run test:catalog-config
+          npm run test:catalog-bootstrap
+          npm run verify:catalog-preview
+          npm run verify:catalog-production
+
+      - name: Bundle catalog production candidate without deploying
+        run: npm run build:worker-catalog-production
