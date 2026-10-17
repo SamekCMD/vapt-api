@@ -16,7 +16,7 @@ O harness operacional desta execução inicializou um cluster novo, gerou senha 
 
 ## Resultado SQL real
 
-Sete testes, zero falhas (teste principal e seis subtestes):
+Dez testes, zero falhas (teste principal e nove subtestes; os três cenários imagem/SQL foram acrescentados na continuação de17/10):
 
 - Onboarding concorrente: três tentativas, um restaurante, um primeiro item e um journal; mesma resposta recuperada. Falha SQL no journal reverte o domínio e não deixa operação gravada.
 - Criação e exclusão concorrentes de item: efeito único por operação, sem duplicação; mesma chave com outro payload retorna409.
@@ -25,6 +25,16 @@ Sete testes, zero falhas (teste principal e seis subtestes):
 - Sessão realmente expirada no banco: rejeição antes da mutação, mesmo com expiry futuro no comando aceito.
 - Sessão apagada enquanto o comando realmente aguarda advisory lock: nenhuma mutação/journal. Trabalho já confirmado continua recuperável após revogação; nova operação é recusada.
 - Limpeza oportunística de101 entradas expiradas remove somente100; chave vencida pode ser reaplicada com revisão nova, não é tombstone permanente.
+
+### Concorrência entre imagem e catálogo
+
+`src/worker/catalog/image-service.pg-test-support.ts` é importado somente pelo teste de integração acima. Exercita o applier e o serviço reais contra o mesmo PostgreSQL, com conexões concorrentes e SQLite real de quota. **Sem fila JavaScript compartilhada** entre as duas operações: a serialização precisa ocorrer pelos locks SQL, cuja espera é observada em `pg_stat_activity`. Armazenamento e leitura dos snapshots são adapters controlados, não R2 real ou emulação de consistência do provedor.
+
+- Exclusão primeiro: a remoção física é pausada por uma barreira de I/O; a associação concorrente realmente espera no PostgreSQL e ainda não valida a imagem. Ao concluir a exclusão, a associação é recusada com410, sem logo/journal novo e sem ressuscitar o objeto. A quota só é liberada após a remoção.
+- Associação primeiro: a validação de imagem é pausada sob a transação SQL; a exclusão concorrente espera. Depois do commit, a exclusão relê a revisão e é recusada enquanto a projeção está atrasada. A imagem segue protegida quando referenciada pelo snapshot atual **ou pelo anterior**. Só depois de duas revisões sem referência a limpeza passa e libera quota.
+- Logout concorrente: a exclusão da sessão espera a limpeza já autorizada terminar sua alteração física. Uma nova limpeza depois da revogação retorna401, sem nova mutação de armazenamento.
+
+Esses testes passaram contra o comportamento já implementado; não foi necessária alteração da lógica de produção. São prova de integração/locks, não red→green de correção nova. Testes R2/SQLite/hibernação em workerd continuam em harness separado. Não equivalem à composição completa DO+Hyperdrive+R2 remotos nem comprovam deadlines/CPU sob carga.
 
 ## Grants009 — prova separada no mesmo cluster descartável
 

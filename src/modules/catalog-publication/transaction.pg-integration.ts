@@ -9,6 +9,7 @@ import { allocateOnboardingRestaurantId } from "./policy.js";
 import { applyCatalogCommand } from "./transaction.js";
 import { requireLocalCatalogTestUrl } from "./transaction-test-support.js";
 import type { CatalogCommand } from "./contracts.js";
+import { verifyImagePostgresConcurrency } from "../../worker/catalog/image-service.pg-test-support.js";
 
 test("real PostgreSQL catalog transaction guarantees", { timeout: 60_000 }, async t => {
   const connectionString = requireLocalCatalogTestUrl(process.env.CATALOG_TEST_DATABASE_URL);
@@ -206,6 +207,8 @@ test("real PostgreSQL catalog transaction guarantees", { timeout: 60_000 }, asyn
       assert.equal((await pool.query("select name from public.restaurants where id = $1", [restaurantId])).rows[0].name, "Retention Test");
       assert.equal((await pool.query("select count(*)::int as n from public.catalog_publication_operations where operation_id = $1", [patch.operationId])).rows[0].n, 1);
     });
+
+    await verifyImagePostgresConcurrency(t, pool, command);
 
     await pool.query('delete from better_auth."session" where id = $1', [sessionId]);
     assert.deepEqual(await applyCatalogCommand(pool, command), outcomes[0], "already committed work remains recoverable");
