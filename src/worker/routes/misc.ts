@@ -8,7 +8,7 @@ import { validAdminSecret } from "../../modules/payments/effects-admin.js";
 import { menuImageParamsSchema, prepareMenuImageUploadBodySchema } from "../../modules/storage/schemas.js";
 import type { WorkerHonoEnv } from "../app.js";
 import { parseWorkerJson, requireWorkerAuth, workerRateLimit } from "../http.js";
-import { isCatalogWriterEnabled, requireCatalogActor, prepareCatalogImage, retireCatalogImage } from "../catalog/writer.js";
+import { isCatalogWriterEnabled, requireCatalogActor, prepareCatalogImage, retireCatalogImage, reconcileCatalogImages } from "../catalog/writer.js";
 
 export function registerWorkerMiscRoutes(
   app: Hono<WorkerHonoEnv>,
@@ -33,6 +33,10 @@ export function registerWorkerMiscRoutes(
     await next();
   };
 
+  app.post("/restaurants/:restaurantId/menu-images/reconcile", enabledStorage, storageRate, async (context) => {
+    if (!isCatalogWriterEnabled(context.env)) return context.json({ error: { code: "not_found", message: "Route not found" } }, 404);
+    return context.json(await reconcileCatalogImages(context));
+  });
   app.post("/restaurants/:restaurantId/menu-items/:itemId/image/upload", enabledStorage, storageRate, imageAuthenticated, async (context) => {
     const params = validateWithSchema(menuImageParamsSchema, context.req.param());
     const body = validateWithSchema(prepareMenuImageUploadBodySchema, await parseWorkerJson(context.req.raw));

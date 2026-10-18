@@ -8,7 +8,7 @@ export type ImageReservation = {
   leaseId: string; restaurantId: string; itemId: string; objectKey: string;
   contentType: MenuImageContentType; bytes: number; expiresAt: number;
   state: "reserved" | "staged" | "uploaded" | "retired";
-  stagingAttempts: number; fenceEtag?: string; retiredBytes?: number; retiredAt?: number;
+  stagingAttempts: number; fenceEtag?: string; retiredBytes?: number; retiredAt?: number; cleanupCheckedAt?: number;
 };
 export type ImageReservationInput = Pick<ImageReservation, "leaseId" | "restaurantId" | "itemId" | "contentType" | "bytes"> & {
   now: number; ttlMs: number;
@@ -73,6 +73,16 @@ export class SqliteImageBudget {
     const row = this.sql.exec<{ reservation: string }>("select reservation from catalog_image_leases where json_extract(reservation, '$.objectKey') = ? limit 1", objectKey).toArray()[0];
     return row ? JSON.parse(row.reservation) as ImageReservation : null;
   }
+
+  cleanupCandidates(restaurantId: string, now: number): ImageReservation[] {
+    this.assertScope(restaurantId);
+    return this.sql.exec<{ reservation: string }>(`select reservation from catalog_image_leases
+      where json_extract(reservation, '$.state') != 'retired' and json_extract(reservation, '$.expiresAt') <= ?
+      order by coalesce(json_extract(reservation, '$.cleanupCheckedAt'), 0), lease_id limit 10`, now)
+      .toArray().map(row => JSON.parse(row.reservation) as ImageReservation);
+  }
+
+  cleanupChecked(leaseId: string, now: number): void { this.save({ ...this.require(leaseId), cleanupCheckedAt: now }); }
 
   stageAttempt(leaseId: string): ImageReservation {
     const lease = this.require(leaseId);

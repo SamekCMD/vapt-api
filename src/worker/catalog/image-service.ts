@@ -14,6 +14,7 @@ import { MENU_IMAGE_MAX_BYTES } from "../../modules/storage/policy.js";
 export type CatalogImageAccess = { restaurantId: string; itemId: string; actor: CatalogActor };
 export type CatalogImagePrepare = CatalogImageAccess & { leaseId: string; contentType: MenuImageContentType; contentLength: number };
 export type CatalogImageRetire = CatalogImageAccess & { objectKey: string };
+export type CatalogImageReconcile = Pick<CatalogImageAccess, "restaurantId" | "actor">;
 export type CatalogImageServicePorts = {
   database: Database; budget: SqliteImageBudget;
   bucket: ImageUploadPorts["bucket"]; signer: ImageUploadPorts["signer"];
@@ -29,10 +30,11 @@ const accessSchema = z.object({ restaurantId: uuid, itemId: uuid, actor: actorSc
 const prepareSchema = accessSchema.extend({ leaseId: uuid, contentType: z.enum(["image/jpeg", "image/png", "image/webp"]),
   contentLength: z.number().int().positive().max(MENU_IMAGE_MAX_BYTES) });
 const retireSchema = accessSchema.extend({ objectKey: z.string().min(1).max(200) });
+const reconcileSchema = accessSchema.omit({ itemId: true });
 const blocked = () => new AppError(409, "menu_image_cleanup_pending", "Image cleanup is not safe yet");
 
 export function createCatalogImageService(ports: CatalogImageServicePorts) {
-  async function ownerLock<T>(access: CatalogImageAccess, requireItem: boolean, work: (client: PoolClient) => Promise<T>): Promise<T> {
+  async function ownerLock<T>(access: CatalogImageReconcile & { itemId?: string }, requireItem: boolean, work: (client: PoolClient) => Promise<T>): Promise<T> {
     if (access.actor.sessionExpiresAt <= ports.now()) throw new AppError(401, "unauthorized", "Unauthorized");
     return withTransaction(ports.database, async client => {
       await client.query("select pg_advisory_xact_lock(hashtextextended($1::text, 0))", [`catalog:owner:${access.actor.userId}`]);
@@ -69,6 +71,15 @@ export function createCatalogImageService(ports: CatalogImageServicePorts) {
   function uploads(assertCanRetire: (key: string) => Promise<void>) {
     return createImageUploads({ ...ports, exclusive: work => work(), assertCanRetire });
   }
+  async function retirementGuard(client: PoolClient, restaurantId: string) {
+    if (ports.hasUnresolvedCommands()) throw blocked();
+    const revision = await client.query<{ version: string }>("select version::text as version from public.catalog_publication_revisions where restaurant_id = $1::uuid", [restaurantId]);
+    const retained = await ports.projection.readRetainedCatalogs(restaurantId);
+    if (!revision.rows[0] || !retained.length || retained[0]!.version !== revision.rows[0].version
+      || retained.some(state => state.catalog.restaurant.id !== restaurantId)) throw blocked();
+    return (key: string) => retained.some(state => sameObject(state.catalog.restaurant.logoUrl, key)
+      || state.catalog.items.some(item => sameObject(item.imageUrl, key)));
+  }
   return {
     async prepare(input: CatalogImagePrepare): Promise<ImageUploadDescriptor> {
       const access = validateWithSchema(prepareSchema, input);
@@ -84,15 +95,28 @@ export function createCatalogImageService(ports: CatalogImageServicePorts) {
         const lease = ports.budget.getByObjectKey(access.objectKey);
         if (!lease) throw new AppError(404, "menu_image_upload_not_found", "Image upload not found");
         await uploads(async key => {
-          if (ports.hasUnresolvedCommands()) throw blocked();
-          const revision = await client.query<{ version: string }>("select version::text as version from public.catalog_publication_revisions where restaurant_id = $1::uuid", [access.restaurantId]);
-          const retained = await ports.projection.readRetainedCatalogs(access.restaurantId);
-          if (!revision.rows[0] || !retained.length || retained[0]!.version !== revision.rows[0].version) throw blocked();
-          for (const state of retained) {
-            if (state.catalog.restaurant.id !== access.restaurantId) throw blocked();
-            if (sameObject(state.catalog.restaurant.logoUrl, key) || state.catalog.items.some(item => sameObject(item.imageUrl, key))) throw blocked();
-          }
+          const referenced = await retirementGuard(client, access.restaurantId);
+          if (referenced(key)) throw blocked();
         }).retire(lease.leaseId);
+      }));
+    },
+    async reconcile(input: CatalogImageReconcile): Promise<{ checked: number; retired: number; protected: number }> {
+      const access = validateWithSchema(reconcileSchema, input);
+      return ports.exclusive(() => ownerLock(access, false, async client => {
+        const candidates = ports.budget.cleanupCandidates(access.restaurantId, ports.now());
+        const result = { checked: candidates.length, retired: 0, protected: 0 };
+        if (!candidates.length) return result;
+        const referenced = await retirementGuard(client, access.restaurantId);
+        const storage = uploads(async key => { if (referenced(key)) throw blocked(); });
+        for (const lease of candidates) {
+          assertKey(lease.objectKey, access.restaurantId, lease.itemId);
+          await ports.atomic(() => ports.budget.cleanupChecked(lease.leaseId, ports.now()));
+          if (referenced(lease.objectKey)) { result.protected++; continue; }
+          // Expiry only selects candidates. The existing physical retirement and
+          // uncertain-creator fence must succeed before any quota is released.
+          await storage.retire(lease.leaseId); result.retired++;
+        }
+        return result;
       }));
     },
     // Internal applier hook ONLY: caller already holds PG owner/session locks

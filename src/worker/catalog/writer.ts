@@ -86,6 +86,12 @@ export async function retireCatalogImage(context: Context<WorkerHonoEnv>, params
   return unwrapCatalogRpc(await target.retireImage({ ...params, objectKey, actor }));
 }
 
+export async function reconcileCatalogImages(context: Context<WorkerHonoEnv>) {
+  const restaurantId = validateWithSchema(uuid, context.req.param("restaurantId"));
+  const { actor, target } = await imageRoom(context, restaurantId);
+  return unwrapCatalogRpc(await target.reconcileImages({ restaurantId, actor }));
+}
+
 export async function submitCatalogMutation(context: Context<WorkerHonoEnv>, mutation: CatalogMutation): Promise<CommandOutcome<unknown>> {
   const operationId = catalogOperationId(context);
   const actor = await requireCatalogActor(context);

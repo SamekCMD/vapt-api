@@ -82,10 +82,12 @@ async function fixture(pool: Pool, base: CatalogCommand) {
 }
 
 export async function verifyImagePostgresConcurrency(t: TestContext, pool: Pool, base: CatalogCommand): Promise<void> {
-  await t.test("SQL retirement holds its lock through storage deletion and a delayed attachment cannot resurrect the image", async () => {
+  for (const method of ["retire", "reconcile"] as const) await t.test(`SQL ${method} holds its lock through storage deletion and a delayed attachment cannot resurrect the image`, async () => {
     const value = await fixture(pool, base);
     value.pauseDeletion();
-    const retirement = observe(value.service.retire(value.access));
+    if (method === "reconcile") value.ports.now = () => Date.now() + 300_001;
+    const retirement = observe<unknown>(method === "retire" ? value.service.retire(value.access)
+      : value.service.reconcile({ restaurantId: base.restaurantId, actor: base.actor }));
     const command = value.attachment();
     let applying: ReturnType<typeof observe<Awaited<ReturnType<typeof applyCatalogCommand>>>> | undefined;
     let validations = 0;

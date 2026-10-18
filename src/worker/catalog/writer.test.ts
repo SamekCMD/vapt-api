@@ -63,6 +63,7 @@ function fixture(options: { enabled?: boolean; noRestaurant?: boolean; pending?:
           headers: { "Content-Type": "image/webp", "If-Match": '"synthetic-etag"' }, expiresInSeconds: 300,
         } }; },
         async retireImage(input: unknown) { imageCalls.push({ action: "retire", input }); return { ok: true, value: undefined }; },
+        async reconcileImages(input: unknown) { imageCalls.push({ action: "reconcile", input }); return { ok: true, value: { checked: 10, retired: 9, protected: 1 } }; },
         async submit(command: CatalogCommand) { commands.push(command); return { ok: true, value: { receipt: receipt(command.operationId, command.restaurantId), result: { saved: true } } }; },
         async status(access: { operationId: string; restaurantId: string }) { return { ok: true, value: receipt(access.operationId, access.restaurantId) }; },
         async retry(access: { operationId: string; restaurantId: string }) { return { ok: true, value: receipt(access.operationId, access.restaurantId) }; },
@@ -85,6 +86,27 @@ test("image upload uses the same owner-scoped coordinator and sends no cookie/em
   assert.deepEqual(value.imageCalls, [{ action: "prepare", input: { restaurantId, itemId: sessionId, leaseId: operationId,
     actor: { userId, sessionId, sessionExpiresAt: new Date("2030-01-01").getTime() }, contentType: "image/webp", contentLength: 123 } }]);
   assert.equal(value.authReads(), 1); assert.equal(value.legacyWrites(), 0);
+});
+
+test("manual image reconciliation is owner-only, rate-limited, writer-only and returns a bounded summary", async () => {
+  const value = fixture(); const path = `/restaurants/${restaurantId}/menu-images/reconcile`;
+  const response = await value.request(path, "POST");
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { checked: 10, retired: 9, protected: 1 });
+  assert.deepEqual(value.imageCalls, [{ action: "reconcile", input: { restaurantId,
+    actor: { userId, sessionId, sessionExpiresAt: new Date("2030-01-01").getTime() } } }]);
+  for (const [route, headers, status] of [
+    [path, { Cookie: "session=revoked" }, 401],
+    [`/restaurants/${operationId}/menu-images/reconcile`, {}, 403],
+    ["/restaurants/not-a-uuid/menu-images/reconcile", {}, 400],
+  ] as const) assert.equal((await value.request(route, "POST", undefined, headers)).status, status);
+  assert.equal(value.imageCalls.length, 1);
+  value.env.STORAGE_RATE_LIMIT = { async limit() { return { success: false }; } } as WorkerBindings["STORAGE_RATE_LIMIT"];
+  assert.equal((await value.request(path, "POST")).status, 429);
+  assert.equal(value.imageCalls.length, 1);
+  const legacy = fixture({ enabled: false });
+  assert.equal((await legacy.request(path, "POST")).status, 404);
+  assert.equal(legacy.legacyWrites(), 0); assert.equal(legacy.imageCalls.length, 0);
 });
 
 test("image retirement requires an explicit tenant image key and never falls through to mutable legacy deletion", async () => {

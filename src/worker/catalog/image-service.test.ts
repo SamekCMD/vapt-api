@@ -28,7 +28,7 @@ function fixture() {
   const lease = budget.reserve({ ...access, leaseId: sessionId, contentType: "image/webp", bytes: 123, now, ttlMs: 300_000 }, []);
   budget.stageAttempt(sessionId); budget.staged(sessionId, "staging-etag");
   let transaction = false; let ownerLocked = false; let sessionLocked = false; let sessionValid = true;
-  let owns = true; let pendingCommands = false; let revision = "12";
+  let owns = true; let pendingCommands = false; let revision = "12"; let clock = now;
   const calls: string[] = []; const deleted: string[] = [];
   let imagePresent = true;
   const client = { async query(query: string, values: unknown[] = []) {
@@ -46,7 +46,7 @@ function fixture() {
   const retained = [{ version: "12", catalog: { restaurant: { id: restaurantId, logoUrl: null }, items: [] } },
     { version: "11", catalog: { restaurant: { id: restaurantId, logoUrl: null }, items: [] } }] as unknown as CatalogState[];
   const ports: CatalogImageServicePorts = {
-    database, budget, publicBaseUrl: new URL("https://assets.test/"), ttlMs: 300_000, now: () => now,
+    database, budget, publicBaseUrl: new URL("https://assets.test/"), ttlMs: 300_000, now: () => clock,
     exclusive: work => work(), async atomic(work) { return work(); },
     hasUnresolvedCommands: () => pendingCommands,
     projection: { async readRetainedCatalogs() { return retained; } },
@@ -63,8 +63,95 @@ function fixture() {
   };
   return { sqlite, ports, lease, deleted, retained, calls, service: createCatalogImageService(ports),
     revoke: () => { sessionValid = false; }, foreign: () => { owns = false; },
-    pending: () => { pendingCommands = true; }, revision: (value: string) => { revision = value; } };
+    pending: () => { pendingCommands = true; }, revision: (value: string) => { revision = value; }, advance: () => { clock = now + 300_001; } };
 }
+
+test("manual reconciliation rediscovers an old image after page loss, retaining both snapshots until safe", async () => {
+  const value = fixture();
+  try {
+    value.ports.budget.uploaded(sessionId); value.advance();
+    value.retained[1]!.catalog.restaurant.logoUrl = `https://assets.test/${value.lease.objectKey}`;
+    // A newly created service has no browser cleanup intent or in-memory task.
+    const reopened = createCatalogImageService(value.ports);
+    assert.deepEqual(await reopened.reconcile({ restaurantId, actor }), { checked: 1, retired: 0, protected: 1 });
+    assert.deepEqual(value.deleted, []);
+    value.retained[1]!.catalog.restaurant.logoUrl = null;
+    assert.deepEqual(await reopened.reconcile({ restaurantId, actor }), { checked: 1, retired: 1, protected: 0 });
+    assert.deepEqual(value.deleted, [value.lease.objectKey]);
+    assert.equal(value.ports.budget.usage(restaurantId, []), 0);
+    assert.deepEqual(await reopened.reconcile({ restaurantId, actor }), { checked: 0, retired: 0, protected: 0 });
+  } finally { value.sqlite.close(); }
+});
+
+test("expired abandoned reservations can be retired in a bounded batch, but expiry alone never refunds quota", async () => {
+  const value = fixture();
+  try {
+    for (let index = 1; index < 10; index++) value.ports.budget.reserve({ restaurantId, itemId,
+      leaseId: `55555555-5555-4555-8555-${String(index).padStart(12, "0")}`, contentType: "image/webp", bytes: 123, now, ttlMs: 300_000 }, []);
+    assert.deepEqual(await value.service.reconcile({ restaurantId, actor }), { checked: 0, retired: 0, protected: 0 });
+    value.advance();
+    assert.equal(value.ports.budget.usage(restaurantId, []), 1230);
+    assert.deepEqual(await value.service.reconcile({ restaurantId, actor }), { checked: 10, retired: 10, protected: 0 });
+    assert.equal(value.ports.budget.usage(restaurantId, []), 0);
+    const next = value.ports.budget.reserve({ restaurantId, itemId, leaseId: userId, contentType: "image/webp", bytes: 123, now: now + 300_002, ttlMs: 300_000 }, []);
+    assert.equal(next.state, "reserved");
+  } finally { value.sqlite.close(); }
+});
+
+test("reconciliation cannot bypass revoked sessions, foreign ownership, pending commands or a lagging projection", async () => {
+  for (const situation of ["revoked", "foreign", "pending", "revision"] as const) {
+    const value = fixture();
+    try {
+      value.advance();
+      if (situation === "revoked") value.revoke();
+      if (situation === "foreign") value.foreign();
+      if (situation === "pending") value.pending();
+      if (situation === "revision") value.revision("13");
+      await assert.rejects(value.service.reconcile({ restaurantId, actor }), error => error instanceof AppError && [401, 403, 409].includes(error.statusCode));
+      assert.deepEqual(value.deleted, []);
+      assert.equal(value.ports.budget.usage(restaurantId, []), 123);
+    } finally { value.sqlite.close(); }
+  }
+});
+
+test("protected candidates rotate so the bounded manual scan can reach later abandoned uploads", async () => {
+  const value = fixture();
+  try {
+    value.ports.budget.uploaded(sessionId);
+    const keys = [value.lease.objectKey];
+    for (let index = 1; index <= 10; index++) {
+      const leaseId = `55555555-5555-4555-8555-${String(index).padStart(12, "0")}`;
+      keys.push(value.ports.budget.reserve({ restaurantId, itemId, leaseId, contentType: "image/webp", bytes: 123, now, ttlMs: 300_000 }, []).objectKey);
+      value.ports.budget.uploaded(leaseId);
+    }
+    value.retained[0]!.catalog.items = keys.slice(0, 10).map(key => ({ imageUrl: `https://assets.test/${key}` })) as CatalogState["catalog"]["items"];
+    value.advance();
+    assert.deepEqual(await value.service.reconcile({ restaurantId, actor }), { checked: 10, retired: 0, protected: 10 });
+    assert.deepEqual(await value.service.reconcile({ restaurantId, actor }), { checked: 10, retired: 1, protected: 9 });
+    assert.equal(value.ports.budget.getByObjectKey(keys[10]!)?.state, "retired");
+    assert.equal(value.ports.budget.usage(restaurantId, []), 1230);
+  } finally { value.sqlite.close(); }
+});
+
+test("an uncertain expired creator needs a physical fence; failed storage never refunds its reservation", async () => {
+  const value = fixture();
+  try {
+    value.ports.budget.reserve({ restaurantId, itemId, leaseId: userId, contentType: "image/webp", bytes: 123, now, ttlMs: 300_000 }, []);
+    value.ports.budget.stageAttempt(userId); value.advance();
+    value.ports.bucket.put = async () => { throw new Error("Storage unavailable"); };
+    await assert.rejects(value.service.reconcile({ restaurantId, actor }), error => error instanceof AppError && error.statusCode === 503);
+    assert.equal(value.ports.budget.get(userId)?.state, "reserved");
+    assert.equal(value.ports.budget.usage(restaurantId, []), 246);
+    value.ports.bucket.put = (async (_key, body, options) => {
+      assert.equal(typeof body, "string"); assert.equal((body as string).length, 36);
+      assert.deepEqual(options?.onlyIf, { etagDoesNotMatch: "*" });
+      assert.deepEqual(options?.customMetadata, { vaptImage: "retired" });
+      return { etag: "retired-etag" };
+    }) as CatalogImageServicePorts["bucket"]["put"];
+    assert.deepEqual(await value.service.reconcile({ restaurantId, actor }), { checked: 2, retired: 2, protected: 0 });
+    assert.equal(value.ports.budget.usage(restaurantId, []), 36);
+  } finally { value.sqlite.close(); }
+});
 
 test("prepare revalidates session, owner and item before R2 inventory or issuing a capability", async () => {
   const value = fixture();
@@ -92,6 +179,15 @@ test("retirement holds verified SQL owner/session locks through R2 removal and r
     } } };
     await assert.rejects(value.service.validateAttachment(command), error => error instanceof AppError && error.statusCode === 410,
       "a delayed writer that acquires the owner lock later must not reattach the retired object");
+  } finally { value.sqlite.close(); }
+});
+
+test("an already retired image remains an authenticated no-op while a later publication is pending", async () => {
+  const value = fixture();
+  try {
+    await value.service.retire({ ...access, objectKey: value.lease.objectKey }); value.pending();
+    await value.service.retire({ ...access, objectKey: value.lease.objectKey });
+    assert.deepEqual(value.deleted, [value.lease.objectKey]);
   } finally { value.sqlite.close(); }
 });
 

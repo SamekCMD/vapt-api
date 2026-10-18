@@ -1,6 +1,6 @@
 # Catálogo — integração PostgreSQL local
 
-Evidência de 17/10/2026. PostgreSQL **18.6**, Windows x64, listener somente `127.0.0.1`, cluster descartável dentro da pasta ignorada do projeto. Nenhum SQL, credencial, role, branch ou recurso remoto foi usado ou alterado. Sem instalação global, serviço Windows ou alteração de PATH; instância encerrada em `finally` depois dos testes.
+Evidência inicial de17/10, revalidada em18/10/2026 com **11/11** testes. PostgreSQL **18.6**, Windows x64, listener somente `127.0.0.1`, cluster descartável dentro da pasta ignorada do projeto. Nenhum SQL, credencial, role, branch ou recurso remoto foi usado ou alterado. Sem instalação global, serviço Windows ou alteração de PATH; instância encerrada em `finally` depois dos testes.
 
 ## Execução reproduzível
 
@@ -33,6 +33,8 @@ Dez testes, zero falhas (teste principal e nove subtestes; os três cenários im
 - Exclusão primeiro: a remoção física é pausada por uma barreira de I/O; a associação concorrente realmente espera no PostgreSQL e ainda não valida a imagem. Ao concluir a exclusão, a associação é recusada com410, sem logo/journal novo e sem ressuscitar o objeto. A quota só é liberada após a remoção.
 - Associação primeiro: a validação de imagem é pausada sob a transação SQL; a exclusão concorrente espera. Depois do commit, a exclusão relê a revisão e é recusada enquanto a projeção está atrasada. A imagem segue protegida quando referenciada pelo snapshot atual **ou pelo anterior**. Só depois de duas revisões sem referência a limpeza passa e libera quota.
 - Logout concorrente: a exclusão da sessão espera a limpeza já autorizada terminar sua alteração física. Uma nova limpeza depois da revogação retorna401, sem nova mutação de armazenamento.
+
+Em18/10 o primeiro cenário foi executado também pela nova **reconciliação manual de leases expiradas**, sem filaJS compartilhada. O attachment realmente espera o lock SQL enquanto a reconciliação está pausada no DELETE físico; após a retirada, recebe410 sem gravar logo/journal ou ressuscitar objeto. A quota é liberada depois da retirada. O relógio da seleção de candidatos é controlado, mas PostgreSQL, espera do lock, applier e SQLite são reais. O harness voltou a aplicar os dois grants009 e confirmou privilégios extras negados; servidor local encerrado ao final.
 
 Esses testes passaram contra o comportamento já implementado; não foi necessária alteração da lógica de produção. São prova de integração/locks, não red→green de correção nova. Testes R2/SQLite/hibernação em workerd continuam em harness separado. Não equivalem à composição completa DO+Hyperdrive+R2 remotos nem comprovam deadlines/CPU sob carga.
 

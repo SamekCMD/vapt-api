@@ -11,7 +11,7 @@ import { createCatalogProjection } from "./projection.js";
 import { createCatalogCoordinator, type CatalogCoordinator, type OperationAccess } from "./runner.js";
 import { catalogRpcReply } from "./rpc.js";
 import { SqliteImageBudget } from "./image-budget.js";
-import { createCatalogImageService, type CatalogImagePrepare, type CatalogImageRetire } from "./image-service.js";
+import { createCatalogImageService, type CatalogImagePrepare, type CatalogImageRetire, type CatalogImageReconcile } from "./image-service.js";
 import { createWorkerMenuImageGateway } from "../../modules/storage/r2-worker.js";
 import { createPublicCatalogSockets } from "./public-sockets.js";
 
@@ -89,6 +89,7 @@ export class PublicCatalogCoordinator extends DurableObject<WorkerBindings> {
   retry(access: OperationAccess) { return catalogRpcReply(() => this.runner.retry(access)); }
   prepareImage(input: CatalogImagePrepare) { return catalogRpcReply(() => this.#withDatabase(database => this.#imageService(database).prepare(input))); }
   retireImage(input: CatalogImageRetire) { return catalogRpcReply(() => this.#withDatabase(database => this.#imageService(database).retire(input))); }
+  reconcileImages(input: CatalogImageReconcile) { return catalogRpcReply(() => this.#withDatabase(database => this.#imageService(database).reconcile(input))); }
   alarm() { return this.runner.alarm(); }
   async fetch(request: PlatformRequest): Promise<PlatformResponse> {
     // Native fetch preserves the upgrade response. There is deliberately no
