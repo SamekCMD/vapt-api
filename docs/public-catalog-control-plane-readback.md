@@ -1,5 +1,7 @@
 # Catálogo — readback preparatório do control plane
 
+Atualização posterior ao readback preparatório: a autorização específica foi recebida e a preparação inerte do Preview concluída. [Deployment/namespace/limites e alcance](public-catalog-preview-inert-verification.md). O top-level não foi modificado; a proposta no final deste registro não é mais uma pendência de autorização para essa preparação já executada. Ativação/workload e os demais ambientes continuam fora do escopo.
+
 18/10/2026. Consultas somente leitura via Wrangler local4.138.0, conta `3ce69408aa5112617a282957aba71932`. Sem endpoints de negócio, SQL, download do código publicado, secrets, logs de requisições ou escrita no provedor. Valores/identidades de usuários e credenciais não foram emitidos. Heads locais: API `385b74f`, frontend `1395ce5`.
 
 ## Metadados encontrados

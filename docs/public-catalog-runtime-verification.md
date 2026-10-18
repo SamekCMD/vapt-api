@@ -1,5 +1,7 @@
 # Catálogo público — prova local e limites
 
+Atualização posterior18/10: Preview `stage11-inert` preparado após autorização específica, deployment `7b51fca2-207e-4e29-948e-159761b362ea`; novo namespace SQLite e bucket privado ligados, reader/writerfalse. Realtime anterior, secrets, recursos de imagens e deployments de controle preservados. CPU configurada1000ms confirmada, **workload/ativação ainda não certificados**. [Evidência e limites](public-catalog-preview-inert-verification.md). Production continua sem implantação do catálogo; os registros17/10 abaixo são históricos. Nenhuma autorização SQL/bootstrap/flags inferida.
+
 Checkpoint atualizado17/10/2026. Após autorização específica, criados somente os buckets `vapt-catalog-preview`/`vapt-catalog-production`: Standard/ENAM, vazios no readback, r2.dev desativado e sem custom domains. [Evidência remota](public-catalog-r2-privacy-verification.md). Nenhum deploy/secret/plano criado. Configs `wrangler.worker-catalog-preview.jsonc` e `wrangler.worker-catalog-production.jsonc` continuam **candidatas**, com reader/writer false, CPU1000ms e migração SQLite append-only após RestaurantRealtime; `PUBLIC_CATALOG_BUCKET` ainda não foi implantado. Recursos de imagens `R2_BUCKET` permanecem intactos. Não há namespaceID inventado. O entry de preview exporta a classe, sem ligá-la nas configurações legadas.
 
 ## Evidência local

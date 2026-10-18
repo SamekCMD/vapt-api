@@ -24,6 +24,7 @@ function checkPreview(meta,deployment,config,prepared) {
   ensure(meta.observability?.enabled===false && meta.observability.logs?.enabled===false
     && meta.observability.traces?.enabled===false && meta.logpush===false && isDeepStrictEqual(meta.tail_consumers,[]),'catalog_preview_telemetry_invalid');
   ensure(deployment?.migration_tag===(prepared?migration:'stage12-realtime-sqlite-v1'), 'catalog_preview_migration_invalid');
+  if(prepared) ensure(deployment.limits?.cpu_ms===1000,'catalog_preview_cpu_limit_invalid');
   const env=deployment.env??{}; const expectedNames=[...secretNames];
   for(const [name,text] of Object.entries(config.previews.vars)) {
     if(!prepared && name.startsWith('PUBLIC_CATALOG_')) continue;
@@ -85,7 +86,8 @@ export async function runCatalogInertPreview(args,ports={}) {
     const meta=await read(previewPath); const before=await read(previewPath+'/deployments/latest');
     const alreadyPrepared=before.migration_tag===migration;
     checkPreview(meta,before,config,alreadyPrepared);
-    if(args[0]==='inspect'||alreadyPrepared) return {status:0,report:{ok:true,prepared:alreadyPrepared,previewId,deploymentId:before.id,deploymentNumber:before.number,activationReady:false}};
+    if(args[0]==='inspect'||alreadyPrepared) return {status:0,report:{ok:true,prepared:alreadyPrepared,previewId,deploymentId:before.id,deploymentNumber:before.number,
+      ...(alreadyPrepared?{cpuLimitMs:1000,cpuLimitVerified:true,cpuWorkloadVerified:false}:{}),activationReady:false}};
     // The provider evicts oldest deployments at its 100-deployment limit. A
     // cumulative number below 100 is conservative proof this apply cannot do so.
     ensure(Number.isInteger(before.number)&&before.number>=1&&before.number<100,'catalog_preview_history_requires_check');
@@ -100,7 +102,7 @@ export async function runCatalogInertPreview(args,ports={}) {
     ensure(isDeepStrictEqual(await controls(),controlBefore),'catalog_preview_control_changed');
     return {status:0,report:{ok:true,prepared:true,previewId,deploymentId:after.id,previousDeploymentId:before.id,
       catalogNamespaceId:after.env.PUBLIC_CATALOG_COORDINATOR.namespace_id,realtimeNamespaceId:realtimeId,
-      reader:false,writer:false,controlDeploymentsUnchanged:true,cpuLimitRequested:1000,cpuReadbackVerified:false,activationReady:false}};
+      reader:false,writer:false,controlDeploymentsUnchanged:true,cpuLimitMs:1000,cpuLimitVerified:true,cpuWorkloadVerified:false,activationReady:false}};
   } catch(error) { return failed(attempted?'catalog_preview_deployment_uncertain':error?.safeCode??'catalog_preview_preflight_failed'); }
   finally { credential=undefined; }
 }

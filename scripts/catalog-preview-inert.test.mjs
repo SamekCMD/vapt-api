@@ -29,6 +29,7 @@ function fixture(mutate = () => {}) {
       assert.equal(options.env.WRANGLER_WRITE_LOGS,'false'); assert.notEqual(options.stdio,'inherit');
       applied=true;
       deployment.id='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'; deployment.migration_tag='catalog-publication-preview-sqlite-v1';
+      deployment.limits={cpu_ms:1000};
       Object.assign(env,{PUBLIC_CATALOG_READER_ENABLED:{type:'plain_text',text:'false'},PUBLIC_CATALOG_WRITER_ENABLED:{type:'plain_text',text:'false'},
         PUBLIC_CATALOG_BUCKET:{type:'r2_bucket',bucket_name:'vapt-catalog-preview'},PUBLIC_CATALOG_COORDINATOR:{type:'durable_object_namespace',namespace_id:newRoom,class_name:'PublicCatalogCoordinator'}});
       return {status:0,stdout:JSON.stringify({preview:meta,deployment}),stderr:''};
@@ -90,6 +91,7 @@ for(const [label,change] of [
   ['reader enabled',v=>{v.deployment.env.PUBLIC_CATALOG_READER_ENABLED.text='true';}],
   ['wrong catalog bucket',v=>{v.deployment.env.PUBLIC_CATALOG_BUCKET.bucket_name='vapt-catalog-production';}],
   ['changed old namespace',v=>{v.deployment.env.RESTAURANT_REALTIME.namespace_id=newRoom;}],
+  ['expanded CPU limit',v=>{v.deployment.limits.cpu_ms=30000;}],
 ]) test(`post-deployment ${label} fails readback without retry or repair`,async()=>{
   const {runCatalogInertPreview}=await feature(); const value=fixture(); const execute=value.ports.execute;
   value.ports.execute=(exe,args,options)=>{const result=execute(exe,args,options);if(args[1]==='preview') change(value);return result;};
