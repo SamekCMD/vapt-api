@@ -8,7 +8,7 @@ import {
   type OwnershipLookup,
 } from "../../lib/permissions.js";
 import { validateWithSchema } from "../../lib/validation.js";
-import { requireAuth } from "../../plugins/auth.js";
+import { authIdentityDto, requireAuth } from "../../plugins/auth.js";
 import { restaurantAccessParamsSchema } from "./schemas.js";
 
 export async function registerAuthRoutes(
@@ -35,7 +35,7 @@ export async function registerAuthRoutes(
         requireAuth(request, reply, app.authSessionResolver),
     },
     async (request) => {
-      return request.auth;
+      return authIdentityDto(request.auth!);
     },
   );
 

@@ -2,6 +2,7 @@ import type { Hono, MiddlewareHandler } from "hono";
 
 import { createRestaurantAccessChecker } from "../../lib/permissions.js";
 import { AppError } from "../../lib/errors.js";
+import { authIdentityDto } from "../../plugins/auth.js";
 import { validateWithSchema } from "../../lib/validation.js";
 import { restaurantAccessParamsSchema } from "../../modules/auth/schemas.js";
 import type { WorkerHonoEnv } from "../app.js";
@@ -29,7 +30,7 @@ export function registerWorkerAuthRoutes(
     const services = await context.get("getServices")();
     return services.authRuntime.handler(request);
   });
-  app.get("/auth/me", rate, async (context) => context.json(await requireWorkerAuth(context)));
+  app.get("/auth/me", rate, async (context) => context.json(authIdentityDto(await requireWorkerAuth(context))));
   app.get("/auth/restaurants/:restaurantId/access", rate, async (context) => {
     const auth = await requireWorkerAuth(context);
     const params = validateWithSchema(restaurantAccessParamsSchema, context.req.param());

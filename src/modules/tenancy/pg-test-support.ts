@@ -52,7 +52,9 @@ async function database(work: (pool: Pool) => Promise<void>, onlyBaseline: boole
     await admin.query('create database vapt');
     created = true;
     const testUrl = new URL(config.url.href); testUrl.pathname = '/vapt';
-    pool = new pg.Pool({ connectionString: testUrl.href, max: 10 });
+    pool = new pg.Pool({ connectionString: testUrl.href, max: 10,
+      connectionTimeoutMillis:5_000, statement_timeout:10_000, lock_timeout:5_000,
+      idle_in_transaction_session_timeout:15_000 });
     for (const name of baseline) await pool.query(await sqlFile(name));
     if (!onlyBaseline) {
       for (const [stage] of afterBaseline) {

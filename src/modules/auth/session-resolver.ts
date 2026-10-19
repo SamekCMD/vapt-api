@@ -17,7 +17,9 @@ export function createSessionResolver(runtime: AuthRuntime, source?: "fetch") {
       : fromNodeHeaders(headers as NodeJS.Dict<string | string[]>);
     const session = await runtime.getSession(fetchHeaders);
 
-    if (!session) {
+    const expiresAt = session?.session.expiresAt;
+    if (!session || !(expiresAt instanceof Date) || !Number.isFinite(expiresAt.getTime()) ||
+      expiresAt.getTime() <= Date.now() || session.session.userId !== session.user.id) {
       return null;
     }
 
@@ -25,6 +27,8 @@ export function createSessionResolver(runtime: AuthRuntime, source?: "fetch") {
       userId: session.user.id,
       email: session.user.email ?? null,
       role: "authenticated",
+      sessionId: session.session.id,
+      sessionExpiresAt: expiresAt.getTime(),
     };
   };
 }

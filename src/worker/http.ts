@@ -4,6 +4,7 @@ import { isIP } from "node:net";
 import { ConfigError } from "../lib/config.js";
 import { AppError } from "../lib/errors.js";
 import type { AuthContext } from "../plugins/auth.js";
+import { actorFromAuth } from "../plugins/auth.js";
 import { createSessionResolver } from "../modules/auth/session-resolver.js";
 import type { RateLimitGroup } from "../plugins/rate-limit.js";
 import type { WorkerHonoEnv } from "./app.js";
@@ -102,6 +103,11 @@ export function workerRateLimit(group: RateLimitGroup): MiddlewareHandler<Worker
     if (!decision.allowed) throw new AppError(429, "rate_limit_exceeded", "Too many requests");
     await next();
   };
+}
+
+// Explicit write admission. Legacy read handlers stay compatible during the paired port.
+export async function requireWorkerActor(context: Context<WorkerHonoEnv>) {
+  return actorFromAuth(await requireWorkerAuth(context));
 }
 
 export function trustedRateLimitKey(headers: Headers, group: RateLimitGroup): string {
