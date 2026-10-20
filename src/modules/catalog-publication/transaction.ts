@@ -8,13 +8,11 @@ import { createRestaurantRepository } from "../restaurants/repository.js";
 import { createRestaurantService } from "../restaurants/service.js";
 import type { CatalogCommand, CatalogState, CommandIdentity, CommandReceipt } from "./contracts.js";
 import { commandConflict, readJournal, writeJournal } from "./journal.js";
+import { withRestaurantWrite } from '../tenancy/authorization.js';
+import { lockOperation,lockSlugs } from '../tenancy/locks.js';
 import { affectsPublicCatalog, allocateOnboardingRestaurantId, fingerprintCommand, validateCatalogCommand } from "./policy.js";
 
 export type CommittedCommand = { receipt: CommandReceipt; result: unknown; state: CatalogState; previousSlug: string | null };
-
-async function lock(client: PoolClient, key: string): Promise<void> {
-  await client.query("select pg_advisory_xact_lock(hashtextextended($1::text, 0))", [key]);
-}
 
 async function mutate(database: Database, client: PoolClient, command: CatalogCommand, publicBaseUrl: URL | null): Promise<unknown> {
   const restaurants = createRestaurantService(createRestaurantRepository(database, {
@@ -48,39 +46,20 @@ export async function applyCatalogCommand(
   const identity: CommandIdentity = { ...command, fingerprint: await fingerprintCommand(command) };
   return withTransaction(database, async client => {
     // Operation key first: different actors cannot race one key into separate effects.
-    await lock(client, `catalog:operation:${command.operationId}`);
+    await lockOperation(client,command.operationId);
     const existing = await readJournal(client, identity);
     if (existing) return existing;
-    await lock(client, `catalog:owner:${command.actor.userId}`);
-    const found = await client.query<{ id: string; slug: string }>(
-      "select id, slug from public.restaurants where owner_id = $1::uuid", [command.actor.userId],
-    );
-    const owned = found.rows[0];
-    if (command.mutation.type === "onboarding" ? Boolean(owned) : owned?.id !== command.restaurantId) {
-      throw new AppError(409, "catalog_restaurant_conflict", "Restaurant does not match catalog operation");
-    }
-    const mutation = command.mutation;
-    const nextSlug = mutation.type === "onboarding" ? mutation.input.slug
-      : mutation.type === "restaurant.patch" && mutation.input.slug ? mutation.input.slug : owned!.slug;
-    const slugs = [...new Set([owned?.slug, nextSlug].filter((slug): slug is string => Boolean(slug)))].sort();
-    // Do not row-lock a restaurant before acquiring every slug lock: cross-owner renames could deadlock.
-    for (const slug of slugs) await lock(client, `catalog:slug:${slug}`);
-    if (owned) {
-      const current = await client.query<{ id: string; slug: string }>(
-        "select id, slug from public.restaurants where id = $1::uuid and owner_id = $2::uuid for update",
-        [command.restaurantId, command.actor.userId],
-      );
-      if (current.rows[0]?.slug !== owned.slug) throw commandConflict();
-    }
-    const active = await client.query<{ id: string }>(`select id from better_auth."session"
-      where id = $1::uuid and "userId" = $2::uuid and "expiresAt" > clock_timestamp() for share`,
-    [command.actor.sessionId, command.actor.userId]);
-    if (!active.rows[0]) throw new AppError(401, "unauthorized", "Unauthorized");
+    if(command.mutation.type==='onboarding') throw new AppError(503,'catalog_onboarding_pending','Canonical onboarding unavailable');
+    let restaurant:{id:string;slug:string}|undefined;
+    const scope={...command.actor,restaurantId:command.restaurantId};
+    return withRestaurantWrite(database,scope,'restaurant.manage',async()=>{
+    const owned=restaurant!;
+    const mutation=command.mutation;
     const imageUrl = mutation.type === "restaurant.patch" ? mutation.input.logoUrl
       : mutation.type === "item.create" || mutation.type === "item.patch" ? mutation.input.imageUrl : null;
     if (imageUrl) {
       if (!options.validateImages) throw new AppError(503, "catalog_image_validation_required", "Image validation unavailable");
-      // Same owner lock as image retirement. A delayed apply MUST verify after
+      // Same restaurant lock as image retirement. A delayed apply MUST verify after
       // acquiring it, never rely on an object check made before waiting on SQL.
       await options.validateImages(command);
     }
@@ -106,6 +85,15 @@ export async function applyCatalogCommand(
       phase: "committed", committed: true, retryable: true, version }, result, state, previousSlug: owned?.slug ?? null };
     await writeJournal(client, identity, outcome);
     return outcome;
+    },{transaction:client,beforeSession:async current=>{
+      const found=await current.query<{id:string;slug:string}>("select id,slug from public.restaurants where id=$1::uuid",[command.restaurantId]);
+      restaurant=found.rows[0];
+      if(!restaurant) throw new AppError(403,"forbidden","Forbidden");
+      const nextSlug=command.mutation.type==="restaurant.patch" && command.mutation.input.slug ? command.mutation.input.slug : restaurant.slug;
+      await lockSlugs(current,[restaurant.slug,nextSlug]);
+      const locked=await current.query<{slug:string}>("select slug from public.restaurants where id=$1::uuid for update",[command.restaurantId]);
+      if(locked.rows[0]?.slug!==restaurant.slug) throw commandConflict();
+    }});
   });
 }
 
@@ -113,7 +101,7 @@ export async function applyCatalogCommand(
 // HTTP gateways must authenticate before allowing a caller to see the private result.
 export async function findCommittedCommand(database: Database, identity: CommandIdentity): Promise<CommittedCommand | null> {
   return withTransaction(database, async client => {
-    await lock(client, `catalog:operation:${identity.operationId}`);
+    await lockOperation(client,identity.operationId);
     return readJournal(client, identity);
   });
 }

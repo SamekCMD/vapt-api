@@ -3,7 +3,7 @@ import { z } from "zod";
 import { AppError } from "../../lib/errors.js";
 import { actorFromAuth } from '../../plugins/auth.js';
 import { affectsPublicCatalog } from "../../modules/catalog-publication/policy.js";
-import { catalogOperationId, controlCatalogOperation, isCatalogWriterEnabled, requireCatalogActor, respondCatalogMutation, submitCatalogMutation } from "../catalog/writer.js";
+import { legacyCatalogRestaurant, catalogOperationId, controlCatalogOperation, isCatalogWriterEnabled, requireCatalogActor, respondCatalogMutation, submitCatalogMutation } from "../catalog/writer.js";
 
 import { validateWithSchema } from "../../lib/validation.js";
 import { kitchenOrderParamsSchema, scopedKitchenOrderParamsSchema, updateKitchenOrderStatusBodySchema } from "../../modules/kitchen/schemas.js";
@@ -29,8 +29,7 @@ export function registerWorkerRestaurantRoutes(
 
   app.post("/onboarding", rate, authenticated, async (context) => {
     const body = validateWithSchema(onboardingBodySchema, await parseWorkerJson(context.req.raw));
-    if (isCatalogWriterEnabled(context.env)) return respondCatalogMutation(context,
-      await submitCatalogMutation(context, { type: "onboarding", input: body }), 201);
+    if (isCatalogWriterEnabled(context.env)) throw new AppError(503,'catalog_onboarding_pending','Canonical onboarding unavailable');
     const services = await context.get("getServices")();
     return context.json(await services.restaurants.createOwnedRestaurant(context.get("auth").userId, body), 201);
   });
@@ -41,7 +40,7 @@ export function registerWorkerRestaurantRoutes(
   app.patch("/restaurants/me", rate, authenticated, async (context) => {
     const body = validateWithSchema(updateOwnedRestaurantBodySchema, await parseWorkerJson(context.req.raw));
     if (isCatalogWriterEnabled(context.env) && affectsPublicCatalog(body)) return respondCatalogMutation(context,
-      await submitCatalogMutation(context, { type: "restaurant.patch", input: body }), 200);
+      await submitCatalogMutation(context, { type: "restaurant.patch", input: body },await legacyCatalogRestaurant(context)), 200);
     const operationId = isCatalogWriterEnabled(context.env) ? catalogOperationId(context) : null;
     const services = await context.get("getServices")();
     const saved = await services.restaurants.updateOwnedRestaurant(context.get("auth").userId, body,actorFromAuth(context.get('auth')));
@@ -57,7 +56,7 @@ export function registerWorkerRestaurantRoutes(
   app.post("/restaurants/me/menu-items", rate, authenticated, async (context) => {
     const body = validateWithSchema(createMenuItemBodySchema, await parseWorkerJson(context.req.raw));
     if (isCatalogWriterEnabled(context.env)) return respondCatalogMutation(context,
-      await submitCatalogMutation(context, { type: "item.create", input: body }), 201);
+      await submitCatalogMutation(context, { type: "item.create", input: body },await legacyCatalogRestaurant(context)), 201);
     const services = await context.get("getServices")();
     return context.json(await services.menu.createOwnedMenuItem(context.get("auth").userId, body,actorFromAuth(context.get('auth'))), 201);
   });
@@ -65,24 +64,19 @@ export function registerWorkerRestaurantRoutes(
     const params = validateWithSchema(menuItemParamsSchema, context.req.param());
     const body = validateWithSchema(updateMenuItemBodySchema, await parseWorkerJson(context.req.raw));
     if (isCatalogWriterEnabled(context.env)) return respondCatalogMutation(context,
-      await submitCatalogMutation(context, { type: "item.patch", itemId: params.itemId, input: body }), 200);
+      await submitCatalogMutation(context, { type: "item.patch", itemId: params.itemId, input: body },await legacyCatalogRestaurant(context)), 200);
     const services = await context.get("getServices")();
     return context.json(await services.menu.updateOwnedMenuItem(context.get("auth").userId, params.itemId, body,actorFromAuth(context.get('auth'))));
   });
   app.delete("/restaurants/me/menu-items/:itemId", rate, authenticated, async (context) => {
     const params = validateWithSchema(menuItemParamsSchema, context.req.param());
     if (isCatalogWriterEnabled(context.env)) return respondCatalogMutation(context,
-      await submitCatalogMutation(context, { type: "item.delete", itemId: params.itemId }), 204);
+      await submitCatalogMutation(context, { type: "item.delete", itemId: params.itemId },await legacyCatalogRestaurant(context)), 204);
     const services = await context.get("getServices")();
     await services.menu.deleteOwnedMenuItem(context.get("auth").userId, params.itemId,actorFromAuth(context.get('auth')));
     return context.body(null, 204);
   });
 
-  // Task5 pairs the scoped catalog admission/applier. Never bypass publication while
-  // that dependent port is incomplete: local intermediate commits are not deploy gates.
-  const requireScopedDirectWrite = (context:Parameters<typeof isCatalogWriterEnabled>[0])=>{
-    if(isCatalogWriterEnabled(context)) throw new AppError(503,'catalog_scoped_writer_pending','Scoped catalog writer unavailable');
-  };
   app.get('/restaurants/:restaurantId',rate,authenticated,async context=>{
     const { restaurantId }=validateWithSchema(restaurantParamsSchema,context.req.param());
     const services=await context.get('getServices')();
@@ -91,9 +85,14 @@ export function registerWorkerRestaurantRoutes(
   app.patch('/restaurants/:restaurantId',rate,authenticated,async context=>{
     const { restaurantId }=validateWithSchema(restaurantParamsSchema,context.req.param());
     const body=validateWithSchema(updateOwnedRestaurantBodySchema,await parseWorkerJson(context.req.raw));
-    if(affectsPublicCatalog(body)) requireScopedDirectWrite(context.env);
+    if(isCatalogWriterEnabled(context.env) && affectsPublicCatalog(body)) return respondCatalogMutation(context,
+      await submitCatalogMutation(context,{type:'restaurant.patch',input:body},restaurantId),200);
+    const operationId=isCatalogWriterEnabled(context.env)?catalogOperationId(context):null;
     const services=await context.get('getServices')();
-    return context.json(await services.restaurants.updateRestaurant({ ...actorFromAuth(context.get('auth')),restaurantId },body));
+    const saved=await services.restaurants.updateRestaurant({ ...actorFromAuth(context.get('auth')),restaurantId },body);
+    if(operationId && context.req.header("X-Vapt-Catalog-Protocol")==="1") return context.json({result:saved,
+      receipt:{operationId,restaurantId,phase:"ready",version:null,committed:true,retryable:false}});
+    return context.json(saved);
   });
   app.get('/restaurants/:restaurantId/menu-items',rate,authenticated,async context=>{
     const { restaurantId }=validateWithSchema(restaurantMenuParamsSchema,context.req.param());
@@ -103,20 +102,23 @@ export function registerWorkerRestaurantRoutes(
   app.post('/restaurants/:restaurantId/menu-items',rate,authenticated,async context=>{
     const { restaurantId }=validateWithSchema(restaurantMenuParamsSchema,context.req.param());
     const body=validateWithSchema(createMenuItemBodySchema,await parseWorkerJson(context.req.raw));
-    requireScopedDirectWrite(context.env);
+    if(isCatalogWriterEnabled(context.env)) return respondCatalogMutation(context,
+      await submitCatalogMutation(context,{type:'item.create',input:body},restaurantId),201);
     const services=await context.get('getServices')();
     return context.json(await services.menu.createMenuItem({ ...actorFromAuth(context.get('auth')),restaurantId },body),201);
   });
   app.patch('/restaurants/:restaurantId/menu-items/:itemId',rate,authenticated,async context=>{
     const { restaurantId,itemId }=validateWithSchema(restaurantMenuItemParamsSchema,context.req.param());
     const body=validateWithSchema(updateMenuItemBodySchema,await parseWorkerJson(context.req.raw));
-    requireScopedDirectWrite(context.env);
+    if(isCatalogWriterEnabled(context.env)) return respondCatalogMutation(context,
+      await submitCatalogMutation(context,{type:'item.patch',itemId,input:body},restaurantId),200);
     const services=await context.get('getServices')();
     return context.json(await services.menu.updateMenuItem({ ...actorFromAuth(context.get('auth')),restaurantId },itemId,body));
   });
   app.delete('/restaurants/:restaurantId/menu-items/:itemId',rate,authenticated,async context=>{
     const { restaurantId,itemId }=validateWithSchema(restaurantMenuItemParamsSchema,context.req.param());
-    requireScopedDirectWrite(context.env);
+    if(isCatalogWriterEnabled(context.env)) return respondCatalogMutation(context,
+      await submitCatalogMutation(context,{type:'item.delete',itemId},restaurantId),204);
     const services=await context.get('getServices')();
     await services.menu.deleteMenuItem({ ...actorFromAuth(context.get('auth')),restaurantId },itemId);
     return context.body(null,204);
@@ -127,14 +129,29 @@ export function registerWorkerRestaurantRoutes(
     await next();
   };
   app.get("/restaurants/me/catalog-operations/:operationId", rate, enabledCatalog, authenticated, async context =>
-    context.json(await controlCatalogOperation(context, "status")));
+    context.json(await controlCatalogOperation(context, "status",await legacyCatalogRestaurant(context))));
   app.post("/restaurants/me/catalog-operations/:operationId/retry", rate, enabledCatalog, authenticated, async context => {
     validateWithSchema(z.object({}).strict(), await parseWorkerJson(context.req.raw));
-    return context.json(await controlCatalogOperation(context, "retry"));
+    return context.json(await controlCatalogOperation(context, "retry",await legacyCatalogRestaurant(context)));
   });
   app.post("/restaurants/me/catalog/rebuild", rate, enabledCatalog, authenticated, async context => {
     validateWithSchema(z.object({}).strict(), await parseWorkerJson(context.req.raw));
-    return respondCatalogMutation(context, await submitCatalogMutation(context, { type: "rebuild" }), 200);
+    return respondCatalogMutation(context, await submitCatalogMutation(context, { type: "rebuild" },await legacyCatalogRestaurant(context)), 200);
+  });
+
+  app.get('/restaurants/:restaurantId/catalog-operations/:operationId',rate,enabledCatalog,authenticated,async context=>{
+    const {restaurantId}=validateWithSchema(restaurantParamsSchema, {restaurantId:context.req.param('restaurantId')});
+    return context.json(await controlCatalogOperation(context,'status',restaurantId));
+  });
+  app.post('/restaurants/:restaurantId/catalog-operations/:operationId/retry',rate,enabledCatalog,authenticated,async context=>{
+    const {restaurantId}=validateWithSchema(restaurantParamsSchema,{restaurantId:context.req.param('restaurantId')});
+    validateWithSchema(z.object({}).strict(),await parseWorkerJson(context.req.raw));
+    return context.json(await controlCatalogOperation(context,'retry',restaurantId));
+  });
+  app.post('/restaurants/:restaurantId/catalog/rebuild',rate,enabledCatalog,authenticated,async context=>{
+    const {restaurantId}=validateWithSchema(restaurantParamsSchema,context.req.param());
+    validateWithSchema(z.object({}).strict(),await parseWorkerJson(context.req.raw));
+    return respondCatalogMutation(context,await submitCatalogMutation(context,{type:'rebuild'},restaurantId),200);
   });
 
   app.get("/restaurants/me/kitchen/orders", rate, authenticated, async (context) => {

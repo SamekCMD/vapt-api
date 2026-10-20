@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import test from "node:test";
+import { AppError } from '../../lib/errors.js';
 import type { SqlStorage } from "@cloudflare/workers-types";
 import type { CatalogCommand } from "../../modules/catalog-publication/contracts.js";
 import type { CommittedCommand } from "../../modules/catalog-publication/transaction.js";
@@ -42,6 +43,7 @@ function fixture() {
   let applies = 0; let writes = 0; let lookups = 0; let signals = 0; let projections = 0;
   const ports: CatalogCoordinatorPorts = {
     store, now: () => now,
+    async authorize(access){assert.equal(access.actor.userId,userId);assert.equal(access.restaurantId,restaurantId);},
     storage: {
       async transaction(work) {
         const oldAlarm = alarm; database.exec("BEGIN");
@@ -287,4 +289,24 @@ test("image work shares the catalog serial queue so neither can overtake a live 
     release(); await submission; await imageWork;
     assert.equal(imageEntered, true);
   } finally { value.database.close(); }
+});
+
+test('revoked membership blocks private status/replay/retry but alarm still completes committed public projection',async()=>{
+  const value=fixture();
+  try {
+    let active=true;
+    Object.assign(value.ports,{authorize:async()=>{if(!active) throw new AppError(403,'forbidden','Forbidden');}});
+    value.failAt('project');
+    const runner=createCatalogCoordinator(value.ports);
+    assert.equal((await runner.submit(command)).receipt.committed,true);
+    active=false;
+    const access={operationId,restaurantId,actor:command.actor};
+    await assert.rejects(runner.status(access),{statusCode:403});
+    await assert.rejects(runner.retry(access),{statusCode:403});
+    await assert.rejects(runner.submit(command),{statusCode:403});
+    value.advance();await runner.alarm();
+    assert.equal(value.store.get(operationId)?.phase,'ready');
+    assert.equal(value.counts().writes,1);
+    assert.equal(value.counts().projections,2);
+  } finally {value.database.close();}
 });

@@ -33,6 +33,7 @@ export class CatalogExecutionProbe extends DurableObject<Env> {
     }, "preview");
     this.runner = createCatalogCoordinator({
       store: this.commands, now: () => now,
+      authorize:async access=>{const command=this.testCase().command;if(access.actor.userId!==command.actor.userId || access.restaurantId!==command.restaurantId) throw new Error("Foreign synthetic actor");},
       storage: { transaction: work => ctx.storage.transaction(async () => work()),
         setAlarm: at => ctx.storage.setAlarm(at), deleteAlarm: () => ctx.storage.deleteAlarm(), sync: () => ctx.storage.sync() },
       apply: async command => {

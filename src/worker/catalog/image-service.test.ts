@@ -28,14 +28,16 @@ function fixture() {
   const lease = budget.reserve({ ...access, leaseId: sessionId, contentType: "image/webp", bytes: 123, now, ttlMs: 300_000 }, []);
   budget.stageAttempt(sessionId); budget.staged(sessionId, "staging-etag");
   let transaction = false; let ownerLocked = false; let sessionLocked = false; let sessionValid = true;
-  let owns = true; let pendingCommands = false; let revision = "12"; let clock = now;
+  let owns = true;
+  const organizationId="55555555-5555-4555-8555-555555555555"; let pendingCommands = false; let revision = "12"; let clock = now;
   const calls: string[] = []; const deleted: string[] = [];
   let imagePresent = true;
   const client = { async query(query: string, values: unknown[] = []) {
     calls.push(query);
     if (query === "BEGIN") { transaction = true; return { rows: [] }; }
     if (query === "COMMIT" || query === "ROLLBACK") { transaction = false; ownerLocked = false; sessionLocked = false; return { rows: [] }; }
-    if (query.includes("pg_advisory_xact_lock")) { assert.deepEqual(values, [`catalog:owner:${userId}`]); ownerLocked = true; return { rows: [] }; }
+    if(query.startsWith("select r.organization_id,m.role")) {assert.deepEqual(values,[restaurantId,userId]);return {rows:owns?[{organization_id:organizationId,role:'admin'}]:[]};}
+    if (query.includes("pg_advisory_xact_lock")) { assert.ok(values[0]===`tenant:organization:${organizationId}` || values[0]===`tenant:restaurant:${restaurantId}`); ownerLocked = true; return { rows: [] }; }
     if (query.includes('from better_auth."session"')) { sessionLocked = sessionValid; assert.deepEqual(values, [sessionId, userId]); return { rows: sessionValid ? [{ id: sessionId }] : [] }; }
     if (query.includes("catalog_publication_revisions")) return { rows: [{ version: revision }] };
     if (query.includes("from public.menu_items")) return { rows: [{ id: itemId }] };
@@ -56,7 +58,7 @@ function fixture() {
         objects: [{ key: lease.objectKey, size: 123 }] }; },
       async head() { return imagePresent ? { etag: "image-etag", httpEtag: '"image-etag"', size: 123, httpMetadata: { contentType: "image/webp" } } : null; },
       async delete(key: string) {
-        assert.ok(transaction && ownerLocked && sessionLocked, "SQL owner/session locks must remain held through physical deletion");
+        assert.ok(transaction && ownerLocked && sessionLocked, "SQL organization/restaurant/session locks must remain held through physical deletion");
         imagePresent = false; deleted.push(key);
       },
     } as unknown as CatalogImageServicePorts["bucket"],
@@ -167,7 +169,7 @@ test("prepare revalidates session, owner and item before R2 inventory or issuing
   } finally { value.sqlite.close(); }
 });
 
-test("retirement holds verified SQL owner/session locks through R2 removal and releases quota afterward", async () => {
+test("retirement holds verified SQL organization/restaurant/session locks through R2 removal and releases quota afterward", async () => {
   const value = fixture();
   try {
     await value.service.retire({ ...access, objectKey: value.lease.objectKey });

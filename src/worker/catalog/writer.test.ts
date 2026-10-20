@@ -18,15 +18,20 @@ const menuInput = { name: "Prato", price: "12.00", description: null, category: 
   imageUrl: null, availableFrom: null, availableUntil: null, badge: null, isChefSuggestion: false,
   prepTimeMinutes: null, variations: [] };
 
-function fixture(options: { enabled?: boolean; noRestaurant?: boolean; pending?: boolean } = {}) {
+function fixture(options: { enabled?: boolean; noRestaurant?: boolean; pending?: boolean;multiple?:boolean } = {}) {
   const commands: CatalogCommand[] = [];
   const roomNames: string[] = [];
-  let authReads = 0; let legacyWrites = 0;
+  let authReads = 0; let legacyWrites = 0; let implicitReads=0; let memberActive=true;
   const imageCalls: { action: string; input: unknown }[] = [];
   const scope = { id: restaurantId, name: "Bistrô" };
   const receipt = (operation: string, restaurant: string): CommandReceipt => ({ operationId: operation, restaurantId: restaurant,
     phase: options.pending ? "committed" : "ready", version: "11", committed: true, retryable: Boolean(options.pending) });
   const services = {
+    database:{async query(sql:string,values:unknown[]){
+      assert.ok(sql.startsWith('select r.organization_id,m.role'));
+      assert.equal(values[1],userId);
+      return {rows:memberActive && values[0]===restaurantId?[{organization_id:operationId,role:'admin'}]:[]};
+    }},
     authRuntime: { async getSession(headers: Headers) {
       authReads++;
       return headers.get("cookie") === "session=owner" ? { user: { id: userId, email: "synthetic@example.invalid", name: "Test" },
@@ -34,9 +39,13 @@ function fixture(options: { enabled?: boolean; noRestaurant?: boolean; pending?:
     } },
     restaurants: {
       async getOwnedRestaurant(owner: string) {
-        assert.equal(owner, userId);
+        implicitReads++; assert.equal(owner, userId);
+        if(options.multiple) throw new AppError(409,'restaurant_selection_required','Restaurant selection required');
         if (options.noRestaurant) throw new AppError(404, "not_found", "Restaurant not found");
         return scope;
+      },
+      async updateRestaurant(scope:{userId:string;restaurantId:string}){
+        assert.equal(scope.userId,userId);assert.equal(scope.restaurantId,restaurantId);legacyWrites++;return {id:restaurantId};
       },
       async createOwnedRestaurant() { legacyWrites++; return { legacy: true }; },
       async updateOwnedRestaurant() { legacyWrites++; return { legacy: true }; },
@@ -76,7 +85,7 @@ function fixture(options: { enabled?: boolean; noRestaurant?: boolean; pending?:
       "Content-Type": "application/json", "Idempotency-Key": operationId, "X-Vapt-Catalog-Protocol": "1", ...headers },
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
   }), env, execution);
-  return { request, commands, roomNames, env, imageCalls, authReads: () => authReads, legacyWrites: () => legacyWrites };
+  return { request, commands, roomNames, env, imageCalls, implicitReads:()=>implicitReads,revoke:()=>{memberActive=false;},authReads: () => authReads, legacyWrites: () => legacyWrites };
 }
 
 test("image upload uses the same owner-scoped coordinator and sends no cookie/email in the lease", async () => {
@@ -88,7 +97,7 @@ test("image upload uses the same owner-scoped coordinator and sends no cookie/em
   assert.equal(value.authReads(), 1); assert.equal(value.legacyWrites(), 0);
 });
 
-test('scoped public writes cannot bypass the catalog while the dependent admission port is pending',async()=>{
+test('scoped public writes publish to the selected restaurant instead of any implicit owner target',async()=>{
   const value=fixture();
   for(const [path,method,body] of [
     [`/restaurants/${restaurantId}`,'PATCH',{ name:'Scoped' }],
@@ -97,10 +106,12 @@ test('scoped public writes cannot bypass the catalog while the dependent admissi
     [`/restaurants/${restaurantId}/menu-items/${sessionId}`,'DELETE',undefined],
   ] as const) {
     const response=await value.request(path,method,body);
-    assert.equal(response.status,503);
-    assert.deepEqual(await response.json(),{ error:{ code:'catalog_scoped_writer_pending',message:'Scoped catalog writer unavailable' } });
+    assert.equal(response.status,method==='POST'?201:200);
+    assert.equal((await response.json() as {receipt:CommandReceipt}).receipt.restaurantId,restaurantId);
   }
-  assert.equal(value.legacyWrites(),0); assert.deepEqual(value.commands,[]);
+  assert.equal(value.legacyWrites(),0); assert.equal(value.commands.length,4);
+  assert.equal(value.commands.every(command=>command.restaurantId===restaurantId),true);
+  assert.equal(value.implicitReads(),0);
 });
 
 test("manual image reconciliation is owner-only, rate-limited, writer-only and returns a bounded summary", async () => {
@@ -146,14 +157,14 @@ test("foreign/anonymous/oversized image requests never select a coordinator; dis
 
 test("allCatalogRoutesUseDurableWriter sends validated commands and only verified secret-free actor metadata", async () => {
   const cases = [
-    ["POST", "/onboarding", { restaurantName: "Bistrô", slug: "bistro", dishName: "Prato", dishPrice: "12.00" }, "onboarding", 201],
+
     ["PATCH", "/restaurants/me", { name: "Bistrô", cnpj: "synthetic-private" }, "restaurant.patch", 200],
     ["POST", "/restaurants/me/menu-items", menuInput, "item.create", 201],
     ["PATCH", `/restaurants/me/menu-items/${sessionId}`, { available: false }, "item.patch", 200],
     ["DELETE", `/restaurants/me/menu-items/${sessionId}`, undefined, "item.delete", 200],
   ] as const;
   for (const [method, route, body, type, expectedStatus] of cases) {
-    const value = fixture({ noRestaurant: type === "onboarding" });
+    const value = fixture({ noRestaurant: false });
     const response = await value.request(route, method, body);
     assert.equal(response.status, expectedStatus, type);
     const payload = await response.json() as { receipt: CommandReceipt };
@@ -184,14 +195,12 @@ test("pending commit returns an explicit 202, never a fake published response", 
   assert.equal((await response.json() as { receipt: CommandReceipt }).receipt.phase, "committed");
 });
 
-test("onboardingRetryFindsSameRoom even when a caller changes its operation key", async () => {
-  const value = fixture({ noRestaurant: true });
-  const input = { restaurantName: "Bistrô", slug: "bistro", dishName: "Prato", dishPrice: "12.00" };
-  await value.request("/onboarding", "POST", input);
-  await value.request("/onboarding", "POST", input, { "Idempotency-Key": sessionId });
-  const id = await allocateOnboardingRestaurantId(userId, operationId);
-  assert.deepEqual(value.roomNames, [`preview:${id}`, `preview:${id}`]);
-  assert.notEqual(value.commands[0].operationId, value.commands[1].operationId);
+test("new catalog onboarding is closed until the canonical draft finalizer is paired",async()=>{
+  const value=fixture({noRestaurant:true});
+  const response=await value.request('/onboarding','POST',{restaurantName:'Bistrô',slug:'bistro',dishName:'Prato',dishPrice:'12.00'});
+  assert.equal(response.status,503);
+  assert.equal((await response.json() as {error:{code:string}}).error.code,'catalog_onboarding_pending');
+  assert.deepEqual(value.commands,[]);assert.deepEqual(value.roomNames,[]);
 });
 
 test("bad actor, idempotency key, body tenant fields and unsupported protocol never reach a room", async () => {
@@ -222,4 +231,35 @@ test("preflight permits the explicit catalog protocol header without resolving a
   assert.equal(response.status, 204);
   assert.match(response.headers.get("access-control-allow-headers") ?? "", /X-Vapt-Catalog-Protocol/i);
   assert.equal(value.authReads(), 0);
+});
+
+
+test('explicit operation controls revalidate membership and do not resolve an implicit restaurant',async()=>{
+  const value=fixture();
+  const route=`/restaurants/${restaurantId}/catalog-operations/${operationId}`;
+  assert.equal((await value.request(route,'GET')).status,200);
+  assert.equal((await value.request(route+'/retry','POST',{})).status,200);
+  assert.equal((await value.request(`/restaurants/${restaurantId}/catalog/rebuild`,'POST',{})).status,200);
+  assert.equal(value.implicitReads(),0);
+  const rooms=value.roomNames.length;value.revoke();
+  for(const [path,method,body] of [[route,'GET',undefined],[route+'/retry','POST',{}],[`/restaurants/${restaurantId}/catalog/rebuild`,'POST',{}]] as const)
+    assert.equal((await value.request(path,method,body)).status,403);
+  assert.equal(value.roomNames.length,rooms);
+});
+test('explicit private-only patch preserves the catalog protocol receipt without publishing',async()=>{
+  const value=fixture();
+  const response=await value.request(`/restaurants/${restaurantId}`,'PATCH',{cnpj:'synthetic'});
+  assert.equal(response.status,200);
+  assert.deepEqual(await response.json(),{result:{id:restaurantId},receipt:{
+    operationId,restaurantId,phase:'ready',version:null,committed:true,retryable:false,
+  }});
+  assert.deepEqual(value.commands,[]);assert.equal(value.implicitReads(),0);
+});
+
+test('legacy catalog mutations cannot bypass multi-restaurant ambiguity with a query override',async()=>{
+  const value=fixture({multiple:true});
+  const response=await value.request(`/restaurants/me?restaurantId=${restaurantId}`,'PATCH',{name:'Must not select implicitly'});
+  assert.equal(response.status,409);
+  assert.equal((await response.json() as {error:{code:string}}).error.code,'restaurant_selection_required');
+  assert.deepEqual(value.commands,[]);assert.deepEqual(value.roomNames,[]);
 });

@@ -114,7 +114,7 @@ test("image attachment is checked after owner/session locks and before any domai
   let checked = false;
   await assert.rejects(applyCatalogCommand(fixture.database, imageCommand, { validateImages: async () => {
     checked = true;
-    assert.ok(fixture.calls.some(call => call.values.includes(`catalog:owner:${owner}`)));
+    assert.ok(fixture.calls.some(call => call.values.includes(`tenant:restaurant:${restaurant}`)));
     assert.ok(fixture.calls.some(call => call.sql.includes('from better_auth."session"') && /for share/i.test(call.sql)));
     assert.equal(fixture.calls.some(call => /update public\.restaurants/i.test(call.sql)), false);
     throw new AppError(410, "menu_image_upload_expired", "Image was retired");
@@ -180,7 +180,7 @@ test("slugSerialization takes slug locks and session row lock before allocating 
   const fixture = databaseFixture(); await applyCatalogCommand(fixture.database, command);
   const revision = fixture.calls.findIndex(call => call.sql.includes("nextval("));
   const slugLock = fixture.calls.findIndex(call => call.sql.includes("pg_advisory_xact_lock")
-    && call.values.some(value => value === "catalog:slug:bistro"));
+    && call.values.some(value => value === "tenant:slug:bistro"));
   const sessionLock = fixture.calls.findIndex(call => call.sql.includes('from better_auth."session"') && /for share/i.test(call.sql));
   assert.ok(slugLock >= 0 && slugLock < revision);
   assert.ok(sessionLock >= 0 && sessionLock < revision);
@@ -208,10 +208,6 @@ test("duplicateCreateDeleteAndOnboarding never starts a second nested transactio
   const onboardingFixture = databaseFixture({ empty: true, restaurantId: id });
   const onboarding: CatalogCommand = { ...command, restaurantId: id, mutation: { type: "onboarding", input: {
     restaurantName: "Bistrô", slug: "novo-bistro", dishName: "Prato", dishPrice: "12.00" } } };
-  const onboarded = await applyCatalogCommand(onboardingFixture.database, onboarding);
-  assert.equal(onboarded.state.catalog.restaurant.id, id);
-  assert.equal(onboarded.state.catalog.items.length, 1);
-  assert.deepEqual(await applyCatalogCommand(onboardingFixture.database, onboarding), onboarded);
-  assert.equal(onboardingFixture.committedMutations(), 2, "one restaurant + one first dish");
-  assert.equal(onboardingFixture.calls.filter(call => call.sql === "BEGIN").length, 2, "one per request, no nested BEGIN");
+  await assert.rejects(applyCatalogCommand(onboardingFixture.database,onboarding),{statusCode:503,code:'catalog_onboarding_pending'});
+  assert.equal(onboardingFixture.committedMutations(),0);
 });

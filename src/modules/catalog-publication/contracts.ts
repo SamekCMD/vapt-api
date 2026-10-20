@@ -4,7 +4,7 @@ import type { OnboardingBody, UpdateOwnedRestaurantBody } from "../restaurants/s
 
 export type CatalogVersion = string;
 export type CatalogState = { version: CatalogVersion; catalog: PublicCatalogDto };
-export type CatalogActor = { userId: string; sessionId: string; sessionExpiresAt: number };
+export type CatalogActor = import("../tenancy/contracts.js").TenantActor;
 export type CatalogMutation =
   | { type: "onboarding"; input: OnboardingBody }
   | { type: "restaurant.patch"; input: UpdateOwnedRestaurantBody }

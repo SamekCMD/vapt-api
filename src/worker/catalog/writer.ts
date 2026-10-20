@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
 import type { Context } from "hono";
 import { z } from "zod";
+import { authorizeRestaurant } from '../../modules/tenancy/authorization.js';
 import { AppError } from "../../lib/errors.js";
 import { validateWithSchema } from "../../lib/validation.js";
 import type { CatalogActor, CatalogMutation, CommandOutcome } from "../../modules/catalog-publication/contracts.js";
-import { allocateOnboardingRestaurantId, validateCatalogCommand } from "../../modules/catalog-publication/policy.js";
+import { validateCatalogCommand } from "../../modules/catalog-publication/policy.js";
 import type { WorkerHonoEnv } from "../app.js";
 import type { WorkerBindings } from "../environment.js";
 import type { CatalogCoordinator } from "./runner.js";
@@ -56,16 +57,23 @@ function room(context: Context<WorkerHonoEnv>, restaurantId: string): Pick<Catal
   };
 }
 
-async function ownedRestaurant(context: Context<WorkerHonoEnv>, actor: CatalogActor) {
-  const services = await context.get("getServices")();
-  try { return await services.restaurants.getOwnedRestaurant(actor.userId); }
-  catch (error) { if (error instanceof AppError && error.statusCode === 404) return null; throw error; }
+// Compatibility only: getOwnedRestaurant already rejects zero/multiple memberships.
+export async function legacyCatalogRestaurant(context:Context<WorkerHonoEnv>):Promise<string> {
+  const actor=await requireCatalogActor(context);
+  const services=await context.get('getServices')();
+  const requested=context.req.query('restaurantId');
+  const restaurantId=(await services.restaurants.getOwnedRestaurant(actor.userId)).id;
+  if(requested && validateWithSchema(uuid,requested)!==restaurantId) throw new AppError(403,'forbidden','Forbidden');
+  return restaurantId;
 }
-
+async function authorizeTarget(context:Context<WorkerHonoEnv>,restaurantId:string) {
+  const actor=await requireCatalogActor(context);
+  const services=await context.get('getServices')();
+  await authorizeRestaurant(services.database,{userId:actor.userId,restaurantId},'restaurant.manage');
+  return actor;
+}
 async function imageRoom(context: Context<WorkerHonoEnv>, restaurantId: string) {
-  const actor = await requireCatalogActor(context);
-  const owned = await ownedRestaurant(context, actor);
-  if (owned?.id !== restaurantId) throw new AppError(403, "forbidden", "Forbidden");
+  const actor=await authorizeTarget(context,restaurantId);
   const namespace = context.env.PUBLIC_CATALOG_COORDINATOR;
   if (!namespace) throw new AppError(503, "catalog_coordinator_unavailable", "Catalog publication unavailable");
   return { actor, target: namespace.get(namespace.idFromName(`${context.env.ENVIRONMENT}:${restaurantId}`)) };
@@ -93,34 +101,16 @@ export async function reconcileCatalogImages(context: Context<WorkerHonoEnv>) {
   return unwrapCatalogRpc(await target.reconcileImages({ restaurantId, actor }));
 }
 
-export async function submitCatalogMutation(context: Context<WorkerHonoEnv>, mutation: CatalogMutation): Promise<CommandOutcome<unknown>> {
-  const operationId = catalogOperationId(context);
-  const actor = await requireCatalogActor(context);
-  if (!context.env.PUBLIC_CATALOG_COORDINATOR) throw new AppError(503, "catalog_coordinator_unavailable", "Catalog publication unavailable");
-  const owned = await ownedRestaurant(context, actor);
-  const restaurantId = mutation.type === "onboarding" ? await allocateOnboardingRestaurantId(actor.userId, operationId) : owned?.id;
-  if (!restaurantId) throw new AppError(404, "not_found", "Restaurant not found");
-  const coordinator = room(context, restaurantId);
-  if (mutation.type === "onboarding" && owned) {
-    if (owned.id !== restaurantId) throw new AppError(409, "restaurant_conflict", "Restaurant already exists");
-    try { await coordinator.status({ operationId, restaurantId, actor }); }
-    catch (error) {
-      if (error instanceof AppError && error.statusCode === 404) throw new AppError(409, "restaurant_conflict", "Restaurant already exists");
-      throw error;
-    }
-  }
-  return coordinator.submit(validateCatalogCommand({ operationId, restaurantId, actor, mutation }));
+export async function submitCatalogMutation(context:Context<WorkerHonoEnv>,mutation:CatalogMutation,restaurantId:string):Promise<CommandOutcome<unknown>> {
+  const operationId=catalogOperationId(context);
+  const actor=await authorizeTarget(context,validateWithSchema(uuid,restaurantId));
+  if(mutation.type==='onboarding') throw new AppError(503,'catalog_onboarding_pending','Canonical onboarding unavailable');
+  return room(context,restaurantId).submit(validateCatalogCommand({operationId,restaurantId,actor,mutation}));
 }
-
-export async function controlCatalogOperation(context: Context<WorkerHonoEnv>, action: "status" | "retry") {
-  const operationId = validateWithSchema(uuid, context.req.param("operationId"));
-  const actor = await requireCatalogActor(context);
-  const owned = await ownedRestaurant(context, actor);
-  const onboardingId = await allocateOnboardingRestaurantId(actor.userId, operationId);
-  const requested = context.req.query("restaurantId");
-  const restaurantId = requested ? validateWithSchema(uuid, requested) : owned?.id ?? onboardingId;
-  if (restaurantId !== owned?.id && restaurantId !== onboardingId) throw new AppError(403, "forbidden", "Forbidden");
-  return room(context, restaurantId)[action]({ operationId, restaurantId, actor });
+export async function controlCatalogOperation(context:Context<WorkerHonoEnv>,action:'status'|'retry',restaurantId:string) {
+  const operationId=validateWithSchema(uuid,context.req.param('operationId'));
+  const actor=await authorizeTarget(context,validateWithSchema(uuid,restaurantId));
+  return room(context,restaurantId)[action]({operationId,restaurantId,actor});
 }
 
 export function respondCatalogMutation(context: Context<WorkerHonoEnv>, outcome: CommandOutcome<unknown>, success: 200 | 201 | 204) {

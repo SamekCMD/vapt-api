@@ -1,6 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import type { DurableObjectState, R2Bucket, Request as PlatformRequest, Response as PlatformResponse, WebSocket as PlatformSocket, WebSocketRequestResponsePair as PlatformAutoResponse } from "@cloudflare/workers-types";
 import type { Pool } from "pg";
+import { withRestaurantWrite } from '../../modules/tenancy/authorization.js';
 import { AppError } from "../../lib/errors.js";
 import type { CatalogCommand, CatalogState } from "../../modules/catalog-publication/contracts.js";
 import { applyCatalogCommand, findCommittedCommand } from "../../modules/catalog-publication/transaction.js";
@@ -39,6 +40,7 @@ export class PublicCatalogCoordinator extends DurableObject<WorkerBindings> {
     });
     this.runner = createCatalogCoordinator({
       store, now: () => Date.now(),
+      authorize: access=>this.#withDatabase(database=>withRestaurantWrite(database,{...access.actor,restaurantId:access.restaurantId},"restaurant.manage",async()=>{})),
       storage: {
         transaction: work => ctx.storage.transaction(async () => work()),
         setAlarm: at => ctx.storage.setAlarm(at), deleteAlarm: () => ctx.storage.deleteAlarm(), sync: () => ctx.storage.sync(),

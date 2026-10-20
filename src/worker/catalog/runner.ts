@@ -8,6 +8,7 @@ import { fingerprintCommand, validateCatalogCommand } from "../../modules/catalo
 export type OperationAccess = { operationId: string; restaurantId: string; actor: CatalogActor };
 export type CatalogCoordinatorPorts = {
   store: SqliteCommandStore; now(): number;
+  authorize(access:OperationAccess):Promise<void>;
   storage: { transaction<T>(work: () => Promise<T>): Promise<T>; setAlarm(at: number): Promise<void>; deleteAlarm(): Promise<void>; sync(): Promise<void> };
   apply(command: CatalogCommand): Promise<CommittedCommand>;
   findCommitted(identity: CommandIdentity): Promise<CommittedCommand | null>;
@@ -134,6 +135,7 @@ export function createCatalogCoordinator(ports: CatalogCoordinatorPorts): Catalo
       const command = validateCatalogCommand(input);
       const fingerprint = await fingerprintCommand(command);
       return serial(async () => {
+        await ports.authorize(command);
         await atomic(() => { store.expire(now()); store.accept(command, fingerprint, now()); });
         let result = await drive(command.operationId, true);
         const operation = store.get(command.operationId)!;
@@ -142,13 +144,16 @@ export function createCatalogCoordinator(ports: CatalogCoordinatorPorts): Catalo
             actor: command.actor, fingerprint });
           if (original) result = original.result;
         }
+        await ports.authorize(command);
         return { receipt: receipt(operation), ...(result !== undefined ? { result } : {}) };
       });
     },
     status(value) { return serial(async () => {
+      await ports.authorize(value);
       return atomic(() => { store.expire(now()); return receipt(access(value)); });
     }); },
     retry(value) { return serial(async () => {
+      await ports.authorize(value);
       let operation = await atomic(() => { store.expire(now()); return access(value); });
       if (operation.work === "none" && operation.phase === "ready" && !operation.resumeWork) return receipt(operation);
       if (!operation.committed && !store.intent(operation.operationId)) {
@@ -167,6 +172,7 @@ export function createCatalogCoordinator(ports: CatalogCoordinatorPorts): Catalo
         store.save(next);
       });
       await drive(next.operationId, true);
+      await ports.authorize(value);
       return receipt(store.get(next.operationId)!);
     }); },
     alarm() { return serial(async () => {

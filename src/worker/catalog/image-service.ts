@@ -1,4 +1,5 @@
-import { withTransaction, type Database } from "../../lib/database.js";
+import { type Database } from "../../lib/database.js";
+import { withRestaurantWrite } from '../../modules/tenancy/authorization.js';
 import { AppError } from "../../lib/errors.js";
 import { validateWithSchema } from "../../lib/validation.js";
 import { z } from "zod";
@@ -34,16 +35,9 @@ const reconcileSchema = accessSchema.omit({ itemId: true });
 const blocked = () => new AppError(409, "menu_image_cleanup_pending", "Image cleanup is not safe yet");
 
 export function createCatalogImageService(ports: CatalogImageServicePorts) {
-  async function ownerLock<T>(access: CatalogImageReconcile & { itemId?: string }, requireItem: boolean, work: (client: PoolClient) => Promise<T>): Promise<T> {
+  async function restaurantLock<T>(access: CatalogImageReconcile & { itemId?: string }, requireItem: boolean, work: (client: PoolClient) => Promise<T>): Promise<T> {
     if (access.actor.sessionExpiresAt <= ports.now()) throw new AppError(401, "unauthorized", "Unauthorized");
-    return withTransaction(ports.database, async client => {
-      await client.query("select pg_advisory_xact_lock(hashtextextended($1::text, 0))", [`catalog:owner:${access.actor.userId}`]);
-      const owned = await client.query<{ id: string }>("select id from public.restaurants where id = $1::uuid and owner_id = $2::uuid for update",
-        [access.restaurantId, access.actor.userId]);
-      if (!owned.rows[0]) throw new AppError(403, "forbidden", "Forbidden");
-      const active = await client.query<{ id: string }>(`select id from better_auth."session"
-        where id = $1::uuid and "userId" = $2::uuid and "expiresAt" > clock_timestamp() for share`, [access.actor.sessionId, access.actor.userId]);
-      if (!active.rows[0]) throw new AppError(401, "unauthorized", "Unauthorized");
+    return withRestaurantWrite(ports.database,{...access.actor,restaurantId:access.restaurantId},'restaurant.manage',async client=>{
       if (requireItem) {
         const item = await client.query<{ id: string }>("select id from public.menu_items where id = $1::uuid and restaurant_id = $2::uuid", [access.itemId, access.restaurantId]);
         if (!item.rows[0]) throw new AppError(404, "menu_item_not_found", "Menu item not found");
@@ -83,7 +77,7 @@ export function createCatalogImageService(ports: CatalogImageServicePorts) {
   return {
     async prepare(input: CatalogImagePrepare): Promise<ImageUploadDescriptor> {
       const access = validateWithSchema(prepareSchema, input);
-      return ports.exclusive(() => ownerLock(access, true, async () => uploads(async () => { throw blocked(); }).prepare({
+      return ports.exclusive(() => restaurantLock(access, true, async () => uploads(async () => { throw blocked(); }).prepare({
         leaseId: access.leaseId, restaurantId: access.restaurantId, itemId: access.itemId,
         contentType: access.contentType, bytes: access.contentLength, now: ports.now(), ttlMs: ports.ttlMs,
       })));
@@ -91,7 +85,7 @@ export function createCatalogImageService(ports: CatalogImageServicePorts) {
     async retire(input: CatalogImageRetire): Promise<void> {
       const access = validateWithSchema(retireSchema, input);
       assertKey(access.objectKey, access.restaurantId, access.itemId);
-      return ports.exclusive(() => ownerLock(access, false, async client => {
+      return ports.exclusive(() => restaurantLock(access, false, async client => {
         const lease = ports.budget.getByObjectKey(access.objectKey);
         if (!lease) throw new AppError(404, "menu_image_upload_not_found", "Image upload not found");
         await uploads(async key => {
@@ -102,7 +96,7 @@ export function createCatalogImageService(ports: CatalogImageServicePorts) {
     },
     async reconcile(input: CatalogImageReconcile): Promise<{ checked: number; retired: number; protected: number }> {
       const access = validateWithSchema(reconcileSchema, input);
-      return ports.exclusive(() => ownerLock(access, false, async client => {
+      return ports.exclusive(() => restaurantLock(access, false, async client => {
         const candidates = ports.budget.cleanupCandidates(access.restaurantId, ports.now());
         const result = { checked: candidates.length, retired: 0, protected: 0 };
         if (!candidates.length) return result;
@@ -119,7 +113,7 @@ export function createCatalogImageService(ports: CatalogImageServicePorts) {
         return result;
       }));
     },
-    // Internal applier hook ONLY: caller already holds PG owner/session locks
+    // Internal applier hook ONLY: caller already holds PG organization/restaurant/session locks
     // and the shared queue. Taking either lock again here would deadlock.
     async validateAttachment(command: CatalogCommand): Promise<void> {
       const mutation = command.mutation;
