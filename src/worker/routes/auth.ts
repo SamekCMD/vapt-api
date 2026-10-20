@@ -1,6 +1,5 @@
 import type { Hono, MiddlewareHandler } from "hono";
 
-import { createRestaurantAccessChecker } from "../../lib/permissions.js";
 import { AppError } from "../../lib/errors.js";
 import { authIdentityDto } from "../../plugins/auth.js";
 import { validateWithSchema } from "../../lib/validation.js";
@@ -35,10 +34,10 @@ export function registerWorkerAuthRoutes(
     const auth = await requireWorkerAuth(context);
     const params = validateWithSchema(restaurantAccessParamsSchema, context.req.param());
     const services = await context.get("getServices")();
-    await createRestaurantAccessChecker(services.ownershipLookup)({
+    await services.authorizeRestaurant({
       userId: auth.userId,
       restaurantId: params.restaurantId,
-    });
+    },'restaurant.read');
     return context.json({ allowed: true, restaurantId: params.restaurantId, userId: auth.userId });
   });
 }

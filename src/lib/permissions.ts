@@ -2,6 +2,12 @@ import { z } from "zod";
 
 import type { Queryable } from "./database.js";
 import { AppError } from "./errors.js";
+import {authorizeRestaurant} from '../modules/tenancy/authorization.js';
+import type {Access,Capability,RestaurantScope} from '../modules/tenancy/contracts.js';
+
+export type RestaurantAuthorizer=(scope:RestaurantScope,capability:Capability)=>Promise<Access>;
+export const createRestaurantCapabilityChecker=(database:Queryable):RestaurantAuthorizer=>
+  (scope,capability)=>authorizeRestaurant(database,scope,capability);
 
 export type OwnershipLookup = (input: {
   userId: string;
@@ -37,16 +43,11 @@ export function createOwnershipLookup(database: Queryable): OwnershipLookup {
     }
 
     try {
-      const result = await database.query<{ allowed: boolean }>(
-        `select exists (
-          select 1
-          from public.restaurants
-          where id = $1::uuid and owner_id = $2::uuid
-        ) as allowed`,
-        [restaurantId, userId],
-      );
-      return result.rows[0]?.allowed === true;
-    } catch {
+      // Conservative compatibility for the old Stripe consumer until Task7.
+      await authorizeRestaurant(database,{userId,restaurantId},'billing.manage');
+      return true;
+    } catch(error) {
+      if(error instanceof AppError && error.statusCode===403) return false;
       throw new AppError(500, "internal_error", "Failed to verify restaurant access");
     }
   };

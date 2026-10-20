@@ -1,15 +1,12 @@
+import {z} from "zod";
 import type { FastifyInstance, FastifyReply } from "fastify";
 
 import type { AppConfig } from "../../lib/config.js";
 import { AppError } from "../../lib/errors.js";
-import {
-  testOwnershipLookup,
-  type OwnershipLookup,
-} from "../../lib/permissions.js";
 import { validateWithSchema } from "../../lib/validation.js";
 import type { OrderRepository } from "../orders/repository.js";
 import { createOrderService } from "../orders/service.js";
-import { requireAuth } from "../../plugins/auth.js";
+import {actorFromAuth,requireAuth} from "../../plugins/auth.js";
 import {
   createMercadoPagoBrowserReturnUrl,
   createMercadoPagoReturnUrls,
@@ -27,7 +24,6 @@ import {
 } from "./schemas.js";
 import {
   createHostedCheckoutService,
-  createManualPaymentService,
   type HostedCheckoutService,
   type ManualPaymentService,
   type MercadoPagoReturnReconciliationService,
@@ -105,17 +101,9 @@ export async function createManualPaymentRoutes(
   app: FastifyInstance,
   config: AppConfig,
   service?: ManualPaymentService,
-  ownershipLookup?: OwnershipLookup,
+  resolveLegacyRestaurant?:(userId:string)=>Promise<{restaurantId:string}>,
 ) {
-  const resolvedService = service ?? createManualPaymentService({
-    repository: app.payments.repository,
-    paymentService: app.payments.service,
-    ownershipLookup: config.nodeEnv === "test"
-      ? testOwnershipLookup
-      : ownershipLookup ?? (() => {
-          throw new AppError(500, "internal_error", "Ownership lookup is not configured");
-        })(),
-  });
+  const resolvedService=service??(()=>{throw new AppError(503,"manual_payment_unavailable","Manual payment unavailable");})();
 
   app.post(
     "/orders/:orderId/payments/manual-confirmation",
@@ -129,7 +117,10 @@ export async function createManualPaymentRoutes(
       const headers = validateWithSchema(manualPaymentHeadersSchema, request.headers);
       const body = validateWithSchema(manualPaymentBodySchema, request.body);
       const auth = request.auth!;
+      if(!resolveLegacyRestaurant) throw new AppError(503,'restaurant_selection_unavailable','Restaurant selection unavailable');
+      const {restaurantId}=await resolveLegacyRestaurant(auth.userId);
       const transaction = await resolvedService.confirm({
+        ...actorFromAuth(auth),restaurantId,
         orderId: params.orderId,
         paymentMethod: body.paymentMethod,
         idempotencyKey: headers["idempotency-key"],
@@ -147,6 +138,18 @@ export async function createManualPaymentRoutes(
       };
     },
   );
+  app.post('/restaurants/:restaurantId/orders/:orderId/payments/manual-confirmation',{
+    config:{rateLimitGroup:'billing'},preHandler:async(request,reply)=>requireAuth(request,reply,app.authSessionResolver),
+  },async request=>{
+    const params=validateWithSchema(manualPaymentParamsSchema.extend({restaurantId:z.string().uuid()}),request.params);
+    const headers=validateWithSchema(manualPaymentHeadersSchema,request.headers);
+    const body=validateWithSchema(manualPaymentBodySchema,request.body);
+    const transaction=await resolvedService.confirm({...actorFromAuth(request.auth!),restaurantId:params.restaurantId,
+      orderId:params.orderId,paymentMethod:body.paymentMethod,idempotencyKey:headers['idempotency-key']});
+    return {transactionId:transaction.id,orderId:transaction.orderId,status:transaction.status,amount:transaction.amount,
+      paymentMethod:transaction.paymentMethod,confirmedAt:transaction.updatedAt};
+  });
+
 }
 
 export async function registerHostedCheckoutRoutes(

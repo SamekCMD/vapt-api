@@ -1,5 +1,8 @@
+import {z} from "zod";
 import type { Hono, MiddlewareHandler } from "hono";
 
+import {actorFromAuth} from "../../plugins/auth.js";
+import {resolveLegacyRestaurant} from "../../modules/tenancy/authorization.js";
 import { AppError } from "../../lib/errors.js";
 import { validateWithSchema } from "../../lib/validation.js";
 import {
@@ -58,11 +61,12 @@ export function registerWorkerMercadoPagoRoutes(
     const body = validateWithSchema(manualPaymentBodySchema, await parseWorkerJson(context.req.raw));
     const auth = context.get("auth");
     const services = await context.get("getServices")();
+    const {restaurantId}=await resolveLegacyRestaurant(services.database,auth.userId);
     const transaction = await services.manualPayments.confirm({
-      orderId: params.orderId,
+      ...actorFromAuth(auth),restaurantId,orderId: params.orderId,
       paymentMethod: body.paymentMethod,
       idempotencyKey: headers["idempotency-key"],
-      userId: auth.userId,
+      ...actorFromAuth(auth),
       authRole: auth.role,
     });
     return context.json({
@@ -73,6 +77,17 @@ export function registerWorkerMercadoPagoRoutes(
       paymentMethod: transaction.paymentMethod,
       confirmedAt: transaction.updatedAt,
     });
+  });
+
+  app.post('/restaurants/:restaurantId/orders/:orderId/payments/manual-confirmation',rate,authenticated,async context=>{
+    const params=validateWithSchema(manualPaymentParamsSchema.extend({restaurantId:z.string().uuid()}),context.req.param());
+    const headers=validateWithSchema(manualPaymentHeadersSchema,Object.fromEntries(context.req.raw.headers));
+    const body=validateWithSchema(manualPaymentBodySchema,await parseWorkerJson(context.req.raw));
+    const services=await context.get('getServices')();
+    const transaction=await services.manualPayments.confirm({...actorFromAuth(context.get('auth')),restaurantId:params.restaurantId,
+      orderId:params.orderId,paymentMethod:body.paymentMethod,idempotencyKey:headers['idempotency-key']});
+    return context.json({transactionId:transaction.id,orderId:transaction.orderId,status:transaction.status,amount:transaction.amount,
+      paymentMethod:transaction.paymentMethod,confirmedAt:transaction.updatedAt});
   });
 
   app.post("/public/orders/:orderId/payments/checkout", enabled, rate, async (context) => {
@@ -126,7 +141,7 @@ export function registerWorkerMercadoPagoRoutes(
     const { mercadoPago, config } = await marketplace(context);
     return context.json(await mercadoPago.oauth.beginConnection({
       restaurantId: params.restaurantId,
-      userId: context.get("auth").userId,
+      ...actorFromAuth(context.get("auth")),
       environment: body.environment,
       returnOrigin: resolveReturnOrigin(body.returnOrigin, config),
     }));
@@ -147,7 +162,7 @@ export function registerWorkerMercadoPagoRoutes(
     const query = validateWithSchema(environmentQuerySchema, context.req.query());
     const { mercadoPago } = await marketplace(context);
     return context.json(await mercadoPago.oauth.getStatus({
-      restaurantId: params.restaurantId, userId: context.get("auth").userId,
+      restaurantId: params.restaurantId, ...actorFromAuth(context.get("auth")),
       environment: query.environment,
     }));
   });
@@ -157,7 +172,7 @@ export function registerWorkerMercadoPagoRoutes(
     const query = validateWithSchema(environmentQuerySchema, context.req.query());
     const { mercadoPago } = await marketplace(context);
     return context.json(await mercadoPago.oauth.disconnect({
-      restaurantId: params.restaurantId, userId: context.get("auth").userId,
+      restaurantId: params.restaurantId, ...actorFromAuth(context.get("auth")),
       environment: query.environment,
     }));
   });

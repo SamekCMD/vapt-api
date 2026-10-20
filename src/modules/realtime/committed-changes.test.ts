@@ -276,7 +276,7 @@ test("shared API composition connects order, kitchen and table writes to post-co
 test("manual confirmation through shared composition and effect reconciliation publish committed changes only once", async () => {
   const f = fixture({ publisherFails: true }); f.state().orderStatus = "waiting_payment";
   const services = api(f);
-  const result = await services.manualPayments.confirm({ userId, authRole: "authenticated", orderId,
+  const result = await services.manualPayments.confirm({ ...operationalSession,restaurantId:rest,userId, authRole: "authenticated", orderId,
     paymentMethod: "cash", idempotencyKey: "manual-key" });
   assert.equal(result.status, "paid"); assert.equal(result.amount.amount, "10.00");
   assert.deepEqual(f.published.map(change => change.reason), ["payment_changed"]);
@@ -285,11 +285,11 @@ test("manual confirmation through shared composition and effect reconciliation p
   assert.deepEqual(f.published.map(change => change.reason), ["payment_changed", "updated"]);
   assert.equal(f.state().orderStatus, "paid");
   await services.payments.reconciliation.runOnce();
-  await assert.rejects(services.manualPayments.confirm({ userId, authRole: "authenticated", orderId,
+  await assert.rejects(services.manualPayments.confirm({ ...operationalSession,restaurantId:rest,userId, authRole: "authenticated", orderId,
     paymentMethod: "cash", idempotencyKey: "manual-key" }), /already paid/i);
   assert.equal(f.published.length, 2);
   const failed = fixture({ failCommit: true });
-  await assert.rejects(api(failed).manualPayments.confirm({ userId, authRole: "authenticated", orderId,
+  await assert.rejects(api(failed).manualPayments.confirm({ ...operationalSession,restaurantId:rest,userId, authRole: "authenticated", orderId,
     paymentMethod: "cash", idempotencyKey: "manual-key" }));
   assert.equal(failed.published.length, 0);
 });

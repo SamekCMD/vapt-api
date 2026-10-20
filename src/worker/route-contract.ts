@@ -9,6 +9,7 @@ type RouteContract = {
 };
 
 export const ROUTE_CONTRACTS: readonly RouteContract[] = [
+  {method:'POST',path:'/restaurants/:restaurantId/orders/:orderId/payments/manual-confirmation',group:'billing',auth:true},
   {method:'GET',path:'/restaurants/:restaurantId/kitchen/orders',group:'auth',auth:true},
   {method:'PATCH',path:'/restaurants/:restaurantId/kitchen/orders/:orderId/status',group:'auth',auth:true},
   {method:'GET',path:'/restaurants/:restaurantId/table-sessions',group:'auth',auth:true},

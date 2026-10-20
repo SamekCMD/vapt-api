@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 
 import type { Queryable } from "../../lib/database.js";
 import { AppError } from "../../lib/errors.js";
-import type { OwnershipLookup } from "../../lib/permissions.js";
+import type { RestaurantAuthorizer } from "../../lib/permissions.js";
+import {authorizeRestaurant} from '../tenancy/authorization.js';
 import type { AuthRuntime } from "../auth/runtime.js";
 import type { OrderService } from "../orders/service.js";
 
@@ -70,10 +71,12 @@ export function createRealtimeGrantValidator(database: Queryable): RealtimeGrant
           `select requested.key, exists (
             select 1 from better_auth.session as session_row
             join public.restaurants as restaurant on restaurant.id = requested.restaurant_id
+            join public.organization_members as member on member.organization_id=restaurant.organization_id
             where session_row.id = requested.session_id
               and session_row."userId" = requested.user_id
               and session_row."expiresAt" > $2::timestamptz
-              and restaurant.owner_id = requested.user_id
+              and member.user_id=requested.user_id and member.status='active'
+              and member.role in ('owner','admin','manager','staff')
           ) as allowed
           from jsonb_to_recordset($1::jsonb) as requested(
             key text, restaurant_id uuid, user_id uuid, session_id uuid
@@ -109,7 +112,7 @@ export function createRealtimeAuthorization(dependencies: {
   database: Queryable;
   authRuntime: AuthRuntime;
   orders: OrderService;
-  ownershipLookup: OwnershipLookup;
+  authorizeRestaurant?:RestaurantAuthorizer;
 }): RealtimeAuthorization {
   const revalidate = createRealtimeGrantValidator(dependencies.database);
   return {
@@ -126,9 +129,8 @@ export function createRealtimeAuthorization(dependencies: {
           sessionId: session.session.id, sessionExpiresAt: session.session.expiresAt.getTime(),
         };
         if (!eligible(grant, Date.now())) throw new AppError(401, "unauthorized", "Unauthorized");
-        if (!await dependencies.ownershipLookup({ userId: grant.userId, restaurantId: grant.restaurantId })) {
-          throw new AppError(403, "forbidden", "Forbidden");
-        }
+        await (dependencies.authorizeRestaurant ?? ((scope,capability)=>authorizeRestaurant(dependencies.database,scope,capability)))
+          ({userId:grant.userId,restaurantId:grant.restaurantId},'restaurant.read');
         // Better Auth's cookie cache is not proof a session still exists in Neon.
         if (!(await revalidate([grant], Date.now()))[0]) throw new AppError(401, "unauthorized", "Unauthorized");
         return grant;

@@ -3,13 +3,13 @@ import test from "node:test";
 
 import type { Queryable } from "./database.js";
 import { AppError } from "./errors.js";
-import { createOwnershipLookup } from "./permissions.js";
+import { createOwnershipLookup,createRestaurantCapabilityChecker } from "./permissions.js";
 
 const restaurantId = "10000000-0000-4000-8000-000000000001";
 const userId = "20000000-0000-4000-8000-000000000002";
 
 function createQueryable(
-  query: (sql: string, values: unknown[]) => Promise<{ rows: Array<{ allowed: boolean }> }>,
+  query: (sql: string, values: unknown[]) => Promise<{ rows: Array<Record<string,unknown>> }>,
 ): Queryable {
   return { query } as unknown as Queryable;
 }
@@ -18,7 +18,7 @@ test("PostgreSQL ownership lookup returns the database decision with tenant para
   const calls: Array<{ sql: string; values: unknown[] }> = [];
   const lookup = createOwnershipLookup(createQueryable(async (sql, values) => {
     calls.push({ sql, values });
-    return { rows: [{ allowed: true }] };
+    return { rows: [{ organization_id:restaurantId,role:'admin' }] };
   }));
 
   const allowed = await lookup({ userId, restaurantId });
@@ -26,7 +26,7 @@ test("PostgreSQL ownership lookup returns the database decision with tenant para
   assert.equal(allowed, true);
   assert.deepEqual(calls[0]?.values, [restaurantId, userId]);
   assert.match(calls[0]?.sql ?? "", /from public\.restaurants/i);
-  assert.match(calls[0]?.sql ?? "", /owner_id\s*=\s*\$2::uuid/i);
+  assert.match(calls[0]?.sql ?? "", /join public\.organization_members/i);
 });
 
 test("PostgreSQL ownership lookup returns false for another owner", async () => {
@@ -76,4 +76,15 @@ test("ownership lookup sanitizes PostgreSQL errors", async () => {
       return true;
     },
   );
+});
+
+test('compatibility alias is conservatively billing.manage while explicit read supports all active roles',async()=>{
+  for(const role of ['owner','admin','manager','staff']){
+    const database=createQueryable(async(_sql,values)=>{
+      assert.deepEqual(values,[restaurantId,userId]);
+      return {rows:[{organization_id:restaurantId,role}]};
+    });
+    assert.equal(await createOwnershipLookup(database)({userId,restaurantId}),role==='owner'||role==='admin');
+    assert.equal((await createRestaurantCapabilityChecker(database)({userId,restaurantId},'restaurant.read')).role,role);
+  }
 });

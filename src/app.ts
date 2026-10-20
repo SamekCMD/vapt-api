@@ -1,3 +1,4 @@
+import {resolveLegacyRestaurant} from "./modules/tenancy/authorization.js";
 import { randomUUID } from "node:crypto";
 import Fastify from "fastify";
 import { Pool } from "pg";
@@ -132,7 +133,7 @@ export async function buildApp(
   );
 
   const mercadoPagoOAuth = config.mercadoPago && config.frontendUrl && config.apiPublicUrl
-    ? createMercadoPagoOAuthServiceFromConfig(config, database, ownershipLookup)
+    ? createMercadoPagoOAuthServiceFromConfig(config, database)
     : null;
   const mercadoPagoPaymentClient = config.mercadoPago
     ? createMercadoPagoPaymentClient()
@@ -177,7 +178,7 @@ export async function buildApp(
   );
   const feedbackRepository = createFeedbackRepository(database);
   await registerFeedbackRoutes(app, feedbackRepository, publicOrderService);
-  await registerAuthRoutes(app, config, ownershipLookup);
+  await registerAuthRoutes(app, config, services.authorizeRestaurant);
   await registerStripeBillingRoutes(
     app,
     config,
@@ -198,7 +199,7 @@ export async function buildApp(
       }),
     );
   }
-  await createManualPaymentRoutes(app, config, undefined, ownershipLookup);
+  await createManualPaymentRoutes(app,config,services.manualPayments,userId=>resolveLegacyRestaurant(database,userId));
   if (
     config.mercadoPago &&
     config.frontendUrl &&

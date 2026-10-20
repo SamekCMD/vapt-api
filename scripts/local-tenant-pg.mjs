@@ -98,6 +98,7 @@ try {
   if (through !== '009') tests.push('src/modules/tenancy/operational-scope.pg-integration.ts');
   if (through !== '009') tests.push('src/modules/tenancy/catalog-scope.pg-integration.ts');
   if (through !== '009') tests.push('src/modules/catalog-publication/transaction.pg-integration.ts');
+  if (through !== '009') tests.push('src/modules/tenancy/payment-realtime.pg-integration.ts');
   const result = await command(process.execPath,
     ['--import', 'tsx', '--test', '--test-concurrency=1', ...tests], childEnv);
   process.stdout.write(result.output);

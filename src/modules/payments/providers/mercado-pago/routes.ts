@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import type { AppConfig } from "../../../../lib/config.js";
 import { AppError } from "../../../../lib/errors.js";
 import { validateWithSchema } from "../../../../lib/validation.js";
-import { requireAuth } from "../../../../plugins/auth.js";
+import {actorFromAuth,requireAuth} from "../../../../plugins/auth.js";
 import type { MercadoPagoOAuthService } from "./oauth.js";
 import {
   callbackQuerySchema,
@@ -49,7 +49,7 @@ export async function registerMercadoPagoOAuthRoutes(
       const returnOrigin = resolveReturnOrigin(body.returnOrigin, config);
       return resolvedService.beginConnection({
         restaurantId: params.restaurantId,
-        userId: request.auth!.userId,
+        ...actorFromAuth(request.auth!),
         environment: body.environment,
         returnOrigin,
       });
@@ -84,7 +84,7 @@ export async function registerMercadoPagoOAuthRoutes(
       const query = validateWithSchema(environmentQuerySchema, request.query);
       return resolvedService.getStatus({
         restaurantId: params.restaurantId,
-        userId: request.auth!.userId,
+        ...actorFromAuth(request.auth!),
         environment: query.environment,
       });
     },
@@ -102,7 +102,7 @@ export async function registerMercadoPagoOAuthRoutes(
       const query = validateWithSchema(environmentQuerySchema, request.query);
       return resolvedService.disconnect({
         restaurantId: params.restaurantId,
-        userId: request.auth!.userId,
+        ...actorFromAuth(request.auth!),
         environment: query.environment,
       });
     },

@@ -121,7 +121,7 @@ export interface PaymentRepository {
     externalAccountId: string,
     environment: PaymentEnvironment,
   ): Promise<PaymentProviderAccountRecord | null>;
-  findOrderForManualPayment(orderId: string): Promise<ManualPaymentOrderRecord | null>;
+  findOrderForManualPayment(orderId: string,restaurantId:string): Promise<ManualPaymentOrderRecord | null>;
   findTransactionById(transactionId: string): Promise<PaymentTransactionRecord | null>;
   findTransactionByIdempotencyKey(
     restaurantId: string,
@@ -332,10 +332,12 @@ function mapEffect(row: RawPaymentEffect): PaymentEffectRecord {
   };
 }
 
-export function createPaymentRepository(database: Queryable, options: CommittedChangeOptions = {}): PaymentRepository {
+export function createPaymentRepository(database: Queryable, options: CommittedChangeOptions & {
+  deferCommittedChange?:(change:CommittedChange)=>void;
+} = {}): PaymentRepository {
   const observerPool = requireManagedObserverPool(database, options);
   return {
-    async findOrderForManualPayment(orderId) {
+    async findOrderForManualPayment(orderId,restaurantId) {
       try {
         const result = await database.query<RawManualPaymentOrder>(
           `select
@@ -347,9 +349,9 @@ export function createPaymentRepository(database: Queryable, options: CommittedC
             payment_status,
             payment_confirmed_at
           from public.orders
-          where id = $1::uuid
+          where id = $1::uuid and restaurant_id=$2::uuid
           limit 1`,
-          [orderId],
+          [orderId,restaurantId],
         );
         const row = result.rows[0];
         return row ? {
@@ -482,9 +484,9 @@ export function createPaymentRepository(database: Queryable, options: CommittedC
         let change: CommittedChange | undefined;
         const execute = async (queryable: Queryable) => {
           let previous: { version: number; status: PaymentStatus } | undefined;
-          if (observerPool) {
+          if (observerPool || options.deferCommittedChange) {
             // Snapshot + routine's own row lock: no direct UPDATE privilege needed.
-            await queryable.query("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE");
+            if(observerPool) await queryable.query("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE");
             previous = (await queryable.query<{ version: number; status: PaymentStatus }>(
               "select version, status from public.payment_transactions where id = $1::uuid", [input.transactionId],
             )).rows[0];
@@ -525,6 +527,7 @@ export function createPaymentRepository(database: Queryable, options: CommittedC
         return mapTransaction(row);
         };
         const result = observerPool ? await withTransaction(observerPool, execute) : await execute(database);
+        if(change && options.deferCommittedChange) options.deferCommittedChange(change);
         await emitCommittedChange(options, change);
         return result;
       } catch (error) {

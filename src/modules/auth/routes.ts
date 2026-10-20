@@ -1,12 +1,7 @@
 import type { FastifyInstance } from "fastify";
 
 import type { AppConfig } from "../../lib/config.js";
-import { AppError } from "../../lib/errors.js";
-import {
-  createRestaurantAccessChecker,
-  testOwnershipLookup,
-  type OwnershipLookup,
-} from "../../lib/permissions.js";
+import type {RestaurantAuthorizer} from '../../lib/permissions.js';
 import { validateWithSchema } from "../../lib/validation.js";
 import { authIdentityDto, requireAuth } from "../../plugins/auth.js";
 import { restaurantAccessParamsSchema } from "./schemas.js";
@@ -14,17 +9,8 @@ import { restaurantAccessParamsSchema } from "./schemas.js";
 export async function registerAuthRoutes(
   app: FastifyInstance,
   config: AppConfig,
-  ownershipLookup?: OwnershipLookup,
+  authorizeRestaurant:RestaurantAuthorizer,
 ) {
-  const resolvedOwnershipLookup =
-    ownershipLookup ??
-    (config.nodeEnv === "test"
-      ? testOwnershipLookup
-      : (() => {
-          throw new AppError(500, "internal_error", "Ownership lookup is not configured");
-        })());
-  const assertRestaurantAccess = createRestaurantAccessChecker(resolvedOwnershipLookup);
-
   app.get(
     "/auth/me",
     {
@@ -53,7 +39,7 @@ export async function registerAuthRoutes(
       const restaurantId = params.restaurantId;
       const userId = request.auth!.userId;
 
-      await assertRestaurantAccess({ userId, restaurantId });
+      await authorizeRestaurant({ userId, restaurantId },'restaurant.read');
 
       return {
         allowed: true,

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import {AppError} from "../../lib/errors.js";
 import test from "node:test";
 
 import Fastify from "fastify";
@@ -132,7 +133,11 @@ async function buildOwnershipTestApp(ownershipLookup: OwnershipLookup) {
   const runtime = createFakeAuthRuntime();
   registerAuthDecorator(app, createSessionResolver(runtime));
   registerErrorHandler(app);
-  await registerAuthRoutes(app, validConfig, ownershipLookup);
+  await registerAuthRoutes(app,validConfig,async(scope,capability)=>{
+    assert.equal(capability,'restaurant.read');
+    if(!await ownershipLookup(scope)) throw new AppError(403,'forbidden','Forbidden');
+    return {...scope,organizationId:'30000000-0000-4000-8000-000000000003',role:'staff'};
+  });
   return app;
 }
 

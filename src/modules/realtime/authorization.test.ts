@@ -5,7 +5,6 @@ import type { Queryable } from "../../lib/database.js";
 import type { AuthRuntime } from "../auth/runtime.js";
 import type { PublicOrderRecord } from "../orders/repository.js";
 import { createOrderService } from "../orders/service.js";
-import { createOwnershipLookup } from "../../lib/permissions.js";
 
 import * as module from "./authorization.js";
 
@@ -32,8 +31,9 @@ function fixture() {
           : state.validToken && entry.order_id === orderId && entry.token_fingerprint === fingerprint),
       })) };
     }
-    assert.match(sql, /owner_id = \$2::uuid/);
-    return { rows: [{ allowed: state.owned && values[0] === restaurant && values[1] === user }] };
+    assert.ok(sql.startsWith('select r.organization_id,m.role'));
+    return {rows:state.owned && values[0]===restaurant && values[1]===user
+      ? [{organization_id:orderId,role:'staff'}]:[]};
   } } as unknown as Queryable;
   const runtime: AuthRuntime = {
     async handler() { return new Response(null, { status: 404 }); },
@@ -54,8 +54,7 @@ function fixture() {
     },
   }, "synthetic-unused-hmac-secret");
   assert.equal(typeof module.createRealtimeAuthorization, "function", "realtime authorization must exist");
-  const auth = module.createRealtimeAuthorization!({ database, authRuntime: runtime, orders,
-    ownershipLookup: createOwnershipLookup(database) });
+  const auth = module.createRealtimeAuthorization!({ database, authRuntime: runtime, orders });
   return { state, database, auth };
 }
 

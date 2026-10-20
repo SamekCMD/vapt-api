@@ -23,7 +23,14 @@ import type { ExecutionContext } from "hono";
 type FixtureBindings = WorkerBindings & { TEST_GREETING: string };
 
 const fakeDatabase = {
-  async query() { return { rows: [] }; },
+  async query(sql:string,values:unknown[]=[]) {
+    if(sql.startsWith('select r.organization_id,m.role')) return {rows:
+      values[0]==='10000000-0000-4000-8000-000000000001' && values[1]==='20000000-0000-4000-8000-000000000001'
+      ? [{organization_id:'30000000-0000-4000-8000-000000000001',role:'staff'}]:[]};
+    if(sql.startsWith('select r.id from public.restaurants r')) return {rows:
+      values[0]==='20000000-0000-4000-8000-000000000001'?[{id:'10000000-0000-4000-8000-000000000001'}]:[]};
+    return {rows:[]};
+  },
   async connect() { return { async query() { return { rows: [] }; }, release() {} }; },
 } as unknown as Database;
 const fakeAuthRuntime: AuthRuntime = {
@@ -292,6 +299,13 @@ const createFixtureServices = (env: WorkerBindings, context: ExecutionContext) =
     restaurants: fakeRestaurants,
     stripeWebhooks: fakeStripeWebhooks,
     stripeBilling: fakeStripeBilling,
+    manualPayments:{async confirm(input){
+      assertFixtureScope(input);
+      if(input.sessionId!=='20000000-0000-4000-8000-000000000002' || input.sessionExpiresAt<=Date.now()) throw new AppError(401,'unauthorized','Unauthorized');
+      if(input.orderId!==fixtureOrderId) throw new AppError(404,'order_not_found','Order not found');
+      return {...fakeTransaction,restaurantId:input.restaurantId,provider:'manual',status:'paid',paymentMethod:input.paymentMethod,
+        manuallyConfirmedBy:input.userId,processingMode:'manual'};
+    }},
     ...(mercadoPagoEnabled ? { mercadoPago: fakeMercadoPago, payments: fakePaymentModule } : {}),
     ...(miscEnabled ? { menuImages: fakeMenuImages, payments: fakePaymentModule } : {}),
     ...(miscEnabled ? { pushSubscriptions: {

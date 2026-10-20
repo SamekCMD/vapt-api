@@ -66,7 +66,7 @@ test("payment reads preserve decimal, bigint, JSON, and timestamp semantics", as
     { rows: [rawTransaction] },
   ], calls));
 
-  const order = await repository.findOrderForManualPayment(orderId);
+  const order = await repository.findOrderForManualPayment(orderId,restaurantId);
   const transaction = await repository.findTransactionById(transactionId);
 
   assert.equal(order?.displayId, "9007199254740993");
@@ -74,7 +74,7 @@ test("payment reads preserve decimal, bigint, JSON, and timestamp semantics", as
   assert.equal(transaction?.amount.amount, "51.80");
   assert.equal(transaction?.createdAt, "2026-09-25T12:00:00.000Z");
   assert.deepEqual(transaction?.providerPayload, { preferenceId: "pref-1" });
-  assert.deepEqual(calls[0]?.values, [orderId]);
+  assert.deepEqual(calls[0]?.values, [orderId,restaurantId]);
   assert.deepEqual(calls[1]?.values, [transactionId]);
 });
 

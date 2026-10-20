@@ -1,4 +1,6 @@
 import type { Pool } from "pg";
+import {authorizeRestaurant,authorizeOrganization} from '../modules/tenancy/authorization.js';
+import type {RestaurantScope,OrganizationScope,Capability,Access,RestaurantMembership} from '../modules/tenancy/contracts.js';
 import { createRealtimeAuthorization, type RealtimeAuthorization } from "../modules/realtime/authorization.js";
 import type { CommittedChangePublisher } from "../modules/realtime/contracts.js";
 
@@ -28,6 +30,7 @@ import { createOrderRepository } from "../modules/orders/repository.js";
 import { createOrderService, type OrderService } from "../modules/orders/service.js";
 import { createOverviewRepository } from "../modules/overview/repository.js";
 import { createOverviewService } from "../modules/overview/service.js";
+import {createAuthorizedManualPayment} from '../modules/payments/manual-authorization.js';
 import { createPaymentModule } from "../modules/payments/composition.js";
 import type { PaymentProvider } from "../modules/payments/provider.js";
 import { createManualPaymentProvider } from "../modules/payments/providers/manual.js";
@@ -100,6 +103,8 @@ export type ApiServiceDependencies = {
 };
 
 export type ApiServices = {
+  authorizeRestaurant(scope:RestaurantScope,capability:Capability):Promise<Access>;
+  authorizeOrganization(scope:OrganizationScope,capability:Capability):Promise<RestaurantMembership>;
   realtimeAuthorization: RealtimeAuthorization;
   config: AppConfig;
   database: Database;
@@ -154,8 +159,7 @@ export function createApiServices(config: AppConfig, dependencies: ApiServiceDep
       return null;
     }
     const oauth = createMercadoPagoOAuthServiceFromConfig(
-      config, dependencies.database, dependencies.ownershipLookup ??
-        (config.nodeEnv === "test" ? testOwnershipLookup : createOwnershipLookup(dependencies.database)),
+      config, dependencies.database,
     );
     mercadoPagoCore = {
       oauth,
@@ -171,13 +175,15 @@ export function createApiServices(config: AppConfig, dependencies: ApiServiceDep
   };
 
   return {
+    authorizeRestaurant:(scope,capability)=>authorizeRestaurant(dependencies.database,scope,capability),
+    authorizeOrganization:(scope,capability)=>authorizeOrganization(dependencies.database,scope,capability),
     get realtimeAuthorization() {
       const services = this;
       realtimeAuthorization ??= createRealtimeAuthorization({
         database: dependencies.database,
         get authRuntime() { return services.authRuntime; },
         get orders() { return services.orders; },
-        get ownershipLookup() { return services.ownershipLookup; },
+        get authorizeRestaurant() { return services.authorizeRestaurant; },
       });
       return realtimeAuthorization;
     },
@@ -250,9 +256,7 @@ export function createApiServices(config: AppConfig, dependencies: ApiServiceDep
     },
     get manualPayments() {
       manualPayments ??= createManualPaymentService({
-        repository: this.payments.repository,
-        paymentService: this.payments.service,
-        ownershipLookup: this.ownershipLookup,
+        withAuthorizedPayment:createAuthorizedManualPayment(dependencies.database,this.payments.registry,{publishCommittedChange:dependencies.publishCommittedChange}),
       });
       return manualPayments;
     },

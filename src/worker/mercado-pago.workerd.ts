@@ -18,6 +18,16 @@ test("Mercado Pago remains optional while manual payment is always routed", asyn
     assert.equal(productionDiagnostics.status, 404);
     const manualWithoutMercadoPago = await fixture.fetch(`${base}/orders/${orderId}/payments/manual-confirmation`, { method: "POST" });
     assert.equal(manualWithoutMercadoPago.status, 401);
+    const headers={cookie:'session=owner','content-type':'application/json','idempotency-key':'synthetic-manual-staff'};
+    const scope='/restaurants/10000000-0000-4000-8000-000000000001';
+    const manual=await fixture.fetch(`${base}${scope}/orders/${orderId}/payments/manual-confirmation`,{
+      method:'POST',headers,body:JSON.stringify({paymentMethod:'cash'}),
+    });
+    assert.equal(manual.status,200);assert.equal((await manual.json() as {status:string}).status,'paid');
+    const wrong=await fixture.fetch(`${base}/restaurants/10000000-0000-4000-8000-000000000002/orders/${orderId}/payments/manual-confirmation`,{
+      method:'POST',headers,body:JSON.stringify({paymentMethod:'cash'}),
+    });
+    assert.equal(wrong.status,403);
   } finally {
     await server.close();
   }

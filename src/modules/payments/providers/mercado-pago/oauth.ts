@@ -1,12 +1,12 @@
+import {z} from "zod";
+import {tenantActorSchema} from "../../../tenancy/contracts.js";
+import type {RestaurantWriteScope} from "../../../tenancy/contracts.js";
+import type {RestaurantAuthorizer} from "../../../../lib/permissions.js";
 import { createHash, randomBytes } from "node:crypto";
 
 import type { SecretCipher } from "../../../../lib/crypto.js";
 import type { Queryable } from "../../../../lib/database.js";
 import { AppError } from "../../../../lib/errors.js";
-import {
-  createRestaurantAccessChecker,
-  type OwnershipLookup,
-} from "../../../../lib/permissions.js";
 import type { PaymentEnvironment } from "../../types.js";
 import type {
   MercadoPagoOAuthClient,
@@ -446,7 +446,8 @@ export function createMercadoPagoOAuthService(input: {
   repository: MercadoPagoOAuthRepository;
   client: MercadoPagoOAuthClient;
   cipher: SecretCipher;
-  ownershipLookup: OwnershipLookup;
+  authorizeRestaurant:RestaurantAuthorizer;
+  withAuthorizedWrite:<T>(scope:RestaurantWriteScope,work:(repository:MercadoPagoOAuthRepository)=>Promise<T>)=>Promise<T>;
   config: {
     clientId: string;
     redirectUri: URL;
@@ -457,15 +458,17 @@ export function createMercadoPagoOAuthService(input: {
   now?: () => Date;
 }) {
   const now = input.now ?? (() => new Date());
-  const assertRestaurantAccess = createRestaurantAccessChecker(input.ownershipLookup);
+  const envelopeSchema=z.object({version:z.literal(1),actor:tenantActorSchema,restaurantId:z.string().uuid(),
+    environment:z.enum(['sandbox','production']),codeVerifier:z.string().min(43).max(128)}).strict();
 
   async function persistTokens(
     state: OAuthStateRecord,
     token: MercadoPagoTokenResponse,
+    repository:MercadoPagoOAuthRepository,
   ): Promise<ProviderCredentialRecord> {
     const connectedAt = now();
     const aad = credentialsAad(state.restaurantId, state.environment);
-    return input.repository.upsertProviderAccount({
+    return repository.upsertProviderAccount({
       restaurantId: state.restaurantId,
       environment: state.environment,
       status: "active",
@@ -484,16 +487,12 @@ export function createMercadoPagoOAuthService(input: {
   }
 
   return {
-    async beginConnection(connectionInput: {
-      restaurantId: string;
-      userId: string;
+    async beginConnection(connectionInput: RestaurantWriteScope & {
       environment: PaymentEnvironment;
       returnOrigin?: string;
     }) {
-      await assertRestaurantAccess({
-        userId: connectionInput.userId,
-        restaurantId: connectionInput.restaurantId,
-      });
+      const actor=tenantActorSchema.safeParse({userId:connectionInput.userId,sessionId:connectionInput.sessionId,sessionExpiresAt:connectionInput.sessionExpiresAt});
+      if(!actor.success) throw new AppError(401,'unauthorized','Unauthorized');
 
       const state = createOAuthState(connectionInput.returnOrigin);
       const stateHash = hash(state);
@@ -502,15 +501,16 @@ export function createMercadoPagoOAuthService(input: {
         .update(codeVerifier)
         .digest("base64url");
       const createdAt = now();
-      await input.repository.saveOAuthState({
+      await input.withAuthorizedWrite(connectionInput,repository=>repository.saveOAuthState({
         restaurantId: connectionInput.restaurantId,
         environment: connectionInput.environment,
         stateHash,
-        codeVerifierEncrypted: input.cipher.encrypt(codeVerifier, stateHash),
+        codeVerifierEncrypted:input.cipher.encrypt(JSON.stringify({version:1,actor:actor.data,restaurantId:connectionInput.restaurantId,
+          environment:connectionInput.environment,codeVerifier}),stateHash),
         credentialKeyId: input.config.credentialKeyId,
         redirectUri: input.config.redirectUri.toString(),
         expiresAt: new Date(createdAt.getTime() + input.config.stateTtlMs).toISOString(),
-      });
+      }));
 
       const authorizationUrl = new URL(AUTHORIZATION_ENDPOINT);
       authorizationUrl.searchParams.set("client_id", input.config.clientId);
@@ -556,17 +556,21 @@ export function createMercadoPagoOAuthService(input: {
         throw new AppError(400, "oauth_code_missing", "OAuth authorization code is missing");
       }
 
-      const codeVerifier = input.cipher.decrypt(
-        state.codeVerifierEncrypted,
-        state.stateHash,
-      );
+      let envelope:z.infer<typeof envelopeSchema>;
+      try {envelope=envelopeSchema.parse(JSON.parse(input.cipher.decrypt(state.codeVerifierEncrypted,state.stateHash)));}
+      catch {throw new AppError(400,'oauth_state_invalid','OAuth state is invalid or expired');}
+      if(envelope.restaurantId!==state.restaurantId || envelope.environment!==state.environment)
+        throw new AppError(400,'oauth_state_invalid','OAuth state is invalid or expired');
+      const scope={...envelope.actor,restaurantId:state.restaurantId};
+      await input.withAuthorizedWrite(scope,async()=>{});
+      const codeVerifier=envelope.codeVerifier;
       const token = await input.client.exchangeAuthorizationCode({
         code: callbackInput.code,
         redirectUri: state.redirectUri,
         codeVerifier,
         testToken: state.environment === "sandbox",
       });
-      await persistTokens(state, token);
+      await input.withAuthorizedWrite(scope,repository=>persistTokens(state,token,repository));
 
       return {
         restaurantId: state.restaurantId,
@@ -672,10 +676,7 @@ export function createMercadoPagoOAuthService(input: {
       userId: string;
       environment: PaymentEnvironment;
     }) {
-      await assertRestaurantAccess({
-        userId: statusInput.userId,
-        restaurantId: statusInput.restaurantId,
-      });
+      await input.authorizeRestaurant(statusInput,'billing.read');
       const account = await input.repository.findProviderAccount(
         statusInput.restaurantId,
         statusInput.environment,
@@ -689,20 +690,14 @@ export function createMercadoPagoOAuthService(input: {
       };
     },
 
-    async disconnect(disconnectInput: {
-      restaurantId: string;
-      userId: string;
+    async disconnect(disconnectInput: RestaurantWriteScope & {
       environment: PaymentEnvironment;
     }) {
-      await assertRestaurantAccess({
-        userId: disconnectInput.userId,
-        restaurantId: disconnectInput.restaurantId,
-      });
-      await input.repository.disconnectProviderAccount({
+      await input.withAuthorizedWrite(disconnectInput,repository=>repository.disconnectProviderAccount({
         restaurantId: disconnectInput.restaurantId,
         environment: disconnectInput.environment,
         disconnectedAt: now().toISOString(),
-      });
+      }));
       return { connected: false, status: "disconnected" as const };
     },
   };
