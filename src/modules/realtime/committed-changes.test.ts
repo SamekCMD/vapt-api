@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { operationalSession,operationalTestDatabase } from "../tenancy/operational-test-support.js";
 import test from "node:test";
 import { createHmac } from "node:crypto";
 import type { AppConfig } from "../../lib/config.js";
@@ -121,7 +122,7 @@ function fixture(options: { failCommit?: boolean; publisherFails?: boolean; noSe
     trace.push("publish"); published.push(change);
     if (options.publisherFails) throw new Error("synthetic transport failure");
   } };
-  return { database, observer, trace, published, state: () => state, rawPayment };
+  return { database:operationalTestDatabase(database,{userId,restaurantId:rest}), observer, trace, published, state: () => state, rawPayment };
 }
 function assertCommitted(trace: string[]) {
   assert.ok(trace.indexOf("COMMIT") >= 0);
@@ -151,16 +152,16 @@ test("new order publishes authoritative minimal topics after commit; replay and 
 test("kitchen emits only actual status changes, after commit, and transport failure preserves DTO", async () => {
   const f = fixture({ publisherFails: true });
   const repository = createKitchenRepository(f.database, f.observer);
-  const dto = await repository.updateOwnedOrderStatus(userId, orderId, "ready", () => {});
+  const dto = await repository.updateOwnedOrderStatus(userId, orderId, "ready", () => {},{userId,...operationalSession});
   assert.ok(dto); assert.equal(dto.status, "ready");
   assert.deepEqual(f.published[0], { restaurantId: rest, topics: ["orders", "kitchen", "table_sessions"], orderIds: [orderId], entityId: orderId, reason: "updated" });
   assertCommitted(f.trace);
-  await repository.updateOwnedOrderStatus(userId, orderId, "ready", () => {});
+  await repository.updateOwnedOrderStatus(userId, orderId, "ready", () => {},{userId,...operationalSession});
   assert.equal(f.published.length, 1);
   const baseline = fixture();
-  assert.deepEqual(dto, await createKitchenRepository(baseline.database).updateOwnedOrderStatus(userId, orderId, "ready", () => {}));
+  assert.deepEqual(dto, await createKitchenRepository(baseline.database).updateOwnedOrderStatus(userId, orderId, "ready", () => {},{userId,...operationalSession}));
   const failed = fixture({ failCommit: true });
-  await assert.rejects(createKitchenRepository(failed.database, failed.observer).updateOwnedOrderStatus(userId, orderId, "ready", () => {}));
+  await assert.rejects(createKitchenRepository(failed.database, failed.observer).updateOwnedOrderStatus(userId, orderId, "ready", () => {},{userId,...operationalSession}));
   assert.equal(failed.published.length, 0);
 });
 
@@ -172,10 +173,10 @@ test("public check invalidates only table scope and close captures affected orde
   assertCommitted(f.trace);
   await repository.requestPublicCheck(sessionId, orderId);
   assert.equal(f.published.length, 1);
-  const closed = await repository.closeOwnedSession(userId, sessionId);
+  const closed = await repository.closeOwnedSession(userId, sessionId,{userId,...operationalSession});
   assert.deepEqual(closed, { sessionId, status: "closed", closedAt: timestamp, deliveredOrderIds: [orderId] });
   assert.deepEqual(f.published[1], { restaurantId: rest, topics: ["table_sessions", "orders", "kitchen"], orderIds: [orderId], entityId: sessionId, reason: "closed" });
-  await repository.closeOwnedSession(userId, sessionId);
+  await repository.closeOwnedSession(userId, sessionId,{userId,...operationalSession});
   assert.equal(f.published.length, 2);
   const failed = fixture({ failCommit: true });
   await assert.rejects(createTableSessionRepository(failed.database, failed.observer).requestPublicCheck(sessionId, orderId));
@@ -185,12 +186,12 @@ test("public check invalidates only table scope and close captures affected orde
 test("transfer emits only changed authoritative order IDs and same table is a no-op", async () => {
   const f = fixture();
   const repository = createTableSessionRepository(f.database, f.observer);
-  await repository.transferOwnedSession(userId, sessionId, "2");
+  await repository.transferOwnedSession(userId, sessionId, "2",{userId,...operationalSession});
   assert.equal(f.published.length, 1);
   assert.deepEqual(f.published[0], { restaurantId: rest, topics: ["table_sessions", "orders", "kitchen"],
     orderIds: [orderId], entityId: sessionId, reason: "transferred" });
   assertCommitted(f.trace);
-  await repository.transferOwnedSession(userId, sessionId, "2");
+  await repository.transferOwnedSession(userId, sessionId, "2",{userId,...operationalSession});
   assert.equal(f.published.length, 1);
 });
 
@@ -203,8 +204,8 @@ test("orders without a session omit table invalidation and table mutations canno
   for (const operation of ["close", "transfer"] as const) {
     const failed = fixture({ failCommit: true });
     const repository = createTableSessionRepository(failed.database, failed.observer);
-    await assert.rejects(operation === "close" ? repository.closeOwnedSession(userId, sessionId)
-      : repository.transferOwnedSession(userId, sessionId, "2"));
+    await assert.rejects(operation === "close" ? repository.closeOwnedSession(userId, sessionId,{userId,...operationalSession})
+      : repository.transferOwnedSession(userId, sessionId, "2",{userId,...operationalSession}));
     assert.equal(failed.published.length, 0); assert.ok(failed.trace.includes("ROLLBACK"));
     assert.equal(failed.state().sessionStatus, "open"); assert.equal(failed.state().orderTable, "1");
   }
@@ -265,7 +266,7 @@ test("shared API composition connects order, kitchen and table writes to post-co
   const f = fixture(); const services = api(f);
   await services.orders.createPublicOrder({ ...orderBody, items: [...orderBody.items] }, "key");
   assert.equal(f.published.length, 1);
-  await services.kitchen.updateOwnedOrderStatus(userId, orderId, "preparing");
+  await services.kitchen.updateOwnedOrderStatus(userId, orderId, "preparing",{userId,...operationalSession});
   assert.equal(f.published.length, 2);
   await services.tableSessions.requestPublicCheck(sessionId, { orderId, tableSessionId: sessionId });
   assert.equal(f.published.length, 3);

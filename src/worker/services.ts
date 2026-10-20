@@ -4,8 +4,8 @@ import type { ExecutionContext } from "hono";
 import { createApiServices, type ApiServiceDependencies, type ApiServices } from "../composition/api-services.js";
 import type { AppConfig } from "../lib/config.js";
 import { AppError } from "../lib/errors.js";
-import { createOwnershipLookup, createRestaurantAccessChecker } from "../lib/permissions.js";
-import { createMenuItemExists } from "../modules/storage/repository.js";
+import { createOwnershipLookup } from "../lib/permissions.js";
+import { createMenuImageAccess } from "../modules/storage/repository.js";
 import { createWorkerMenuImageGateway } from "../modules/storage/r2-worker.js";
 import { createMenuImageService } from "../modules/storage/service.js";
 import { createWorkerDatabase } from "./database.js";
@@ -30,8 +30,7 @@ export async function createWorkerServices(
   const menuImages = overrides.menuImages ?? (config.r2 ? (() => {
     if (!env.R2_BUCKET) throw new AppError(503, "service_unavailable", "Service unavailable");
     return createMenuImageService({
-      assertRestaurantAccess: createRestaurantAccessChecker(ownershipLookup),
-      menuItemExists: createMenuItemExists(database),
+      withAuthorizedItem: createMenuImageAccess(database),
       gateway: createWorkerMenuImageGateway(config.r2, env.R2_BUCKET),
       publicBaseUrl: config.r2.publicBaseUrl,
       uploadUrlTtlSeconds: config.r2.uploadUrlTtlSeconds,

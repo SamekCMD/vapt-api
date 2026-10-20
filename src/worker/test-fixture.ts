@@ -213,12 +213,13 @@ const syntheticR2 = {
   uploadUrlTtlSeconds: 300,
 };
 const fakeMenuImages = createMenuImageService({
-  assertRestaurantAccess: async ({ userId, restaurantId }) => {
+  withAuthorizedItem: async ({ userId, restaurantId,itemId },work) => {
     if (userId !== "20000000-0000-4000-8000-000000000001" || restaurantId !== "10000000-0000-4000-8000-000000000001") {
       throw new AppError(403, "forbidden", "Forbidden");
     }
+    if(itemId!=="10000000-0000-4000-8000-000000000041") throw new AppError(404,"menu_item_not_found","Menu item not found");
+    return work();
   },
-  menuItemExists: async ({ itemId }) => itemId === "10000000-0000-4000-8000-000000000041",
   gateway: createWorkerMenuImageGateway(syntheticR2, {
     async delete(key) { bucketDeletedKey = key; },
   }),
@@ -294,6 +295,7 @@ const createFixtureServices = (env: WorkerBindings, context: ExecutionContext) =
     ...(mercadoPagoEnabled ? { mercadoPago: fakeMercadoPago, payments: fakePaymentModule } : {}),
     ...(miscEnabled ? { menuImages: fakeMenuImages, payments: fakePaymentModule } : {}),
     ...(miscEnabled ? { pushSubscriptions: {
+      async upsertSubscription(scope: {restaurantId:string}, input: {endpoint:string}) {return {restaurantId:scope.restaurantId,endpoint:input.endpoint,status:"subscribed" as const};},
       async upsertOwnedSubscription(userId: string, input: { endpoint: string }) {
         return { restaurantId: userId, endpoint: input.endpoint, status: "subscribed" as const };
       },

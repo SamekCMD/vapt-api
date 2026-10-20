@@ -1,4 +1,7 @@
 import { z } from "zod";
+import { restaurantParamsSchema } from '../restaurants/schemas.js';
+
+export const scopedTableSessionParamsSchema = restaurantParamsSchema.extend({ sessionId:z.string().uuid() });
 
 export const tableSessionParamsSchema = z.object({
   sessionId: z.string().uuid(),

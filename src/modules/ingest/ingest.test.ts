@@ -3,6 +3,7 @@ import test from "node:test";
 
 import Fastify from "fastify";
 
+import { operationalSession,operationalTestDatabase } from "../tenancy/operational-test-support.js";
 import type { Database } from "../../lib/database.js";
 import { registerAuthDecorator } from "../../plugins/auth.js";
 import { registerErrorHandler } from "../../plugins/error-handler.js";
@@ -51,7 +52,7 @@ async function buildRouteApp(input: {
   registerErrorHandler(app);
   registerAuthDecorator(app, async (headers) =>
     headers.cookie?.includes("valid-session")
-      ? { userId, email: "owner@example.com", role: "authenticated" }
+      ? { userId, email: "owner@example.com", role: "authenticated",...operationalSession }
       : null,
   );
   await registerIngestRoutes(app, {
@@ -97,13 +98,14 @@ test("push repository derives the restaurant from owner and upserts by endpoint"
   const calls: Array<{ sql: string; values?: unknown[] }> = [];
   const database = {
     async query(sql: string, values?: unknown[]) {
-      calls.push({ sql, values });
+      if(/insert into/i.test(sql)) calls.push({ sql, values });
       return { rows: [{ restaurant_id: restaurantId, endpoint: pushBody().endpoint }] };
     },
+    async connect():Promise<unknown>{return {query:database.query,release(){}};},
   } as unknown as Database;
 
-  const result = await createPushSubscriptionRepository(database).upsertOwnedSubscription(
-    userId,
+  const result = await createPushSubscriptionRepository(operationalTestDatabase(database,{userId,restaurantId})).upsertSubscription(
+    {userId,restaurantId,...operationalSession},
     pushBody(),
   );
 
@@ -113,15 +115,16 @@ test("push repository derives the restaurant from owner and upserts by endpoint"
     status: "subscribed",
   });
   assert.match(calls[0]?.sql ?? "", /insert into public\.push_subscriptions/i);
-  assert.match(calls[0]?.sql ?? "", /from public\.restaurants r/i);
-  assert.match(calls[0]?.sql ?? "", /r\.owner_id = \$1::uuid/i);
-  assert.match(calls[0]?.sql ?? "", /on conflict \(endpoint\) do update/i);
+  assert.match(calls[0]?.sql ?? "", /from public\.restaurants restaurant/i);
+  assert.match(calls[0]?.sql ?? "", /restaurant\.id=\$1::uuid/i);
+  assert.match(calls[0]?.sql ?? "", /on conflict\(endpoint\) do update/i);
   assert.deepEqual(calls[0]?.values, [
-    userId,
+    restaurantId,
     pushBody().endpoint,
     subscription,
     pushBody().origin,
     pushBody().user_agent,
+    userId,
   ]);
 });
 
@@ -129,6 +132,7 @@ test("push subscription route requires a Better Auth session", async () => {
   let writes = 0;
   const app = await buildRouteApp({
     pushSubscriptions: {
+      async upsertSubscription(){throw new Error("not used");},
       async upsertOwnedSubscription() {
         writes += 1;
         return { restaurantId, endpoint: pushBody().endpoint, status: "subscribed" };
@@ -151,6 +155,7 @@ test("push subscription route passes only the authenticated owner to persistence
   const writes: unknown[] = [];
   const app = await buildRouteApp({
     pushSubscriptions: {
+      async upsertSubscription(){throw new Error("not used");},
       async upsertOwnedSubscription(...args: unknown[]) {
         writes.push(args);
         return { restaurantId, endpoint: pushBody().endpoint, status: "subscribed" };
@@ -166,7 +171,7 @@ test("push subscription route passes only the authenticated owner to persistence
   });
 
   assert.equal(response.statusCode, 200);
-  assert.deepEqual(writes, [[userId, pushBody()]]);
+  assert.deepEqual(writes, [[userId, pushBody(),{userId,...operationalSession}]]);
   await app.close();
 });
 
@@ -175,6 +180,7 @@ test("legacy feedback ingest delegates to token-authenticated feedback persisten
   const writes: unknown[] = [];
   const app = await buildRouteApp({
     pushSubscriptions: {
+      async upsertSubscription(){throw new Error("not used");},
       async upsertOwnedSubscription() {
         return { restaurantId, endpoint: pushBody().endpoint, status: "subscribed" };
       },

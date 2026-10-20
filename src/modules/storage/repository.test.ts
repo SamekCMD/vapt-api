@@ -12,7 +12,13 @@ const userId = "30000000-0000-4000-8000-000000000003";
 function createQueryable(
   query: (sql: string, values: unknown[]) => Promise<{ rows: Array<{ exists: boolean }> }>,
 ): Queryable {
-  return { query } as unknown as Queryable;
+  return { query:async(sql:string,values:unknown[])=>{
+    if(sql.startsWith('select r.organization_id,m.role')) {
+      assert.deepEqual(values,[restaurantId,userId]);
+      return {rows:[{organization_id:"40000000-0000-4000-8000-000000000004",role:"manager"}]};
+    }
+    return query(sql,values);
+  } } as unknown as Queryable;
 }
 
 test("menu item lookup scopes the item to its restaurant and owner", async () => {
@@ -25,7 +31,7 @@ test("menu item lookup scopes the item to its restaurant and owner", async () =>
   assert.equal(exists, true);
   assert.deepEqual(calls[0]?.values, [itemId, restaurantId, userId]);
   assert.match(calls[0]?.sql ?? "", /join public\.restaurants/i);
-  assert.match(calls[0]?.sql ?? "", /restaurant\.owner_id\s*=\s*\$3::uuid/i);
+  assert.match(calls[0]?.sql ?? "", /member\.user_id=\$3::uuid/i);
 });
 
 test("menu item lookup rejects an item from another restaurant or owner", async () => {

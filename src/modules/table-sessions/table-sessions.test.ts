@@ -3,6 +3,7 @@ import test from "node:test";
 
 import Fastify from "fastify";
 
+import { operationalSession,operationalTestDatabase } from "../tenancy/operational-test-support.js";
 import type { Database } from "../../lib/database.js";
 import { AppError } from "../../lib/errors.js";
 import { registerAuthDecorator } from "../../plugins/auth.js";
@@ -94,7 +95,7 @@ test("public check schema requires only a bounded order id and token", () => {
   }
 });
 
-test("active summaries are owner-scoped and keep numeric values exact", async () => {
+test("active summaries are restaurant-scoped and keep numeric values exact", async () => {
   const calls: Array<{ sql: string; values: unknown[] | undefined }> = [];
   const database = {
     async query(sql: string, values?: unknown[]) {
@@ -112,22 +113,22 @@ test("active summaries are owner-scoped and keep numeric values exact", async ()
     },
   } as unknown as Database;
 
-  const sessions = await createTableSessionRepository(database).listActiveOwnedSessions(ownerId);
+  const sessions = await createTableSessionRepository(operationalTestDatabase(database,{ userId:ownerId,restaurantId })).listActiveOwnedSessions(ownerId);
 
   assert.deepEqual(sessions, [summary()]);
-  assert.match(calls[0]?.sql ?? "", /join public\.restaurants as restaurant/i);
-  assert.match(calls[0]?.sql ?? "", /restaurant\.owner_id = \$1::uuid/i);
-  assert.match(calls[0]?.sql ?? "", /session_row\.status in \('open', 'check_requested'\)/i);
+  assert.match(calls[0]?.sql ?? "", /join public\.organization_members membership/i);
+  assert.match(calls[0]?.sql ?? "", /membership\.user_id=\$2::uuid/i);
+  assert.match(calls[0]?.sql ?? "", /session_row\.status in \('open','check_requested'\)/i);
   assert.match(calls[0]?.sql ?? "", /coalesce\(sum\(order_row\.total_price\), 0\)::text/i);
-  assert.deepEqual(calls[0]?.values, [ownerId]);
+  assert.deepEqual(calls[0]?.values, [restaurantId,ownerId]);
 });
 
-test("session detail is owner-scoped and returns ordered orders and items", async () => {
+test("session detail is restaurant-scoped and returns ordered orders and items", async () => {
   const calls: Array<{ sql: string; values: unknown[] | undefined }> = [];
   const database = {
     async query(sql: string, values?: unknown[]) {
       calls.push({ sql, values });
-      if (/from public\.table_sessions as session_row/i.test(sql)) {
+      if (/from public\.table_sessions (?:as )?session_row/i.test(sql)) {
         return { rows: [{
           id: sessionId,
           restaurant_id: restaurantId,
@@ -152,16 +153,16 @@ test("session detail is owner-scoped and returns ordered orders and items", asyn
     },
   } as unknown as Database;
 
-  const result = await createTableSessionRepository(database).getOwnedSession(ownerId, sessionId);
+  const result = await createTableSessionRepository(operationalTestDatabase(database,{ userId:ownerId,restaurantId })).getOwnedSession(ownerId, sessionId);
 
   assert.deepEqual(result, detail());
   assert.equal(calls.length, 2);
-  assert.match(calls[0]?.sql ?? "", /restaurant\.owner_id = \$2::uuid/i);
+  assert.match(calls[0]?.sql ?? "", /membership\.user_id=\$3::uuid/i);
   assert.match(calls[1]?.sql ?? "", /order by order_row\.created_at asc/i);
-  assert.match(calls[1]?.sql ?? "", /order by order_item\.created_at asc, order_item\.id asc/i);
-  assert.match(calls[1]?.sql ?? "", /restaurant\.owner_id = \$2::uuid/i);
-  assert.deepEqual(calls[0]?.values, [sessionId, ownerId]);
-  assert.deepEqual(calls[1]?.values, [sessionId, ownerId]);
+  assert.match(calls[1]?.sql ?? "", /order by order_item\.created_at asc,\s*order_item\.id asc/i);
+  assert.match(calls[1]?.sql ?? "", /membership\.user_id=\$3::uuid/i);
+  assert.deepEqual(calls[0]?.values, [sessionId,restaurantId,ownerId]);
+  assert.deepEqual(calls[1]?.values, [sessionId,restaurantId,ownerId]);
 });
 
 type TransactionOptions = {
@@ -186,11 +187,11 @@ function transactionDatabase(options: TransactionOptions = {}) {
           table_number: "12",
         }] };
       }
-      if (/update public\.orders as order_row/i.test(sql)) {
+      if (/update public\.orders (?:as )?order_row/i.test(sql)) {
         if (options.failOn === "orders") throw new Error("private db detail");
         return { rows: [{ id: orderId }] };
       }
-      if (/update public\.table_sessions as session_row/i.test(sql)) {
+      if (/update public\.table_sessions (?:as )?session_row/i.test(sql)) {
         if (options.failOn === "session") throw new Error("private db detail");
         return { rows: [{ closed_at: closedAt }] };
       }
@@ -206,9 +207,9 @@ function transactionDatabase(options: TransactionOptions = {}) {
   return { database, calls, events };
 }
 
-test("close locks the owned session, delivers nonfinal orders, and closes atomically", async () => {
+test("close locks the selected restaurant session, delivers nonfinal orders, and closes atomically", async () => {
   const { database, calls, events } = transactionDatabase();
-  const result = await createTableSessionRepository(database).closeOwnedSession(ownerId, sessionId);
+  const result = await createTableSessionRepository(operationalTestDatabase(database,{ userId:ownerId,restaurantId })).closeOwnedSession(ownerId, sessionId,{ userId:ownerId,...operationalSession });
 
   assert.deepEqual(result, {
     sessionId,
@@ -216,19 +217,19 @@ test("close locks the owned session, delivers nonfinal orders, and closes atomic
     closedAt: "2026-09-26T13:00:00.000Z",
     deliveredOrderIds: [orderId],
   } satisfies CloseTableSessionDto);
-  assert.match(calls[1]?.sql ?? "", /restaurant\.owner_id = \$2::uuid[\s\S]*for update/i);
-  const orderMutation = calls.find((call) => /update public\.orders as order_row/i.test(call.sql));
-  assert.match(orderMutation?.sql ?? "", /order_row\.status in \('pending', 'paid', 'preparing', 'ready', 'waiting_payment'\)/i);
-  assert.match(orderMutation?.sql ?? "", /restaurant\.owner_id = \$3::uuid/i);
-  const sessionMutation = calls.find((call) => /update public\.table_sessions as session_row/i.test(call.sql));
-  assert.match(sessionMutation?.sql ?? "", /restaurant\.owner_id = \$2::uuid/i);
+  assert.match(calls[1]?.sql ?? "", /membership\.user_id=\$3::uuid[\s\S]*for update/i);
+  const orderMutation = calls.find((call) => /update public\.orders (?:as )?order_row/i.test(call.sql));
+  assert.match(orderMutation?.sql ?? "", /order_row\.status in \('pending','paid','preparing','ready','waiting_payment'\)/i);
+  assert.match(orderMutation?.sql ?? "", /membership\.user_id=\$4::uuid/i);
+  const sessionMutation = calls.find((call) => /update public\.table_sessions (?:as )?session_row/i.test(call.sql));
+  assert.match(sessionMutation?.sql ?? "", /membership\.user_id=\$3::uuid/i);
   assert.deepEqual(events.slice(-2), ["COMMIT", "RELEASE"]);
 });
 
 test("close rolls back and sanitizes storage failures", async () => {
   const { database, events } = transactionDatabase({ failOn: "session" });
   await assert.rejects(
-    () => createTableSessionRepository(database).closeOwnedSession(ownerId, sessionId),
+    () => createTableSessionRepository(operationalTestDatabase(database,{ userId:ownerId,restaurantId })).closeOwnedSession(ownerId, sessionId,{ userId:ownerId,...operationalSession }),
     (error: unknown) => {
       assert.ok(error instanceof AppError);
       assert.equal(error.statusCode, 500);
@@ -242,7 +243,7 @@ test("close rolls back and sanitizes storage failures", async () => {
 
 test("repeated close is idempotent and does not mutate again", async () => {
   const { database, calls, events } = transactionDatabase({ sessionStatus: "closed" });
-  const result = await createTableSessionRepository(database).closeOwnedSession(ownerId, sessionId);
+  const result = await createTableSessionRepository(operationalTestDatabase(database,{ userId:ownerId,restaurantId })).closeOwnedSession(ownerId, sessionId,{ userId:ownerId,...operationalSession });
 
   assert.equal(result?.closedAt, "2026-09-26T13:00:00.000Z");
   assert.equal(calls.some((call) => /update public\./i.test(call.sql)), false);
@@ -251,10 +252,11 @@ test("repeated close is idempotent and does not mutate again", async () => {
 
 test("transfer locks an active session and updates session plus linked orders atomically", async () => {
   const { database, calls, events } = transactionDatabase();
-  const result = await createTableSessionRepository(database).transferOwnedSession(
+  const result = await createTableSessionRepository(operationalTestDatabase(database,{ userId:ownerId,restaurantId })).transferOwnedSession(
     ownerId,
     sessionId,
     "20",
+    { userId:ownerId,...operationalSession },
   );
 
   assert.deepEqual(result, {
@@ -263,10 +265,10 @@ test("transfer locks an active session and updates session plus linked orders at
     updatedOrderIds: [orderId],
   } satisfies TransferTableSessionDto);
   assert.match(calls[1]?.sql ?? "", /for update/i);
-  const sessionMutation = calls.find((call) => /update public\.table_sessions as session_row/i.test(call.sql));
-  assert.deepEqual(sessionMutation?.values, ["20", sessionId, ownerId]);
-  const orderMutation = calls.find((call) => /update public\.orders as order_row/i.test(call.sql));
-  assert.deepEqual(orderMutation?.values, ["20", sessionId, ownerId]);
+  const sessionMutation = calls.find((call) => /update public\.table_sessions (?:as )?session_row/i.test(call.sql));
+  assert.deepEqual(sessionMutation?.values, ["20",sessionId,restaurantId,ownerId]);
+  const orderMutation = calls.find((call) => /update public\.orders (?:as )?order_row/i.test(call.sql));
+  assert.deepEqual(orderMutation?.values, ["20",sessionId,restaurantId,ownerId]);
   assert.deepEqual(events.slice(-2), ["COMMIT", "RELEASE"]);
 });
 
@@ -274,7 +276,7 @@ test("transfer rolls back the session update when linked order persistence fails
   const { database, events } = transactionDatabase({ failOn: "orders" });
 
   await assert.rejects(
-    () => createTableSessionRepository(database).transferOwnedSession(ownerId, sessionId, "20"),
+    () => createTableSessionRepository(operationalTestDatabase(database,{ userId:ownerId,restaurantId })).transferOwnedSession(ownerId, sessionId, "20",{ userId:ownerId,...operationalSession }),
     (error: unknown) => error instanceof AppError && error.code === "internal_error",
   );
   assert.deepEqual(events.slice(-2), ["ROLLBACK", "RELEASE"]);
@@ -282,18 +284,18 @@ test("transfer rolls back the session update when linked order persistence fails
 
 test("missing ownership is 404 and a closed transfer is 409", async () => {
   const missingService = createTableSessionService(
-    createTableSessionRepository(transactionDatabase({ ownsSession: false }).database),
+    createTableSessionRepository(operationalTestDatabase(transactionDatabase({ ownsSession: false }).database,{userId:ownerId,restaurantId})),
   );
   await assert.rejects(
-    () => missingService.closeOwnedSession(ownerId, sessionId),
+    () => missingService.closeOwnedSession(ownerId, sessionId,{ userId:ownerId,...operationalSession }),
     (error: unknown) => error instanceof AppError && error.statusCode === 404,
   );
 
   const closedService = createTableSessionService(
-    createTableSessionRepository(transactionDatabase({ sessionStatus: "closed" }).database),
+    createTableSessionRepository(operationalTestDatabase(transactionDatabase({ sessionStatus: "closed" }).database,{userId:ownerId,restaurantId})),
   );
   await assert.rejects(
-    () => closedService.transferOwnedSession(ownerId, sessionId, "20"),
+    () => closedService.transferOwnedSession(ownerId, sessionId, "20",{ userId:ownerId,...operationalSession }),
     (error: unknown) => error instanceof AppError && error.statusCode === 409,
   );
 });
@@ -308,7 +310,7 @@ function requestCheckDatabase(status: "open" | "check_requested" | "closed", lin
       if (/select session_row\.status/i.test(sql)) {
         return { rows: linked ? [{ status }] : [] };
       }
-      if (/update public\.table_sessions as session_row/i.test(sql)) {
+      if (/update public\.table_sessions (?:as )?session_row/i.test(sql)) {
         return { rows: [{ id: sessionId }] };
       }
       return { rows: [] };
@@ -328,7 +330,7 @@ function requestCheckDatabase(status: "open" | "check_requested" | "closed", lin
 test("public request-check locks only the session linked to the authorized order", async () => {
   const { database, calls, events } = requestCheckDatabase("open");
 
-  const result = await createTableSessionRepository(database).requestPublicCheck(sessionId, orderId);
+  const result = await createTableSessionRepository(operationalTestDatabase(database,{ userId:ownerId,restaurantId })).requestPublicCheck(sessionId, orderId);
 
   assert.deepEqual(result, { sessionId, status: "check_requested" });
   assert.match(calls[1]?.sql ?? "", /join public\.orders as order_row/i);
@@ -366,7 +368,7 @@ test("public request-check route authorizes the exact order token", async () => 
   const app = Fastify({ logger: false });
   registerAuthDecorator(app, async () => null);
   registerErrorHandler(app);
-  await registerTableSessionRoutes(app, createTableSessionRepository(database), {
+  await registerTableSessionRoutes(app, createTableSessionRepository(operationalTestDatabase(database,{ userId:ownerId,restaurantId })), {
     async getPublicOrder(id, publicToken) {
       if (publicToken !== "valid-public-token-that-is-32-characters") {
         throw new AppError(404, "not_found", "Order not found");
@@ -413,6 +415,11 @@ test("public request-check route authorizes the exact order token", async () => 
 test("authenticated routes derive ownership only from the session", async () => {
   const owners: string[] = [];
   const repository: TableSessionRepository = {
+    async resolveLegacyRestaurant(){ throw new Error('not used'); },
+    async listActiveSessions(){ throw new Error('not used'); },
+    async getSession(){ throw new Error('not used'); },
+    async closeSession(){ throw new Error('not used'); },
+    async transferSession(){ throw new Error('not used'); },
     async listActiveOwnedSessions(userId) { owners.push(userId); return [summary()]; },
     async getOwnedSession(userId) { owners.push(userId); return detail(); },
     async closeOwnedSession(userId) {
@@ -426,7 +433,7 @@ test("authenticated routes derive ownership only from the session", async () => 
     async requestPublicCheck() { return { sessionId, status: "check_requested" }; },
   };
   const app = Fastify({ logger: false });
-  registerAuthDecorator(app, async () => ({ userId: ownerId, email: null, role: "authenticated" }));
+  registerAuthDecorator(app, async () => ({ userId: ownerId, email: null, role: "authenticated",...operationalSession }));
   registerErrorHandler(app);
   await registerTableSessionRoutes(app, repository);
 

@@ -3,6 +3,7 @@ import test from "node:test";
 
 import Fastify from "fastify";
 
+import { operationalSession,operationalTestDatabase } from "../tenancy/operational-test-support.js";
 import type { Database } from "../../lib/database.js";
 import { AppError } from "../../lib/errors.js";
 import { registerAuthDecorator } from "../../plugins/auth.js";
@@ -16,6 +17,22 @@ import { createKitchenService } from "./service.js";
 const ownerId = "20000000-0000-4000-8000-000000000001";
 const restaurantId = "10000000-0000-4000-8000-000000000001";
 const orderId = "30000000-0000-4000-8000-000000000001";
+
+test('explicit kitchen routes pass the selected restaurant and verified write actor',async()=>{
+  const received:unknown[]=[];
+  const sessionId='40000000-0000-4000-8000-000000000001',sessionExpiresAt=Date.now()+60_000;
+  const repository={ async listActiveOrders(scope:unknown){ received.push(scope);return [orderDto()]; },
+    async updateOrderStatus(scope:unknown){ received.push(scope);return orderDto('preparing'); } } as unknown as KitchenRepository;
+  const app=Fastify({ logger:false });
+  registerAuthDecorator(app,async()=>({ userId:ownerId,email:null,role:'authenticated',sessionId,sessionExpiresAt }));
+  registerErrorHandler(app); await registerKitchenRoutes(app,repository);
+  try {
+    const path=`/restaurants/${restaurantId}/kitchen/orders`;
+    assert.equal((await app.inject({ method:'GET',url:path })).statusCode,200);
+    assert.equal((await app.inject({ method:'PATCH',url:`${path}/${orderId}/status`,payload:{ status:'preparing' } })).statusCode,200);
+    assert.deepEqual(received,[{ userId:ownerId,restaurantId },{ userId:ownerId,restaurantId,sessionId,sessionExpiresAt }]);
+  } finally { await app.close(); }
+});
 
 function rawOrder(status: KitchenOrderStatus = "pending") {
   return {
@@ -74,7 +91,7 @@ test("status schema accepts only kitchen targets and rejects tenant fields", () 
   }
 });
 
-test("active queue is owner-scoped, includes ordered items, and sorts newest first", async () => {
+test("active queue is restaurant-scoped, includes ordered items, and sorts newest first", async () => {
   const calls: Array<{ sql: string; values: unknown[] | undefined }> = [];
   const database = {
     async query(sql: string, values?: unknown[]) {
@@ -83,15 +100,15 @@ test("active queue is owner-scoped, includes ordered items, and sorts newest fir
     },
   } as unknown as Database;
 
-  const orders = await createKitchenRepository(database).listActiveOwnedOrders(ownerId);
+  const orders = await createKitchenRepository(operationalTestDatabase(database,{ userId:ownerId,restaurantId })).listActiveOwnedOrders(ownerId);
 
   assert.deepEqual(orders, [orderDto()]);
-  assert.match(calls[0]?.sql ?? "", /join public\.restaurants as restaurant/i);
-  assert.match(calls[0]?.sql ?? "", /restaurant\.owner_id = \$1::uuid/i);
-  assert.match(calls[0]?.sql ?? "", /order_row\.status in \('paid', 'pending', 'preparing', 'ready'\)/i);
+  assert.match(calls[0]?.sql ?? "", /join public\.organization_members member/i);
+  assert.match(calls[0]?.sql ?? "", /member\.user_id=\$2::uuid/i);
+  assert.match(calls[0]?.sql ?? "", /order_row\.status in \('paid','pending','preparing','ready'\)/i);
   assert.match(calls[0]?.sql ?? "", /order by order_row\.created_at desc/i);
   assert.match(calls[0]?.sql ?? "", /order by order_item\.created_at asc, order_item\.id asc/i);
-  assert.deepEqual(calls[0]?.values, [ownerId]);
+  assert.deepEqual(calls[0]?.values, [restaurantId,ownerId]);
 });
 
 function transitionDatabase(
@@ -108,7 +125,7 @@ function transitionDatabase(
       if (/select order_row\.status/i.test(sql)) {
         return { rows: ownsOrder ? [{ status: currentStatus }] : [] };
       }
-      if (/from public\.orders as order_row/i.test(sql)) return { rows: [rawOrder(nextRowStatus)] };
+      if (/from public\.orders (?:as )?order_row/i.test(sql)) return { rows: [rawOrder(nextRowStatus)] };
       return { rows: [] };
     },
     release() { events.push("RELEASE"); },
@@ -120,28 +137,28 @@ function transitionDatabase(
   return { database, calls, events };
 }
 
-test("valid transition locks the owned order and updates it in the same transaction", async () => {
+test("valid transition locks the selected restaurant order and updates it in the same transaction", async () => {
   const { database, calls, events } = transitionDatabase("pending", "preparing");
-  const service = createKitchenService(createKitchenRepository(database));
+  const service = createKitchenService(createKitchenRepository(operationalTestDatabase(database,{ userId:ownerId,restaurantId })));
 
-  const updated = await service.updateOwnedOrderStatus(ownerId, orderId, "preparing");
+  const updated = await service.updateOwnedOrderStatus(ownerId, orderId, "preparing",{ userId:ownerId,...operationalSession });
 
   assert.deepEqual(updated, orderDto("preparing"));
-  assert.match(calls[1]?.sql ?? "", /where order_row\.id = \$1::uuid[\s\S]*restaurant\.owner_id = \$2::uuid[\s\S]*for update/i);
-  const mutation = calls.find((call) => /update public\.orders as order_row/i.test(call.sql));
-  assert.match(mutation?.sql ?? "", /from public\.restaurants as restaurant/i);
-  assert.match(mutation?.sql ?? "", /restaurant\.owner_id = \$3::uuid/i);
-  assert.deepEqual(mutation?.values, ["preparing", orderId, ownerId]);
+  assert.match(calls[1]?.sql ?? "", /order_row\.restaurant_id=\$2::uuid[\s\S]*for update/i);
+  const mutation = calls.find((call) => /update public\.orders (?:as )?order_row/i.test(call.sql));
+  assert.match(mutation?.sql ?? "", /from public\.restaurants restaurant/i);
+  assert.match(mutation?.sql ?? "", /member\.user_id=\$4::uuid/i);
+  assert.deepEqual(mutation?.values, ["preparing", orderId, restaurantId,ownerId]);
   assert.equal(events.at(-2), "COMMIT");
   assert.equal(events.at(-1), "RELEASE");
 });
 
 test("invalid transitions return 409 and roll back without mutating", async () => {
   const { database, calls, events } = transitionDatabase("pending");
-  const service = createKitchenService(createKitchenRepository(database));
+  const service = createKitchenService(createKitchenRepository(operationalTestDatabase(database,{ userId:ownerId,restaurantId })));
 
   await assert.rejects(
-    () => service.updateOwnedOrderStatus(ownerId, orderId, "ready"),
+    () => service.updateOwnedOrderStatus(ownerId, orderId, "ready",{ userId:ownerId,...operationalSession }),
     (error: unknown) => {
       assert.ok(error instanceof AppError);
       assert.equal(error.statusCode, 409);
@@ -149,28 +166,28 @@ test("invalid transitions return 409 and roll back without mutating", async () =
       return true;
     },
   );
-  assert.equal(calls.some((call) => /update public\.orders as order_row/i.test(call.sql)), false);
+  assert.equal(calls.some((call) => /update public\.orders (?:as )?order_row/i.test(call.sql)), false);
   assert.equal(events.at(-2), "ROLLBACK");
   assert.equal(events.at(-1), "RELEASE");
 });
 
 test("same-state retry is idempotent and does not issue an update", async () => {
   const { database, calls, events } = transitionDatabase("preparing", "preparing");
-  const service = createKitchenService(createKitchenRepository(database));
+  const service = createKitchenService(createKitchenRepository(operationalTestDatabase(database,{ userId:ownerId,restaurantId })));
 
-  const retried = await service.updateOwnedOrderStatus(ownerId, orderId, "preparing");
+  const retried = await service.updateOwnedOrderStatus(ownerId, orderId, "preparing",{ userId:ownerId,...operationalSession });
 
   assert.deepEqual(retried, orderDto("preparing"));
-  assert.equal(calls.some((call) => /update public\.orders as order_row/i.test(call.sql)), false);
+  assert.equal(calls.some((call) => /update public\.orders (?:as )?order_row/i.test(call.sql)), false);
   assert.equal(events.at(-2), "COMMIT");
 });
 
 test("another owner's order is indistinguishable from a missing order", async () => {
   const { database } = transitionDatabase("pending", "pending", false);
-  const service = createKitchenService(createKitchenRepository(database));
+  const service = createKitchenService(createKitchenRepository(operationalTestDatabase(database,{ userId:ownerId,restaurantId })));
 
   await assert.rejects(
-    () => service.updateOwnedOrderStatus(ownerId, orderId, "preparing"),
+    () => service.updateOwnedOrderStatus(ownerId, orderId, "preparing",{ userId:ownerId,...operationalSession }),
     (error: unknown) => {
       assert.ok(error instanceof AppError);
       assert.equal(error.statusCode, 404);
@@ -184,6 +201,9 @@ test("concurrent retries serialize into one transition plus one idempotent resul
   let updates = 0;
   let queue = Promise.resolve();
   const repository: KitchenRepository = {
+    async resolveLegacyRestaurant(){ throw new Error('not used'); },
+    async listActiveOrders(){ throw new Error('not used'); },
+    async updateOrderStatus(){ throw new Error('not used'); },
     async listActiveOwnedOrders() { return []; },
     async updateOwnedOrderStatus(_userId, _orderId, target, validateCurrent) {
       const operation = queue.then(async () => {
@@ -201,8 +221,8 @@ test("concurrent retries serialize into one transition plus one idempotent resul
   const service = createKitchenService(repository);
 
   const results = await Promise.all([
-    service.updateOwnedOrderStatus(ownerId, orderId, "preparing"),
-    service.updateOwnedOrderStatus(ownerId, orderId, "preparing"),
+    service.updateOwnedOrderStatus(ownerId, orderId, "preparing",{ userId:ownerId,...operationalSession }),
+    service.updateOwnedOrderStatus(ownerId, orderId, "preparing",{ userId:ownerId,...operationalSession }),
   ]);
 
   assert.equal(updates, 1);
@@ -212,6 +232,9 @@ test("concurrent retries serialize into one transition plus one idempotent resul
 test("authenticated routes derive owner from the session", async () => {
   const owners: string[] = [];
   const repository: KitchenRepository = {
+    async resolveLegacyRestaurant(){ throw new Error('not used'); },
+    async listActiveOrders(){ throw new Error('not used'); },
+    async updateOrderStatus(){ throw new Error('not used'); },
     async listActiveOwnedOrders(userId) { owners.push(userId); return [orderDto()]; },
     async updateOwnedOrderStatus(userId, _orderId, target, validateCurrent) {
       owners.push(userId);
@@ -220,7 +243,7 @@ test("authenticated routes derive owner from the session", async () => {
     },
   };
   const app = Fastify({ logger: false });
-  registerAuthDecorator(app, async () => ({ userId: ownerId, email: null, role: "authenticated" }));
+  registerAuthDecorator(app, async () => ({ userId: ownerId, email: null, role: "authenticated",...operationalSession }));
   registerErrorHandler(app);
   await registerKitchenRoutes(app, repository);
 

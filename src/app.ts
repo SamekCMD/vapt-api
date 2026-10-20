@@ -5,9 +5,6 @@ import { Pool } from "pg";
 import { createApiServices } from "./composition/api-services.js";
 import type { AppConfig } from "./lib/config.js";
 import type { Database } from "./lib/database.js";
-import {
-  createRestaurantAccessChecker,
-} from "./lib/permissions.js";
 import { registerStripeBillingRoutes } from "./modules/billing/stripe/routes.js";
 import { createStripeBillingRepository } from "./modules/billing/stripe/repository.js";
 import type { StripeGateway } from "./modules/billing/stripe/types.js";
@@ -64,7 +61,7 @@ import { createOverviewRepository } from "./modules/overview/repository.js";
 import { registerOverviewRoutes } from "./modules/overview/routes.js";
 import { createRestaurantRepository } from "./modules/restaurants/repository.js";
 import { registerRestaurantRoutes } from "./modules/restaurants/routes.js";
-import { createMenuItemExists } from "./modules/storage/repository.js";
+import { createMenuImageAccess } from "./modules/storage/repository.js";
 import { createR2MenuImageGateway } from "./modules/storage/r2.js";
 import { registerMenuImageRoutes } from "./modules/storage/routes.js";
 import { createMenuImageService } from "./modules/storage/service.js";
@@ -194,8 +191,7 @@ export async function buildApp(
       app,
       config,
       createMenuImageService({
-        assertRestaurantAccess: createRestaurantAccessChecker(ownershipLookup),
-        menuItemExists: createMenuItemExists(database),
+        withAuthorizedItem: createMenuImageAccess(database),
         gateway: createR2MenuImageGateway(config.r2),
         publicBaseUrl: config.r2.publicBaseUrl,
         uploadUrlTtlSeconds: config.r2.uploadUrlTtlSeconds,

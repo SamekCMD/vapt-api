@@ -9,6 +9,7 @@ import type { SessionResolver } from "../auth/session-resolver.js";
 import { registerMenuImageRoutes } from "./routes.js";
 import type { MenuImageService } from "./service.js";
 
+const actor={userId:"30000000-0000-4000-8000-000000000001",sessionId:"40000000-0000-4000-8000-000000000001",sessionExpiresAt:Date.now()+60_000};
 const restaurantId = "10000000-0000-4000-8000-000000000001";
 const itemId = "20000000-0000-4000-8000-000000000002";
 
@@ -19,7 +20,7 @@ const config = {
 
 const testSessionResolver: SessionResolver = async (headers) =>
   String(headers.cookie ?? "").includes("better-auth.session_token=valid")
-    ? { userId: "user-1", email: null, role: "authenticated" }
+    ? { ...actor, email: null, role: "authenticated" }
     : null;
 
 async function createApp(service: MenuImageService) {
@@ -58,7 +59,7 @@ test("authenticated owner can request a scoped menu image upload", async () => {
   assert.equal(response.statusCode, 200);
   assert.equal(response.json().objectKey, `${restaurantId}/${itemId}`);
   assert.deepEqual(calls, [{
-    userId: "user-1",
+    ...actor,
     restaurantId,
     itemId,
     contentType: "image/jpeg",
@@ -117,6 +118,6 @@ test("menu image delete requires authentication and returns no content", async (
     headers: { cookie: "better-auth.session_token=valid" },
   });
   assert.equal(response.statusCode, 204);
-  assert.deepEqual(deleted, [{ userId: "user-1", restaurantId, itemId }]);
+  assert.deepEqual(deleted, [{ ...actor, restaurantId, itemId }]);
   await app.close();
 });

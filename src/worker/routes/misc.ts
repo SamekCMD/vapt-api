@@ -1,5 +1,7 @@
 import type { Hono, MiddlewareHandler } from "hono";
 
+import { actorFromAuth } from "../../plugins/auth.js";
+import { restaurantParamsSchema } from "../../modules/restaurants/schemas.js";
 import { AppError } from "../../lib/errors.js";
 import { validateWithSchema } from "../../lib/validation.js";
 import { requireOrderToken } from "../../modules/feedback/token.js";
@@ -44,7 +46,7 @@ export function registerWorkerMiscRoutes(
     const services = await context.get("getServices")();
     if (!services.menuImages) throw new AppError(503, "service_unavailable", "Service unavailable");
     return context.json(await services.menuImages.prepareUpload({
-      userId: context.get("auth").userId, ...params, ...body,
+      ...actorFromAuth(context.get("auth")), ...params, ...body,
     }));
   });
   app.delete("/restaurants/:restaurantId/menu-items/:itemId/image", enabledStorage, storageRate, imageAuthenticated, async (context) => {
@@ -55,7 +57,7 @@ export function registerWorkerMiscRoutes(
     }
     const services = await context.get("getServices")();
     if (!services.menuImages) throw new AppError(503, "service_unavailable", "Service unavailable");
-    await services.menuImages.delete({ userId: context.get("auth").userId, ...params });
+    await services.menuImages.delete({ ...actorFromAuth(context.get("auth")), ...params });
     return context.body(null, 204);
   });
 
@@ -70,7 +72,14 @@ export function registerWorkerMiscRoutes(
   app.post("/ingest/push-subscription", billingRate, authenticated, async (context) => {
     const body = validateWithSchema(pushSubscriptionBodySchema, await parseWorkerJson(context.req.raw));
     const services = await context.get("getServices")();
-    return context.json(await services.pushSubscriptions.upsertOwnedSubscription(context.get("auth").userId, body));
+    return context.json(await services.pushSubscriptions.upsertOwnedSubscription(context.get("auth").userId, body,actorFromAuth(context.get("auth"))));
+  });
+
+  app.post('/restaurants/:restaurantId/push-subscription',billingRate,authenticated,async context=>{
+    const { restaurantId }=validateWithSchema(restaurantParamsSchema,context.req.param());
+    const body=validateWithSchema(pushSubscriptionBodySchema,await parseWorkerJson(context.req.raw));
+    const services=await context.get('getServices')();
+    return context.json(await services.pushSubscriptions.upsertSubscription({ ...actorFromAuth(context.get('auth')),restaurantId },body));
   });
 
   app.post("/admin/payments/effects/reprocess", billingRate, async (context) => {

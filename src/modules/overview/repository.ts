@@ -1,5 +1,7 @@
 import type { Database } from "../../lib/database.js";
 import { AppError } from "../../lib/errors.js";
+import type { RestaurantScope } from '../tenancy/contracts.js';
+import { authorizeRestaurant,resolveLegacyRestaurant } from '../tenancy/authorization.js';
 import type {
   OrderFeedbackDto,
   OverviewOrderDto,
@@ -14,6 +16,7 @@ export type OwnedOverviewData = {
 };
 
 export interface OverviewRepository {
+  getOverview(scope:RestaurantScope,periodStart:Date):Promise<OwnedOverviewData|null>;
   getOwnedOverview(userId: string, periodStart: Date): Promise<OwnedOverviewData | null>;
 }
 
@@ -57,9 +60,10 @@ function storageFailure(): AppError {
 }
 
 export function createOverviewRepository(database: Database): OverviewRepository {
-  return {
-    async getOwnedOverview(userId, periodStart) {
+  const repository:OverviewRepository = {
+    async getOverview(scope, periodStart) {
       try {
+        await authorizeRestaurant(database,scope,'restaurant.read');
         const restaurantResult = await database.query<RestaurantRow>(
           `select
             restaurant.id,
@@ -68,9 +72,8 @@ export function createOverviewRepository(database: Database): OverviewRepository
             restaurant.onboarding_completed,
             restaurant.delivery_enabled
           from public.restaurants as restaurant
-          where restaurant.owner_id = $1::uuid
-          limit 1`,
-          [userId],
+          where restaurant.id = $1::uuid and exists(select 1 from public.organization_members member where member.organization_id=restaurant.organization_id and member.user_id=$2::uuid and member.status='active')`,
+          [scope.restaurantId,scope.userId],
         );
         const restaurant = restaurantResult.rows[0];
         if (!restaurant) return null;
@@ -100,11 +103,11 @@ export function createOverviewRepository(database: Database): OverviewRepository
               on restaurant.id = order_row.restaurant_id
             left join public.order_items as order_item
               on order_item.order_id = order_row.id
-            where restaurant.owner_id = $1::uuid
+            where restaurant.id = $1::uuid and exists(select 1 from public.organization_members member where member.organization_id=restaurant.organization_id and member.user_id=$3::uuid and member.status='active')
               and order_row.created_at >= $2::timestamptz
             group by order_row.id
             order by order_row.created_at asc, order_row.id asc`,
-            [userId, periodStart],
+            [scope.restaurantId, periodStart,scope.userId],
           ),
           database.query<FeedbackRow>(
             `select
@@ -117,10 +120,10 @@ export function createOverviewRepository(database: Database): OverviewRepository
             from public.order_feedback as feedback
             join public.restaurants as restaurant
               on restaurant.id = feedback.restaurant_id
-            where restaurant.owner_id = $1::uuid
+            where restaurant.id = $1::uuid and exists(select 1 from public.organization_members member where member.organization_id=restaurant.organization_id and member.user_id=$3::uuid and member.status='active')
               and feedback.created_at >= $2::timestamptz
             order by feedback.created_at asc, feedback.order_id asc`,
-            [userId, periodStart],
+            [scope.restaurantId, periodStart,scope.userId],
           ),
         ]);
 
@@ -150,9 +153,12 @@ export function createOverviewRepository(database: Database): OverviewRepository
             createdAt: isoString(feedback.created_at),
           })),
         };
-      } catch {
+      } catch(error) {
+        if(error instanceof AppError) throw error;
         throw storageFailure();
       }
     },
+    async getOwnedOverview(userId,periodStart) { return repository.getOverview(await resolveLegacyRestaurant(database,userId),periodStart); },
   };
+  return repository;
 }

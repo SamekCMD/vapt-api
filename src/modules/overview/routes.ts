@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 
 import { validateWithSchema } from "../../lib/validation.js";
 import { requireAuth } from "../../plugins/auth.js";
+import { restaurantParamsSchema } from '../restaurants/schemas.js';
 import type { OverviewRepository } from "./repository.js";
 import { overviewQuerySchema } from "./schemas.js";
 import { createOverviewService } from "./service.js";
@@ -25,4 +26,10 @@ export async function registerOverviewRoutes(
       return service.getOwnedOverview(request.auth!.userId, query.period);
     },
   );
+  app.get('/restaurants/:restaurantId/overview',
+    { config:{ rateLimitGroup:'auth' },preHandler:authenticated },async request=>{
+      const { restaurantId }=validateWithSchema(restaurantParamsSchema,request.params);
+      const query=validateWithSchema(overviewQuerySchema,request.query);
+      return service.getOverview({ userId:request.auth!.userId,restaurantId },query.period);
+    });
 }

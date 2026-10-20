@@ -3,6 +3,7 @@ import test from "node:test";
 
 import Fastify from "fastify";
 
+import { operationalSession,operationalTestDatabase } from "../tenancy/operational-test-support.js";
 import type { Database } from "../../lib/database.js";
 import { AppError } from "../../lib/errors.js";
 import { registerAuthDecorator } from "../../plugins/auth.js";
@@ -56,6 +57,7 @@ test("overview query accepts only the three planned periods and rejects tenant f
 test("period boundaries are calculated once in UTC on the server", async () => {
   const calls: Array<{ ownerId: string; periodStart: Date }> = [];
   const repository: OverviewRepository = {
+    async getOverview(){ throw new Error('not used'); },
     async getOwnedOverview(userId, periodStart) {
       calls.push({ ownerId: userId, periodStart });
       return overview();
@@ -107,7 +109,7 @@ test("repository scopes every dataset to the owner and preserves edge serializat
   } as unknown as Database;
   const periodStart = new Date("2026-09-20T00:00:00.000Z");
 
-  const result = await createOverviewRepository(database).getOwnedOverview(ownerId, periodStart);
+  const result = await createOverviewRepository(operationalTestDatabase(database,{ userId:ownerId,restaurantId })).getOwnedOverview(ownerId, periodStart);
 
   assert.deepEqual(result, {
     restaurant: overview().restaurant,
@@ -116,10 +118,10 @@ test("repository scopes every dataset to the owner and preserves edge serializat
   });
   assert.equal(calls.length, 3);
   for (const call of calls) {
-    assert.match(call.sql, /restaurant\.owner_id = \$1::uuid/i);
+    assert.match(call.sql, /member\.user_id=\$[23]::uuid/i);
   }
-  assert.deepEqual(calls[1]?.values, [ownerId, periodStart]);
-  assert.deepEqual(calls[2]?.values, [ownerId, periodStart]);
+  assert.deepEqual(calls[1]?.values, [restaurantId, periodStart,ownerId]);
+  assert.deepEqual(calls[2]?.values, [restaurantId, periodStart,ownerId]);
   assert.match(calls[1]?.sql ?? "", /order by order_item\.created_at asc, order_item\.id asc/i);
 });
 
@@ -158,7 +160,7 @@ test("overview preserves rating boundaries, arrays, and null feedback fields", a
     async connect() { throw new Error("not used"); },
   } as unknown as Database;
 
-  const result = await createOverviewRepository(database).getOwnedOverview(
+  const result = await createOverviewRepository(operationalTestDatabase(database,{ userId:ownerId,restaurantId })).getOwnedOverview(
     ownerId,
     new Date("2026-09-20T00:00:00.000Z"),
   );
@@ -174,7 +176,7 @@ test("another owner is indistinguishable from a missing restaurant", async () =>
     async query() { return { rows: [] }; },
     async connect() { throw new Error("not used"); },
   } as unknown as Database;
-  const service = createOverviewService(createOverviewRepository(database));
+  const service = createOverviewService(createOverviewRepository(operationalTestDatabase(database,{ userId:ownerId,restaurantId })));
 
   await assert.rejects(
     () => service.getOwnedOverview(ownerId, "week"),
@@ -185,10 +187,11 @@ test("another owner is indistinguishable from a missing restaurant", async () =>
 test("authenticated overview route derives ownership from the session", async () => {
   const owners: string[] = [];
   const repository: OverviewRepository = {
+    async getOverview(){ throw new Error('not used'); },
     async getOwnedOverview(userId) { owners.push(userId); return overview(); },
   };
   const app = Fastify({ logger: false });
-  registerAuthDecorator(app, async () => ({ userId: ownerId, email: null, role: "authenticated" }));
+  registerAuthDecorator(app, async () => ({ userId: ownerId, email: null, role: "authenticated",...operationalSession }));
   registerErrorHandler(app);
   await registerOverviewRoutes(app, repository, () => new Date("2026-09-23T18:45:00.000Z"));
 

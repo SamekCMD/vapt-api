@@ -4,19 +4,14 @@ import test from "node:test";
 import { AppError } from "../../lib/errors.js";
 import { createMenuImageService } from "./service.js";
 
+const actor={userId:"30000000-0000-4000-8000-000000000001",sessionId:"40000000-0000-4000-8000-000000000001",sessionExpiresAt:Date.now()+60_000};
 const restaurantId = "10000000-0000-4000-8000-000000000001";
 const itemId = "20000000-0000-4000-8000-000000000002";
 
 test("menu image upload preserves the legacy object key and returns the canonical URL", async () => {
   const calls: unknown[] = [];
   const service = createMenuImageService({
-    assertRestaurantAccess: async (input) => {
-      calls.push(["access", input]);
-    },
-    menuItemExists: async (input) => {
-      calls.push(["item", input]);
-      return true;
-    },
+    withAuthorizedItem:async(input,work)=>{ calls.push(["authorized",input]);return work(); },
     gateway: {
       async createUploadUrl(input) {
         calls.push(["sign", input]);
@@ -31,7 +26,7 @@ test("menu image upload preserves the legacy object key and returns the canonica
   });
 
   const result = await service.prepareUpload({
-    userId: "user-1",
+    ...actor,
     restaurantId,
     itemId,
     contentType: "image/jpeg",
@@ -47,8 +42,7 @@ test("menu image upload preserves the legacy object key and returns the canonica
     expiresInSeconds: 300,
   });
   assert.deepEqual(calls, [
-    ["access", { userId: "user-1", restaurantId }],
-    ["item", { userId: "user-1", restaurantId, itemId }],
+    ["authorized", { ...actor, restaurantId, itemId,contentType:"image/jpeg",contentLength:1234 }],
     ["sign", {
       objectKey: `${restaurantId}/${itemId}`,
       contentType: "image/jpeg",
@@ -61,8 +55,7 @@ test("menu image upload preserves the legacy object key and returns the canonica
 test("menu image operations reject an item outside the restaurant", async () => {
   let gatewayCalled = false;
   const service = createMenuImageService({
-    assertRestaurantAccess: async () => undefined,
-    menuItemExists: async () => false,
+    withAuthorizedItem: async () => { throw new AppError(404,"menu_item_not_found","Menu item not found"); },
     gateway: {
       async createUploadUrl() {
         gatewayCalled = true;
@@ -77,7 +70,7 @@ test("menu image operations reject an item outside the restaurant", async () => 
   });
 
   await assert.rejects(
-    service.delete({ userId: "user-1", restaurantId, itemId }),
+    service.delete({ ...actor, restaurantId, itemId }),
     (error: unknown) =>
       error instanceof AppError &&
       error.statusCode === 404 &&
@@ -89,8 +82,7 @@ test("menu image operations reject an item outside the restaurant", async () => 
 test("menu image delete is authorized before removing the exact object key", async () => {
   const deleted: string[] = [];
   const service = createMenuImageService({
-    assertRestaurantAccess: async () => undefined,
-    menuItemExists: async () => true,
+    withAuthorizedItem: async (_scope,work) => work(),
     gateway: {
       async createUploadUrl() {
         throw new Error("not used");
@@ -103,7 +95,7 @@ test("menu image delete is authorized before removing the exact object key", asy
     uploadUrlTtlSeconds: 300,
   });
 
-  await service.delete({ userId: "user-1", restaurantId, itemId });
+  await service.delete({ ...actor, restaurantId, itemId });
 
   assert.deepEqual(deleted, [`${restaurantId}/${itemId}`]);
 });

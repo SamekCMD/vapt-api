@@ -1,10 +1,12 @@
 import type { FastifyInstance } from "fastify";
 
 import { validateWithSchema } from "../../lib/validation.js";
-import { requireAuth } from "../../plugins/auth.js";
+import { actorFromAuth,requireAuth } from "../../plugins/auth.js";
+import { restaurantParamsSchema } from '../restaurants/schemas.js';
 import type { KitchenRepository } from "./repository.js";
 import {
   kitchenOrderParamsSchema,
+  scopedKitchenOrderParamsSchema,
   updateKitchenOrderStatusBodySchema,
 } from "./schemas.js";
 import { createKitchenService } from "./service.js";
@@ -34,7 +36,17 @@ export async function registerKitchenRoutes(
     async (request) => {
       const params = validateWithSchema(kitchenOrderParamsSchema, request.params);
       const body = validateWithSchema(updateKitchenOrderStatusBodySchema, request.body);
-      return service.updateOwnedOrderStatus(request.auth!.userId, params.orderId, body.status);
+      return service.updateOwnedOrderStatus(request.auth!.userId, params.orderId, body.status,actorFromAuth(request.auth!));
     },
   );
+
+  app.get('/restaurants/:restaurantId/kitchen/orders',protectedOptions,async request=>{
+    const { restaurantId }=validateWithSchema(restaurantParamsSchema,request.params);
+    return service.listActiveOrders({ userId:request.auth!.userId,restaurantId });
+  });
+  app.patch('/restaurants/:restaurantId/kitchen/orders/:orderId/status',protectedOptions,async request=>{
+    const { restaurantId,orderId }=validateWithSchema(scopedKitchenOrderParamsSchema,request.params);
+    const body=validateWithSchema(updateKitchenOrderStatusBodySchema,request.body);
+    return service.updateOrderStatus({ ...actorFromAuth(request.auth!),restaurantId },orderId,body.status);
+  });
 }

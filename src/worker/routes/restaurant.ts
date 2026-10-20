@@ -6,11 +6,11 @@ import { affectsPublicCatalog } from "../../modules/catalog-publication/policy.j
 import { catalogOperationId, controlCatalogOperation, isCatalogWriterEnabled, requireCatalogActor, respondCatalogMutation, submitCatalogMutation } from "../catalog/writer.js";
 
 import { validateWithSchema } from "../../lib/validation.js";
-import { kitchenOrderParamsSchema, updateKitchenOrderStatusBodySchema } from "../../modules/kitchen/schemas.js";
+import { kitchenOrderParamsSchema, scopedKitchenOrderParamsSchema, updateKitchenOrderStatusBodySchema } from "../../modules/kitchen/schemas.js";
 import { createMenuItemBodySchema, menuItemParamsSchema, restaurantMenuParamsSchema, restaurantMenuItemParamsSchema, updateMenuItemBodySchema } from "../../modules/menu/schemas.js";
 import { overviewQuerySchema } from "../../modules/overview/schemas.js";
 import { onboardingBodySchema, restaurantParamsSchema, updateOwnedRestaurantBodySchema } from "../../modules/restaurants/schemas.js";
-import { tableSessionParamsSchema, transferTableSessionBodySchema } from "../../modules/table-sessions/schemas.js";
+import { tableSessionParamsSchema, scopedTableSessionParamsSchema, transferTableSessionBodySchema } from "../../modules/table-sessions/schemas.js";
 import type { WorkerHonoEnv } from "../app.js";
 import { parseWorkerJson, requireWorkerAuth, workerRateLimit } from "../http.js";
 
@@ -145,7 +145,7 @@ export function registerWorkerRestaurantRoutes(
     const params = validateWithSchema(kitchenOrderParamsSchema, context.req.param());
     const body = validateWithSchema(updateKitchenOrderStatusBodySchema, await parseWorkerJson(context.req.raw));
     const services = await context.get("getServices")();
-    return context.json(await services.kitchen.updateOwnedOrderStatus(context.get("auth").userId, params.orderId, body.status));
+    return context.json(await services.kitchen.updateOwnedOrderStatus(context.get("auth").userId, params.orderId, body.status,actorFromAuth(context.get('auth'))));
   });
   app.get("/restaurants/me/overview", rate, authenticated, async (context) => {
     const query = validateWithSchema(overviewQuerySchema, context.req.query());
@@ -165,14 +165,52 @@ export function registerWorkerRestaurantRoutes(
   app.post("/restaurants/me/table-sessions/:sessionId/close", rate, authenticated, async (context) => {
     const params = validateWithSchema(tableSessionParamsSchema, context.req.param());
     const services = await context.get("getServices")();
-    return context.json(await services.tableSessions.closeOwnedSession(context.get("auth").userId, params.sessionId));
+    return context.json(await services.tableSessions.closeOwnedSession(context.get("auth").userId, params.sessionId,actorFromAuth(context.get('auth'))));
   });
   app.post("/restaurants/me/table-sessions/:sessionId/transfer", rate, authenticated, async (context) => {
     const params = validateWithSchema(tableSessionParamsSchema, context.req.param());
     const body = validateWithSchema(transferTableSessionBodySchema, await parseWorkerJson(context.req.raw));
     const services = await context.get("getServices")();
     return context.json(await services.tableSessions.transferOwnedSession(
-      context.get("auth").userId, params.sessionId, body.tableNumber,
+      context.get("auth").userId, params.sessionId, body.tableNumber,actorFromAuth(context.get("auth")),
     ));
+  });
+  app.get('/restaurants/:restaurantId/kitchen/orders',rate,authenticated,async context=>{
+    const { restaurantId }=validateWithSchema(restaurantParamsSchema,context.req.param());
+    const services=await context.get('getServices')();
+    return context.json(await services.kitchen.listActiveOrders({ userId:context.get('auth').userId,restaurantId }));
+  });
+  app.patch('/restaurants/:restaurantId/kitchen/orders/:orderId/status',rate,authenticated,async context=>{
+    const { restaurantId,orderId }=validateWithSchema(scopedKitchenOrderParamsSchema,context.req.param());
+    const body=validateWithSchema(updateKitchenOrderStatusBodySchema,await parseWorkerJson(context.req.raw));
+    const services=await context.get('getServices')();
+    return context.json(await services.kitchen.updateOrderStatus({ ...actorFromAuth(context.get('auth')),restaurantId },orderId,body.status));
+  });
+  app.get('/restaurants/:restaurantId/overview',rate,authenticated,async context=>{
+    const { restaurantId }=validateWithSchema(restaurantParamsSchema,context.req.param());
+    const query=validateWithSchema(overviewQuerySchema,context.req.query());
+    const services=await context.get('getServices')();
+    return context.json(await services.overview.getOverview({ userId:context.get('auth').userId,restaurantId },query.period));
+  });
+  app.get('/restaurants/:restaurantId/table-sessions',rate,authenticated,async context=>{
+    const { restaurantId }=validateWithSchema(restaurantParamsSchema,context.req.param());
+    const services=await context.get('getServices')();
+    return context.json(await services.tableSessions.listActiveSessions({ userId:context.get('auth').userId,restaurantId }));
+  });
+  app.get('/restaurants/:restaurantId/table-sessions/:sessionId',rate,authenticated,async context=>{
+    const { restaurantId,sessionId }=validateWithSchema(scopedTableSessionParamsSchema,context.req.param());
+    const services=await context.get('getServices')();
+    return context.json(await services.tableSessions.getSession({ userId:context.get('auth').userId,restaurantId },sessionId));
+  });
+  app.post('/restaurants/:restaurantId/table-sessions/:sessionId/close',rate,authenticated,async context=>{
+    const { restaurantId,sessionId }=validateWithSchema(scopedTableSessionParamsSchema,context.req.param());
+    const services=await context.get('getServices')();
+    return context.json(await services.tableSessions.closeSession({ ...actorFromAuth(context.get('auth')),restaurantId },sessionId));
+  });
+  app.post('/restaurants/:restaurantId/table-sessions/:sessionId/transfer',rate,authenticated,async context=>{
+    const { restaurantId,sessionId }=validateWithSchema(scopedTableSessionParamsSchema,context.req.param());
+    const body=validateWithSchema(transferTableSessionBodySchema,await parseWorkerJson(context.req.raw));
+    const services=await context.get('getServices')();
+    return context.json(await services.tableSessions.transferSession({ ...actorFromAuth(context.get('auth')),restaurantId },sessionId,body.tableNumber));
   });
 }

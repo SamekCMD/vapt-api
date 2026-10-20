@@ -1,4 +1,5 @@
 import { AppError } from "../../lib/errors.js";
+import type { RestaurantScope } from '../tenancy/contracts.js';
 import type { OverviewDto } from "../business/contracts.js";
 import type { OverviewRepository } from "./repository.js";
 import type { OverviewPeriod } from "./schemas.js";
@@ -19,6 +20,12 @@ export function createOverviewService(
   now: () => Date = () => new Date(),
 ) {
   return {
+    async getOverview(scope:RestaurantScope,period:OverviewPeriod):Promise<OverviewDto>{
+      const periodStart=periodStartUtc(period,now());
+      const data=await repository.getOverview(scope,periodStart);
+      if(!data) throw new AppError(404,'restaurant_not_found','Restaurant not found');
+      return { ...data,period,periodStart:periodStart.toISOString() };
+    },
     async getOwnedOverview(userId: string, period: OverviewPeriod): Promise<OverviewDto> {
       const periodStart = periodStartUtc(period, now());
       const data = await repository.getOwnedOverview(userId, periodStart);

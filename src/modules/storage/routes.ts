@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 
 import type { AppConfig } from "../../lib/config.js";
 import { validateWithSchema } from "../../lib/validation.js";
-import { requireAuth } from "../../plugins/auth.js";
+import { actorFromAuth,requireAuth } from "../../plugins/auth.js";
 import {
   menuImageParamsSchema,
   prepareMenuImageUploadBodySchema,
@@ -27,7 +27,7 @@ export async function registerMenuImageRoutes(
       const params = validateWithSchema(menuImageParamsSchema, request.params);
       const body = validateWithSchema(prepareMenuImageUploadBodySchema, request.body);
       return service.prepareUpload({
-        userId: request.auth!.userId,
+        ...actorFromAuth(request.auth!),
         ...params,
         ...body,
       });
@@ -40,7 +40,7 @@ export async function registerMenuImageRoutes(
     async (request, reply) => {
       const params = validateWithSchema(menuImageParamsSchema, request.params);
       await service.delete({
-        userId: request.auth!.userId,
+        ...actorFromAuth(request.auth!),
         ...params,
       });
       reply.status(204).send();

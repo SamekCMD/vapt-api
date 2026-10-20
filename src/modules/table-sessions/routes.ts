@@ -1,12 +1,14 @@
 import type { FastifyInstance } from "fastify";
 
 import { validateWithSchema } from "../../lib/validation.js";
-import { requireAuth } from "../../plugins/auth.js";
+import { actorFromAuth,requireAuth } from "../../plugins/auth.js";
+import { restaurantParamsSchema } from '../restaurants/schemas.js';
 import { AppError } from "../../lib/errors.js";
 import type { OrderService } from "../orders/service.js";
 import type { TableSessionRepository } from "./repository.js";
 import {
   tableSessionParamsSchema,
+  scopedTableSessionParamsSchema,
   requestCheckTableSessionBodySchema,
   transferTableSessionBodySchema,
 } from "./schemas.js";
@@ -46,7 +48,7 @@ export async function registerTableSessionRoutes(
     protectedOptions,
     async (request) => {
       const params = validateWithSchema(tableSessionParamsSchema, request.params);
-      return service.closeOwnedSession(request.auth!.userId, params.sessionId);
+      return service.closeOwnedSession(request.auth!.userId, params.sessionId,actorFromAuth(request.auth!));
     },
   );
 
@@ -60,9 +62,28 @@ export async function registerTableSessionRoutes(
         request.auth!.userId,
         params.sessionId,
         body.tableNumber,
+        actorFromAuth(request.auth!),
       );
     },
   );
+
+  app.get('/restaurants/:restaurantId/table-sessions',protectedOptions,async request=>{
+    const { restaurantId }=validateWithSchema(restaurantParamsSchema,request.params);
+    return service.listActiveSessions({ userId:request.auth!.userId,restaurantId });
+  });
+  app.get('/restaurants/:restaurantId/table-sessions/:sessionId',protectedOptions,async request=>{
+    const { restaurantId,sessionId }=validateWithSchema(scopedTableSessionParamsSchema,request.params);
+    return service.getSession({ userId:request.auth!.userId,restaurantId },sessionId);
+  });
+  app.post('/restaurants/:restaurantId/table-sessions/:sessionId/close',protectedOptions,async request=>{
+    const { restaurantId,sessionId }=validateWithSchema(scopedTableSessionParamsSchema,request.params);
+    return service.closeSession({ ...actorFromAuth(request.auth!),restaurantId },sessionId);
+  });
+  app.post('/restaurants/:restaurantId/table-sessions/:sessionId/transfer',protectedOptions,async request=>{
+    const { restaurantId,sessionId }=validateWithSchema(scopedTableSessionParamsSchema,request.params);
+    const body=validateWithSchema(transferTableSessionBodySchema,request.body);
+    return service.transferSession({ ...actorFromAuth(request.auth!),restaurantId },sessionId,body.tableNumber);
+  });
 
   if (publicOrders) {
     app.post(

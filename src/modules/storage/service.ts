@@ -1,6 +1,5 @@
-import type { RestaurantAccessChecker } from "../../lib/permissions.js";
-import { AppError } from "../../lib/errors.js";
-import type { MenuItemExists } from "./repository.js";
+import type { WithAuthorizedMenuItem } from './repository.js';
+import type { RestaurantWriteScope } from '../tenancy/contracts.js';
 
 export type MenuImageContentType = "image/jpeg" | "image/png" | "image/webp";
 
@@ -15,11 +14,7 @@ export type MenuImageGateway = {
   deleteObject(input: { objectKey: string }): Promise<void>;
 };
 
-type MenuImageInput = {
-  userId: string;
-  restaurantId: string;
-  itemId: string;
-};
+type MenuImageInput = RestaurantWriteScope & { itemId:string };
 
 type PrepareUploadInput = MenuImageInput & {
   contentType: MenuImageContentType;
@@ -50,33 +45,15 @@ function publicUrlFor(baseUrl: URL, objectKey: string): string {
 }
 
 export function createMenuImageService(input: {
-  assertRestaurantAccess: RestaurantAccessChecker;
-  menuItemExists: MenuItemExists;
+  withAuthorizedItem: WithAuthorizedMenuItem;
   gateway: MenuImageGateway;
   publicBaseUrl: URL;
   uploadUrlTtlSeconds: number;
 }): MenuImageService {
-  async function authorize(operation: MenuImageInput): Promise<string> {
-    await input.assertRestaurantAccess({
-      userId: operation.userId,
-      restaurantId: operation.restaurantId,
-    });
-
-    const exists = await input.menuItemExists({
-      userId: operation.userId,
-      restaurantId: operation.restaurantId,
-      itemId: operation.itemId,
-    });
-    if (!exists) {
-      throw new AppError(404, "menu_item_not_found", "Menu item not found");
-    }
-
-    return objectKeyFor(operation.restaurantId, operation.itemId);
-  }
-
   return {
     async prepareUpload(operation) {
-      const objectKey = await authorize(operation);
+      return input.withAuthorizedItem(operation,async()=>{
+      const objectKey = objectKeyFor(operation.restaurantId,operation.itemId);
       const uploadUrl = await input.gateway.createUploadUrl({
         objectKey,
         contentType: operation.contentType,
@@ -92,11 +69,14 @@ export function createMenuImageService(input: {
         headers: { "Content-Type": operation.contentType },
         expiresInSeconds: input.uploadUrlTtlSeconds,
       };
+      });
     },
 
     async delete(operation) {
-      const objectKey = await authorize(operation);
+      return input.withAuthorizedItem(operation,async()=>{
+      const objectKey = objectKeyFor(operation.restaurantId,operation.itemId);
       await input.gateway.deleteObject({ objectKey });
+      });
     },
   };
 }

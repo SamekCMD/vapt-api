@@ -1,7 +1,8 @@
 import type { FastifyInstance } from "fastify";
 
 import { validateWithSchema } from "../../lib/validation.js";
-import { requireAuth } from "../../plugins/auth.js";
+import { actorFromAuth,requireAuth } from "../../plugins/auth.js";
+import { restaurantParamsSchema } from '../restaurants/schemas.js';
 import type { FeedbackRepository } from "../feedback/repository.js";
 import { requireOrderToken } from "../feedback/routes.js";
 import { createFeedbackService } from "../feedback/service.js";
@@ -56,7 +57,16 @@ export async function registerIngestRoutes(
       return dependencies.pushSubscriptions.upsertOwnedSubscription(
         request.auth!.userId,
         body,
+        actorFromAuth(request.auth!),
       );
     },
   );
+  app.post('/restaurants/:restaurantId/push-subscription',{
+    config:{ rateLimitGroup:'billing' },
+    preHandler:async(request,reply)=>requireAuth(request,reply,app.authSessionResolver),
+  },async request=>{
+    const { restaurantId }=validateWithSchema(restaurantParamsSchema,request.params);
+    const body=validateWithSchema(pushSubscriptionBodySchema,request.body);
+    return dependencies.pushSubscriptions.upsertSubscription({ ...actorFromAuth(request.auth!),restaurantId },body);
+  });
 }

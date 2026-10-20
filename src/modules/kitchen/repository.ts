@@ -1,5 +1,6 @@
 import type { Database, Queryable } from "../../lib/database.js";
-import { withTransaction } from "../../lib/database.js";
+import type { RestaurantScope,RestaurantWriteScope,TenantActor } from '../tenancy/contracts.js';
+import { authorizeRestaurant,legacyWriteActor,resolveLegacyRestaurant,withRestaurantWrite } from '../tenancy/authorization.js';
 import { emitCommittedChange, requireManagedObserverPool, type CommittedChangeOptions } from "../realtime/committed-changes.js";
 import type { CommittedChange } from "../realtime/contracts.js";
 import { AppError } from "../../lib/errors.js";
@@ -25,13 +26,11 @@ type KitchenOrderRow = {
 };
 
 export interface KitchenRepository {
-  listActiveOwnedOrders(userId: string): Promise<KitchenOrderDto[]>;
-  updateOwnedOrderStatus(
-    userId: string,
-    orderId: string,
-    target: KitchenOrderTargetStatus,
-    validateCurrent: (currentStatus: string) => void,
-  ): Promise<KitchenOrderDto | null>;
+  resolveLegacyRestaurant(userId:string):Promise<RestaurantScope>;
+  listActiveOrders(scope:RestaurantScope):Promise<KitchenOrderDto[]>;
+  updateOrderStatus(scope:RestaurantWriteScope,orderId:string,target:KitchenOrderTargetStatus,validateCurrent:(status:string)=>void):Promise<KitchenOrderDto|null>;
+  listActiveOwnedOrders(userId:string):Promise<KitchenOrderDto[]>;
+  updateOwnedOrderStatus(userId:string,orderId:string,target:KitchenOrderTargetStatus,validateCurrent:(status:string)=>void,actor?:TenantActor):Promise<KitchenOrderDto|null>;
 }
 
 const ORDER_SELECT = `
@@ -88,95 +87,61 @@ function storageFailure(): AppError {
   return new AppError(500, "internal_error", "Failed to persist kitchen data");
 }
 
-async function loadOwnedOrder(
-  queryable: Queryable,
-  userId: string,
-  orderId: string,
-): Promise<KitchenOrderDto | null> {
-  const result = await queryable.query<KitchenOrderRow>(
-    `select ${ORDER_SELECT}
-    from public.orders as order_row
-    join public.restaurants as restaurant
-      on restaurant.id = order_row.restaurant_id
-    left join public.order_items as order_item
-      on order_item.order_id = order_row.id
-    where order_row.id = $1::uuid
-      and restaurant.owner_id = $2::uuid
-    group by order_row.id
-    limit 1`,
-    [orderId, userId],
-  );
-  const row = result.rows[0];
-  return row ? mapOrder(row) : null;
+const ACTIVE_MEMBER=`exists(select 1 from public.restaurants restaurant
+  join public.organization_members member on member.organization_id=restaurant.organization_id
+  where restaurant.id=order_row.restaurant_id and member.user_id=$3::uuid and member.status='active')`;
+async function loadOrder(q:Queryable,scope:RestaurantScope,orderId:string):Promise<KitchenOrderDto|null> {
+  const result=await q.query<KitchenOrderRow>(`select ${ORDER_SELECT} from public.orders order_row
+    left join public.order_items order_item on order_item.order_id=order_row.id
+    where order_row.id=$1::uuid and order_row.restaurant_id=$2::uuid and ${ACTIVE_MEMBER}
+    group by order_row.id`,[orderId,scope.restaurantId,scope.userId]);
+  return result.rows[0]?mapOrder(result.rows[0]):null;
 }
-
-export function createKitchenRepository(database: Database, options: CommittedChangeOptions = {}): KitchenRepository {
-  requireManagedObserverPool(database, options);
-  return {
-    async listActiveOwnedOrders(userId) {
+export function createKitchenRepository(database:Database,options:CommittedChangeOptions={}):KitchenRepository {
+  requireManagedObserverPool(database,options);
+  const repository:KitchenRepository={
+    resolveLegacyRestaurant(userId){ return resolveLegacyRestaurant(database,userId); },
+    async listActiveOrders(scope) {
       try {
-        const result = await database.query<KitchenOrderRow>(
-          `select ${ORDER_SELECT}
-          from public.orders as order_row
-          join public.restaurants as restaurant
-            on restaurant.id = order_row.restaurant_id
-          left join public.order_items as order_item
-            on order_item.order_id = order_row.id
-          where restaurant.owner_id = $1::uuid
-            and order_row.status in ('paid', 'pending', 'preparing', 'ready')
-          group by order_row.id
-          order by order_row.created_at desc, order_row.id desc`,
-          [userId],
-        );
+        await authorizeRestaurant(database,scope,'restaurant.read');
+        const result=await database.query<KitchenOrderRow>(`select ${ORDER_SELECT} from public.orders order_row
+          left join public.order_items order_item on order_item.order_id=order_row.id
+          where order_row.restaurant_id=$1::uuid and order_row.status in ('paid','pending','preparing','ready')
+            and exists(select 1 from public.restaurants restaurant
+              join public.organization_members member on member.organization_id=restaurant.organization_id
+              where restaurant.id=order_row.restaurant_id and member.user_id=$2::uuid and member.status='active')
+          group by order_row.id order by order_row.created_at desc,order_row.id desc`,[scope.restaurantId,scope.userId]);
         return result.rows.map(mapOrder);
-      } catch {
-        throw storageFailure();
-      }
+      } catch(error) { if(error instanceof AppError) throw error; throw storageFailure(); }
     },
-
-    async updateOwnedOrderStatus(userId, orderId, target, validateCurrent) {
+    async updateOrderStatus(scope,orderId,target,validateCurrent) {
       try {
-        let change: CommittedChange | undefined;
-        const result = await withTransaction(database, async (client) => {
-          const locked = await client.query<{ status: string }>(
-            `select order_row.status
-            from public.orders as order_row
-            join public.restaurants as restaurant
-              on restaurant.id = order_row.restaurant_id
-            where order_row.id = $1::uuid
-              and restaurant.owner_id = $2::uuid
-            for update of order_row, restaurant`,
-            [orderId, userId],
-          );
-          const current = locked.rows[0];
-          if (!current) return null;
-
+        let change:CommittedChange|undefined;
+        const result=await withRestaurantWrite(database,scope,'restaurant.operate',async client=>{
+          const locked=await client.query<{status:string}>(`select order_row.status from public.orders order_row
+            where order_row.id=$1::uuid and order_row.restaurant_id=$2::uuid and ${ACTIVE_MEMBER}
+            for update of order_row`,[orderId,scope.restaurantId,scope.userId]);
+          const current=locked.rows[0]; if(!current) return null;
           validateCurrent(current.status);
-          if (current.status !== target) {
-            await client.query(
-              `update public.orders as order_row
-              set status = $1::text,
-                  updated_at = now()
-              from public.restaurants as restaurant
-              where order_row.id = $2::uuid
-                and restaurant.id = order_row.restaurant_id
-                and restaurant.owner_id = $3::uuid`,
-              [target, orderId, userId],
-            );
-          }
-
-          const updated = await loadOwnedOrder(client, userId, orderId);
-          if (!updated) throw storageFailure();
-          if (updated.status !== current.status) change = { restaurantId: updated.restaurantId,
-            topics: ["orders", "kitchen", "table_sessions"], orderIds: [updated.id], entityId: updated.id, reason: "updated" };
+          if(current.status!==target) await client.query(`update public.orders order_row set status=$1::text,updated_at=now()
+            where order_row.id=$2::uuid and order_row.restaurant_id=$3::uuid
+              and exists(select 1 from public.restaurants restaurant
+                join public.organization_members member on member.organization_id=restaurant.organization_id
+                where restaurant.id=order_row.restaurant_id and member.user_id=$4::uuid and member.status='active')`,
+          [target,orderId,scope.restaurantId,scope.userId]);
+          const updated=await loadOrder(client,scope,orderId); if(!updated) throw storageFailure();
+          if(updated.status!==current.status) change={ restaurantId:scope.restaurantId,
+            topics:['orders','kitchen','table_sessions'],orderIds:[updated.id],entityId:updated.id,reason:'updated' };
           return updated;
         });
-        await emitCommittedChange(options, change);
-        return result;
-      } catch (error) {
-        if (error instanceof AppError) throw error;
-        throw storageFailure();
-      }
+        await emitCommittedChange(options,change); return result;
+      } catch(error) { if(error instanceof AppError) throw error; throw storageFailure(); }
+    },
+    async listActiveOwnedOrders(userId) { return repository.listActiveOrders(await repository.resolveLegacyRestaurant(userId)); },
+    async updateOwnedOrderStatus(userId,orderId,target,validateCurrent,actor) {
+      const verified=legacyWriteActor(userId,actor);
+      return repository.updateOrderStatus({...verified,...await repository.resolveLegacyRestaurant(userId)},orderId,target,validateCurrent);
     },
   };
+  return repository;
 }

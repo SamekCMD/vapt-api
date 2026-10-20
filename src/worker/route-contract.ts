@@ -9,6 +9,14 @@ type RouteContract = {
 };
 
 export const ROUTE_CONTRACTS: readonly RouteContract[] = [
+  {method:'GET',path:'/restaurants/:restaurantId/kitchen/orders',group:'auth',auth:true},
+  {method:'PATCH',path:'/restaurants/:restaurantId/kitchen/orders/:orderId/status',group:'auth',auth:true},
+  {method:'GET',path:'/restaurants/:restaurantId/table-sessions',group:'auth',auth:true},
+  {method:'GET',path:'/restaurants/:restaurantId/table-sessions/:sessionId',group:'auth',auth:true},
+  {method:'POST',path:'/restaurants/:restaurantId/table-sessions/:sessionId/close',group:'auth',auth:true},
+  {method:'POST',path:'/restaurants/:restaurantId/table-sessions/:sessionId/transfer',group:'auth',auth:true},
+  {method:'GET',path:'/restaurants/:restaurantId/overview',group:'auth',auth:true},
+  {method:'POST',path:'/restaurants/:restaurantId/push-subscription',group:'billing',auth:true},
   { method:'GET',path:'/restaurants/:restaurantId',group:'auth',auth:true },
   { method:'PATCH',path:'/restaurants/:restaurantId',group:'auth',auth:true },
   { method:'GET',path:'/restaurants/:restaurantId/menu-items',group:'auth',auth:true },
