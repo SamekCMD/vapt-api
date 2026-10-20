@@ -24,10 +24,10 @@ async function mutate(database: Database, client: PoolClient, command: CatalogCo
   const { mutation, actor } = command;
   switch (mutation.type) {
     case "onboarding": return restaurants.createOwnedRestaurant(actor.userId, mutation.input);
-    case "restaurant.patch": return restaurants.updateOwnedRestaurant(actor.userId, mutation.input);
-    case "item.create": return menu.createOwnedMenuItem(actor.userId, mutation.input);
-    case "item.patch": return menu.updateOwnedMenuItem(actor.userId, mutation.itemId, mutation.input);
-    case "item.delete": await menu.deleteOwnedMenuItem(actor.userId, mutation.itemId); return null;
+    case "restaurant.patch": return restaurants.updateRestaurant({ ...actor,restaurantId:command.restaurantId }, mutation.input);
+    case "item.create": return menu.createMenuItem({ ...actor,restaurantId:command.restaurantId }, mutation.input);
+    case "item.patch": return menu.updateMenuItem({ ...actor,restaurantId:command.restaurantId }, mutation.itemId, mutation.input);
+    case "item.delete": await menu.deleteMenuItem({ ...actor,restaurantId:command.restaurantId }, mutation.itemId); return null;
     case "rebuild": return null;
   }
 }

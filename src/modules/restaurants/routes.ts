@@ -1,10 +1,11 @@
 import type { FastifyInstance } from "fastify";
 
 import { validateWithSchema } from "../../lib/validation.js";
-import { requireAuth } from "../../plugins/auth.js";
+import { actorFromAuth, requireAuth } from "../../plugins/auth.js";
 import type { RestaurantRepository } from "./repository.js";
 import {
   onboardingBodySchema,
+  restaurantParamsSchema,
   updateOwnedRestaurantBodySchema,
 } from "./schemas.js";
 import { createRestaurantService } from "./service.js";
@@ -39,7 +40,17 @@ export async function registerRestaurantRoutes(
     { config: { rateLimitGroup: "auth" }, preHandler: authenticated },
     async (request) => {
       const body = validateWithSchema(updateOwnedRestaurantBodySchema, request.body);
-      return service.updateOwnedRestaurant(request.auth!.userId, body);
+      return service.updateOwnedRestaurant(request.auth!.userId, body,actorFromAuth(request.auth!));
     },
   );
+
+  app.get('/restaurants/:restaurantId',{ config:{ rateLimitGroup:'auth' },preHandler:authenticated },async request=>{
+    const { restaurantId }=validateWithSchema(restaurantParamsSchema,request.params);
+    return service.getRestaurant({ userId:request.auth!.userId,restaurantId });
+  });
+  app.patch('/restaurants/:restaurantId',{ config:{ rateLimitGroup:'auth' },preHandler:authenticated },async request=>{
+    const { restaurantId }=validateWithSchema(restaurantParamsSchema,request.params);
+    const body=validateWithSchema(updateOwnedRestaurantBodySchema,request.body);
+    return service.updateRestaurant({ ...actorFromAuth(request.auth!),restaurantId },body);
+  });
 }

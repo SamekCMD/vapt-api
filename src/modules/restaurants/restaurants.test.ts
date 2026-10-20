@@ -83,6 +83,20 @@ const onboardingInput = {
   dishPrice: "29.90",
 };
 
+function testRestaurantRepository(overrides:Partial<RestaurantRepository>):RestaurantRepository {
+  const unexpected=async()=>{ throw new Error('Unexpected repository operation in this unit fixture'); };
+  return { resolveLegacyRestaurant:unexpected,getRestaurant:unexpected,updateRestaurant:unexpected,
+    createOwnedRestaurant:unexpected,findOwnedRestaurant:unexpected,updateOwnedRestaurant:unexpected,...overrides };
+}
+
+test('legacy restaurant writes require internal session metadata, never owner-only SQL',async()=>{
+  let queries=0;
+  const database={ async query(){ queries++; throw new Error('Unexpected SQL'); },
+    async connect(){ queries++; throw new Error('Unexpected transaction'); } } as unknown as Database;
+  await assert.rejects(createRestaurantRepository(database).updateOwnedRestaurant(ownerId,{ name:'Sem sessão' }),{ statusCode:401 });
+  assert.equal(queries,0);
+});
+
 test("onboarding accepts only the four server-owned contract fields", () => {
   assert.equal(onboardingBodySchema.safeParse(onboardingInput).success, true);
 
@@ -132,7 +146,7 @@ test("restaurant patch has an explicit allow-list and rejects tenant, plan, and 
   assert.equal(updateOwnedRestaurantBodySchema.safeParse({}).success, false);
 });
 
-test("onboarding commits the restaurant and first dish in one transaction", async () => {
+test("baseline001-009: onboarding commits the restaurant and first dish in one transaction", async () => {
   const events: string[] = [];
   const calls: Array<{ sql: string; values: unknown[] | undefined }> = [];
   const client = {
@@ -167,7 +181,7 @@ test("onboarding commits the restaurant and first dish in one transaction", asyn
   assert.deepEqual(created, restaurantDto);
 });
 
-test("a first-dish failure rolls the entire onboarding transaction back", async () => {
+test("baseline001-009: a first-dish failure rolls the entire onboarding transaction back", async () => {
   const events: string[] = [];
   const client = {
     async query(sql: string) {
@@ -203,7 +217,7 @@ test("a first-dish failure rolls the entire onboarding transaction back", async 
   assert.deepEqual(events, ["CONNECT", "BEGIN", "INSERT", "INSERT", "ROLLBACK", "RELEASE"]);
 });
 
-test("duplicate owner or slug conflicts are exposed as a safe 409", async () => {
+test("baseline001-009: duplicate owner or slug conflicts are exposed as a safe 409", async () => {
   const client = {
     async query(sql: string) {
       if (/insert into public\.restaurants/i.test(sql)) {
@@ -237,33 +251,9 @@ test("duplicate owner or slug conflicts are exposed as a safe 409", async () => 
   );
 });
 
-test("read and patch always scope the restaurant by the authenticated owner", async () => {
-  const calls: Array<{ sql: string; values: unknown[] | undefined }> = [];
-  const database = {
-    async query(sql: string, values?: unknown[]) {
-      calls.push({ sql, values });
-      return { rows: [rawRestaurant] };
-    },
-  } as unknown as Queryable;
-  const repository = createRestaurantRepository(database as Database);
-
-  const found = await repository.findOwnedRestaurant(ownerId);
-  const updated = await repository.updateOwnedRestaurant(ownerId, {
-    name: "Novo nome",
-    deliveryEnabled: true,
-  });
-
-  assert.deepEqual(found, restaurantDto);
-  assert.match(calls[0]?.sql ?? "", /where owner_id = \$1::uuid/i);
-  assert.deepEqual(calls[0]?.values, [ownerId]);
-  assert.match(calls[1]?.sql ?? "", /set name = \$1, delivery_enabled = \$2/i);
-  assert.match(calls[1]?.sql ?? "", /where owner_id = \$3::uuid/i);
-  assert.deepEqual(calls[1]?.values, ["Novo nome", true, ownerId]);
-  assert.deepEqual(updated, restaurantDto);
-});
 
 test("service returns 404 when the authenticated owner has no restaurant", async () => {
-  const repository: RestaurantRepository = {
+  const repository = testRestaurantRepository({
     async createOwnedRestaurant() {
       return restaurantDto;
     },
@@ -273,7 +263,7 @@ test("service returns 404 when the authenticated owner has no restaurant", async
     async updateOwnedRestaurant() {
       return null;
     },
-  };
+  });
   const service = createRestaurantService(repository);
 
   await assert.rejects(() => service.getOwnedRestaurant(ownerId), (error: unknown) => {
@@ -293,7 +283,7 @@ test("service returns 404 when the authenticated owner has no restaurant", async
 
 test("authenticated onboarding derives owner from the session and returns 201", async () => {
   let receivedOwnerId: string | null = null;
-  const repository: RestaurantRepository = {
+  const repository = testRestaurantRepository({
     async createOwnedRestaurant(userId) {
       receivedOwnerId = userId;
       return restaurantDto;
@@ -304,7 +294,7 @@ test("authenticated onboarding derives owner from the session and returns 201", 
     async updateOwnedRestaurant() {
       return restaurantDto;
     },
-  };
+  });
   const app = Fastify({ logger: false });
   registerAuthDecorator(app, async () => ({
     userId: ownerId,
@@ -331,4 +321,25 @@ test("authenticated onboarding derives owner from the session and returns 201", 
   });
   assert.equal(rejected.statusCode, 400);
   await app.close();
+});
+
+test('explicit restaurant routes capture path tenant and verified session, never a body owner', async () => {
+  const captured: unknown[] = [];
+  const sessionId = '20000000-0000-4000-8000-000000000002';
+  const sessionExpiresAt = Date.now()+60_000;
+  const repository = {
+    async getRestaurant(scope: unknown) { captured.push(scope); return restaurantDto; },
+    async updateRestaurant(scope: unknown) { captured.push(scope); return restaurantDto; },
+  } as unknown as RestaurantRepository;
+  const app = Fastify({ logger:false });
+  registerAuthDecorator(app,async()=>({ userId:ownerId,email:null,role:'authenticated',sessionId,sessionExpiresAt }));
+  registerErrorHandler(app); await registerRestaurantRoutes(app,repository);
+  try {
+    const read = await app.inject({ method:'GET',url:`/restaurants/${restaurantId}` });
+    assert.equal(read.statusCode,200);
+    const write = await app.inject({ method:'PATCH',url:`/restaurants/${restaurantId}`,payload:{ name:'Nome explícito' } });
+    assert.equal(write.statusCode,200);
+    assert.deepEqual(captured,[{ userId:ownerId,restaurantId },{ userId:ownerId,restaurantId,sessionId,sessionExpiresAt }]);
+    assert.equal((await app.inject({ method:'PATCH',url:`/restaurants/${restaurantId}`,payload:{ name:'Forjado',ownerId } })).statusCode,400);
+  } finally { await app.close(); }
 });

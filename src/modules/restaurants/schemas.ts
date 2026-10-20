@@ -8,6 +8,8 @@ const slugSchema = z.string()
 
 const nullableText = (max: number) => z.string().trim().max(max).nullable();
 
+export const restaurantParamsSchema=z.object({ restaurantId:z.string().uuid().transform(id=>id.toLowerCase()) }).strict();
+
 export const onboardingBodySchema = z.object({
   restaurantName: z.string().trim().min(2).max(80),
   slug: slugSchema,

@@ -88,6 +88,21 @@ test("image upload uses the same owner-scoped coordinator and sends no cookie/em
   assert.equal(value.authReads(), 1); assert.equal(value.legacyWrites(), 0);
 });
 
+test('scoped public writes cannot bypass the catalog while the dependent admission port is pending',async()=>{
+  const value=fixture();
+  for(const [path,method,body] of [
+    [`/restaurants/${restaurantId}`,'PATCH',{ name:'Scoped' }],
+    [`/restaurants/${restaurantId}/menu-items`,'POST',menuInput],
+    [`/restaurants/${restaurantId}/menu-items/${sessionId}`,'PATCH',{ available:false }],
+    [`/restaurants/${restaurantId}/menu-items/${sessionId}`,'DELETE',undefined],
+  ] as const) {
+    const response=await value.request(path,method,body);
+    assert.equal(response.status,503);
+    assert.deepEqual(await response.json(),{ error:{ code:'catalog_scoped_writer_pending',message:'Scoped catalog writer unavailable' } });
+  }
+  assert.equal(value.legacyWrites(),0); assert.deepEqual(value.commands,[]);
+});
+
 test("manual image reconciliation is owner-only, rate-limited, writer-only and returns a bounded summary", async () => {
   const value = fixture(); const path = `/restaurants/${restaurantId}/menu-images/reconcile`;
   const response = await value.request(path, "POST");

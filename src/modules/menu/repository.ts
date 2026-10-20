@@ -1,8 +1,9 @@
 import type { PoolClient } from "pg";
 import type { Database, Queryable } from "../../lib/database.js";
-import { withTransaction } from "../../lib/database.js";
 import { AppError } from "../../lib/errors.js";
 import type { MenuItemDto, MenuVariationDto } from "../business/contracts.js";
+import type { RestaurantScope, RestaurantWriteScope, TenantActor } from "../tenancy/contracts.js";
+import { authorizeRestaurant, legacyWriteActor, resolveLegacyRestaurant, withRestaurantWrite } from "../tenancy/authorization.js";
 import type {
   CreateMenuItemBody,
   MenuVariationInput,
@@ -29,14 +30,15 @@ type MenuItemRow = {
 };
 
 export interface MenuRepository {
-  listOwnedMenuItems(userId: string): Promise<MenuItemDto[]>;
-  createOwnedMenuItem(userId: string, input: CreateMenuItemBody): Promise<MenuItemDto | null>;
-  updateOwnedMenuItem(
-    userId: string,
-    itemId: string,
-    patch: UpdateMenuItemBody,
-  ): Promise<MenuItemDto | null>;
-  deleteOwnedMenuItem(userId: string, itemId: string): Promise<boolean>;
+  resolveLegacyRestaurant(userId:string):Promise<RestaurantScope>;
+  listMenuItems(scope:RestaurantScope):Promise<MenuItemDto[]>;
+  createMenuItem(scope:RestaurantWriteScope,input:CreateMenuItemBody):Promise<MenuItemDto|null>;
+  updateMenuItem(scope:RestaurantWriteScope,itemId:string,patch:UpdateMenuItemBody):Promise<MenuItemDto|null>;
+  deleteMenuItem(scope:RestaurantWriteScope,itemId:string):Promise<boolean>;
+  listOwnedMenuItems(userId:string):Promise<MenuItemDto[]>;
+  createOwnedMenuItem(userId:string,input:CreateMenuItemBody,actor?:TenantActor):Promise<MenuItemDto|null>;
+  updateOwnedMenuItem(userId:string,itemId:string,patch:UpdateMenuItemBody,actor?:TenantActor):Promise<MenuItemDto|null>;
+  deleteOwnedMenuItem(userId:string,itemId:string,actor?:TenantActor):Promise<boolean>;
 }
 
 const ITEM_SELECT = `
@@ -116,248 +118,107 @@ function storageFailure(): AppError {
   return new AppError(500, "internal_error", "Failed to persist menu data");
 }
 
-async function loadOwnedItem(
-  queryable: Queryable,
-  userId: string,
-  itemId: string,
-): Promise<MenuItemDto | null> {
-  const result = await queryable.query<MenuItemRow>(
-    `select ${ITEM_SELECT}
-    from public.menu_items as item
-    join public.restaurants as restaurant
-      on restaurant.id = item.restaurant_id
-    left join public.menu_item_variations as variation
-      on variation.menu_item_id = item.id
-    where item.id = $1::uuid
-      and restaurant.owner_id = $2::uuid
-    group by item.id
-    limit 1`,
-    [itemId, userId],
-  );
-  const row = result.rows[0];
-  return row ? mapMenuItem(row) : null;
-}
+const ACTIVE_MEMBER = `exists(select 1 from public.restaurants restaurant
+  join public.organization_members member on member.organization_id=restaurant.organization_id
+  where restaurant.id=item.restaurant_id and member.user_id=$3::uuid and member.status='active')`;
 
-async function replaceVariations(
-  queryable: Queryable,
-  itemId: string,
-  variations: MenuVariationInput[],
-): Promise<void> {
-  await queryable.query(
-    `delete from public.menu_item_variations
-    where menu_item_id = $1::uuid`,
-    [itemId],
-  );
+async function loadItem(q:Queryable,scope:RestaurantScope,itemId:string):Promise<MenuItemDto|null> {
+  const result=await q.query<MenuItemRow>(`select ${ITEM_SELECT} from public.menu_items item
+    left join public.menu_item_variations variation on variation.menu_item_id=item.id
+    where item.id=$1::uuid and item.restaurant_id=$2::uuid and ${ACTIVE_MEMBER}
+    group by item.id`,[itemId,scope.restaurantId,scope.userId]);
+  return result.rows[0]?mapMenuItem(result.rows[0]):null;
+}
+async function insertVariations(q:Queryable,scope:RestaurantScope,itemId:string,variations:MenuVariationInput[]) {
   for (const variation of variations) {
-    await queryable.query(
-      `insert into public.menu_item_variations (
-        menu_item_id,
-        name,
-        options,
-        required
-      ) values ($1::uuid, $2::text, $3::text[], $4::boolean)`,
-      [itemId, variation.name, variation.options, variation.required],
-    );
+    const result=await q.query(`insert into public.menu_item_variations (menu_item_id,name,options,required)
+      select id,$3::text,$4::text[],$5::boolean from public.menu_items
+      where id=$1::uuid and restaurant_id=$2::uuid`,
+    [itemId,scope.restaurantId,variation.name,variation.options,variation.required]);
+    if(result.rowCount!==1) throw storageFailure();
   }
 }
-
-export function createMenuRepository(database: Database, options: { transaction?: PoolClient } = {}): MenuRepository {
-  const queryable = options.transaction ?? database;
-  const inTransaction = <T>(work: (client: PoolClient) => Promise<T>): Promise<T> =>
-    options.transaction ? work(options.transaction) : withTransaction(database, work);
-  return {
-    async listOwnedMenuItems(userId) {
+export function createMenuRepository(database:Database,options:{ transaction?:PoolClient }={}):MenuRepository {
+  const q=options.transaction??database;
+  const guarded=async<T>(scope:RestaurantWriteScope,work:(client:PoolClient)=>Promise<T>)=>{
+    try { return await withRestaurantWrite(database,scope,'restaurant.manage',work,options); }
+    catch(error) { if(error instanceof AppError) throw error; throw storageFailure(); }
+  };
+  const repository:MenuRepository={
+    resolveLegacyRestaurant(userId) { return resolveLegacyRestaurant(q,userId); },
+    async listMenuItems(scope) {
       try {
-        const result = await queryable.query<MenuItemRow>(
-          `select ${ITEM_SELECT}
-          from public.menu_items as item
-          join public.restaurants as restaurant
-            on restaurant.id = item.restaurant_id
-          left join public.menu_item_variations as variation
-            on variation.menu_item_id = item.id
-          where restaurant.owner_id = $1::uuid
-          group by item.id
-          order by item.created_at desc, item.id desc`,
-          [userId],
-        );
+        await authorizeRestaurant(q,scope,'restaurant.read');
+        const result=await q.query<MenuItemRow>(`select ${ITEM_SELECT} from public.menu_items item
+          left join public.menu_item_variations variation on variation.menu_item_id=item.id
+          where item.restaurant_id=$1::uuid and exists(select 1 from public.restaurants restaurant
+            join public.organization_members member on member.organization_id=restaurant.organization_id
+            where restaurant.id=item.restaurant_id and member.user_id=$2::uuid and member.status='active')
+          group by item.id order by item.created_at desc,item.id desc`,[scope.restaurantId,scope.userId]);
         return result.rows.map(mapMenuItem);
-      } catch {
-        throw storageFailure();
-      }
+      } catch(error) { if(error instanceof AppError) throw error; throw storageFailure(); }
     },
-
-    async createOwnedMenuItem(userId, input) {
-      try {
-        return await inTransaction(async (client) => {
-          const restaurantResult = await client.query<{ id: string }>(
-            `select restaurant.id
-            from public.restaurants as restaurant
-            where restaurant.owner_id = $1::uuid
-            limit 1
-            for update`,
-            [userId],
-          );
-          const restaurant = restaurantResult.rows[0];
-          if (!restaurant) return null;
-
-          if (input.isChefSuggestion) {
-            await client.query(
-              `update public.menu_items
-              set is_chef_suggestion = false, updated_at = now()
-              where restaurant_id = $1::uuid
-                and is_chef_suggestion = true`,
-              [restaurant.id],
-            );
-          }
-
-          const itemResult = await client.query<{ id: string }>(
-            `insert into public.menu_items (
-              restaurant_id,
-              name,
-              price,
-              description,
-              category,
-              available,
-              image_url,
-              available_from,
-              available_until,
-              badge,
-              is_chef_suggestion,
-              prep_time_minutes
-            ) values (
-              $1::uuid, $2::text, $3::numeric, $4::text, $5::text, $6::boolean,
-              $7::text, $8::text, $9::text, $10::text, $11::boolean, $12::integer
-            )
-            returning id`,
-            [
-              restaurant.id,
-              input.name,
-              input.price,
-              input.description,
-              input.category,
-              input.available,
-              input.imageUrl,
-              input.availableFrom,
-              input.availableUntil,
-              input.badge,
-              input.isChefSuggestion,
-              input.prepTimeMinutes,
-            ],
-          );
-          const item = itemResult.rows[0];
-          if (!item) throw storageFailure();
-
-          for (const variation of input.variations) {
-            await client.query(
-              `insert into public.menu_item_variations (
-                menu_item_id,
-                name,
-                options,
-                required
-              ) values ($1::uuid, $2::text, $3::text[], $4::boolean)`,
-              [item.id, variation.name, variation.options, variation.required],
-            );
-          }
-
-          const created = await loadOwnedItem(client, userId, item.id);
-          if (!created) throw storageFailure();
-          return created;
-        });
-      } catch (error) {
-        if (error instanceof AppError) throw error;
-        throw storageFailure();
-      }
+    async createMenuItem(scope,input) {
+      return guarded(scope,async client=>{
+        if(input.isChefSuggestion) await client.query(`update public.menu_items set is_chef_suggestion=false,updated_at=now()
+          where restaurant_id=$1::uuid and is_chef_suggestion=true`,[scope.restaurantId]);
+        const result=await client.query<{id:string}>(`insert into public.menu_items
+          (restaurant_id,name,price,description,category,available,image_url,available_from,available_until,badge,is_chef_suggestion,prep_time_minutes)
+          values($1::uuid,$2::text,$3::numeric,$4::text,$5::text,$6::boolean,$7::text,$8::text,$9::text,$10::text,$11::boolean,$12::integer)
+          returning id`,[scope.restaurantId,input.name,input.price,input.description,input.category,input.available,
+          input.imageUrl,input.availableFrom,input.availableUntil,input.badge,input.isChefSuggestion,input.prepTimeMinutes]);
+        const item=result.rows[0]; if(!item) throw storageFailure();
+        await insertVariations(client,scope,item.id,input.variations);
+        const created=await loadItem(client,scope,item.id); if(!created) throw storageFailure(); return created;
+      });
     },
-
-    async updateOwnedMenuItem(userId, itemId, patch) {
-      try {
-        return await inTransaction(async (client) => {
-          const ownership = await client.query<{ restaurant_id: string }>(
-            `select item.restaurant_id
-            from public.menu_items as item
-            join public.restaurants as restaurant
-              on restaurant.id = item.restaurant_id
-            where item.id = $1::uuid
-              and restaurant.owner_id = $2::uuid
-            for update of item, restaurant`,
-            [itemId, userId],
-          );
-          const ownedItem = ownership.rows[0];
-          if (!ownedItem) return null;
-
-          if (patch.isChefSuggestion === true) {
-            await client.query(
-              `update public.menu_items
-              set is_chef_suggestion = false, updated_at = now()
-              where restaurant_id = $1::uuid
-                and id <> $2::uuid
-                and is_chef_suggestion = true`,
-              [ownedItem.restaurant_id, itemId],
-            );
-          }
-
-          const fieldEntries = Object.entries(patch).filter(
-            ([key]) => key !== "variations",
-          ) as Array<[
-            Exclude<keyof UpdateMenuItemBody, "variations">,
-            Exclude<UpdateMenuItemBody[keyof UpdateMenuItemBody], MenuVariationInput[]>,
-          ]>;
-          const assignments = fieldEntries.map(
-            ([key], index) => `${PATCH_COLUMNS[key]} = $${index + 1}`,
-          );
-          const values = fieldEntries.map(([, value]) => value);
-          values.push(itemId, userId);
-          if (assignments.length > 0) {
-            await client.query(
-              `update public.menu_items as item
-              set ${assignments.join(", ")}, updated_at = now()
-              from public.restaurants as restaurant
-              where item.id = $${fieldEntries.length + 1}::uuid
-                and restaurant.id = item.restaurant_id
-                and restaurant.owner_id = $${fieldEntries.length + 2}::uuid`,
-              values,
-            );
-          } else {
-            await client.query(
-              `update public.menu_items as item
-              set updated_at = now()
-              from public.restaurants as restaurant
-              where item.id = $1::uuid
-                and restaurant.id = item.restaurant_id
-                and restaurant.owner_id = $2::uuid`,
-              [itemId, userId],
-            );
-          }
-
-          if (patch.variations !== undefined) {
-            await replaceVariations(client, itemId, patch.variations);
-          }
-
-          const updated = await loadOwnedItem(client, userId, itemId);
-          if (!updated) throw storageFailure();
-          return updated;
-        });
-      } catch (error) {
-        if (error instanceof AppError) throw error;
-        throw storageFailure();
-      }
+    async updateMenuItem(scope,itemId,patch) {
+      return guarded(scope,async client=>{
+        const found=await client.query(`select id from public.menu_items
+          where id=$1::uuid and restaurant_id=$2::uuid for update`,[itemId,scope.restaurantId]);
+        if(!found.rows[0]) return null;
+        if(patch.isChefSuggestion===true) await client.query(`update public.menu_items
+          set is_chef_suggestion=false,updated_at=now() where restaurant_id=$1::uuid and id<>$2::uuid and is_chef_suggestion=true`,
+        [scope.restaurantId,itemId]);
+        const entries=Object.entries(patch).filter(([key])=>key!=='variations') as [keyof typeof PATCH_COLUMNS,unknown][];
+        if(entries.some(([key])=>!Object.hasOwn(PATCH_COLUMNS,key))) throw new AppError(400,'invalid_request','Invalid request');
+        const n=entries.length, values=entries.map(([,value])=>value);
+        values.push(itemId,scope.restaurantId,scope.userId);
+        const assignments=entries.map(([key],i)=>`${PATCH_COLUMNS[key]}=$${i+1}`);
+        await client.query(`update public.menu_items item set ${[...assignments,'updated_at=now()'].join(',')}
+          where item.id=$${n+1}::uuid and item.restaurant_id=$${n+2}::uuid
+          and exists(select 1 from public.restaurants restaurant
+            join public.organization_members member on member.organization_id=restaurant.organization_id
+            where restaurant.id=item.restaurant_id and member.user_id=$${n+3}::uuid and member.status='active')`,values);
+        if(patch.variations!==undefined) {
+          await client.query(`delete from public.menu_item_variations variation using public.menu_items item
+            where variation.menu_item_id=item.id and item.id=$1::uuid and item.restaurant_id=$2::uuid`,[itemId,scope.restaurantId]);
+          await insertVariations(client,scope,itemId,patch.variations);
+        }
+        const updated=await loadItem(client,scope,itemId); if(!updated) throw storageFailure(); return updated;
+      });
     },
-
-    async deleteOwnedMenuItem(userId, itemId) {
-      try {
-        const result = await queryable.query<{ id: string }>(
-          `delete from public.menu_items as item
-          using public.restaurants as restaurant
-          where item.id = $1::uuid
-            and restaurant.id = item.restaurant_id
-            and restaurant.owner_id = $2::uuid
-          returning item.id`,
-          [itemId, userId],
-        );
+    async deleteMenuItem(scope,itemId) {
+      return guarded(scope,async client=>{
+        const result=await client.query(`delete from public.menu_items item
+          where item.id=$1::uuid and item.restaurant_id=$2::uuid and ${ACTIVE_MEMBER} returning item.id`,
+        [itemId,scope.restaurantId,scope.userId]);
         return Boolean(result.rows[0]);
-      } catch {
-        throw storageFailure();
-      }
+      });
+    },
+    async listOwnedMenuItems(userId) { return repository.listMenuItems(await repository.resolveLegacyRestaurant(userId)); },
+    async createOwnedMenuItem(userId,input,actor) {
+      const verified=legacyWriteActor(userId,actor);
+      return repository.createMenuItem({...verified,...await repository.resolveLegacyRestaurant(userId)},input);
+    },
+    async updateOwnedMenuItem(userId,itemId,patch,actor) {
+      const verified=legacyWriteActor(userId,actor);
+      return repository.updateMenuItem({...verified,...await repository.resolveLegacyRestaurant(userId)},itemId,patch);
+    },
+    async deleteOwnedMenuItem(userId,itemId,actor) {
+      const verified=legacyWriteActor(userId,actor);
+      return repository.deleteMenuItem({...verified,...await repository.resolveLegacyRestaurant(userId)},itemId);
     },
   };
+  return repository;
 }

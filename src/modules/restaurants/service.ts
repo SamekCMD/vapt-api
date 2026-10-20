@@ -1,4 +1,5 @@
 import { AppError } from "../../lib/errors.js";
+import type { RestaurantScope, RestaurantWriteScope, TenantActor } from '../tenancy/contracts.js';
 import type { RestaurantRepository } from "./repository.js";
 import type {
   OnboardingBody,
@@ -11,6 +12,13 @@ function notFound(): AppError {
 
 export function createRestaurantService(repository: RestaurantRepository) {
   return {
+    resolveLegacyRestaurant(userId:string) { return repository.resolveLegacyRestaurant(userId); },
+    async getRestaurant(scope:RestaurantScope) {
+      const restaurant=await repository.getRestaurant(scope); if (!restaurant) throw notFound(); return restaurant;
+    },
+    async updateRestaurant(scope:RestaurantWriteScope,patch:UpdateOwnedRestaurantBody) {
+      const restaurant=await repository.updateRestaurant(scope,patch); if (!restaurant) throw notFound(); return restaurant;
+    },
     createOwnedRestaurant(userId: string, input: OnboardingBody) {
       return repository.createOwnedRestaurant(userId, input);
     },
@@ -21,8 +29,8 @@ export function createRestaurantService(repository: RestaurantRepository) {
       return restaurant;
     },
 
-    async updateOwnedRestaurant(userId: string, patch: UpdateOwnedRestaurantBody) {
-      const restaurant = await repository.updateOwnedRestaurant(userId, patch);
+    async updateOwnedRestaurant(userId: string, patch: UpdateOwnedRestaurantBody, actor?:TenantActor) {
+      const restaurant = await repository.updateOwnedRestaurant(userId, patch,actor);
       if (!restaurant) throw notFound();
       return restaurant;
     },

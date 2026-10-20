@@ -3,6 +3,9 @@ import type { Database } from "../../lib/database.js";
 import { withTransaction } from "../../lib/database.js";
 import { AppError } from "../../lib/errors.js";
 import type { RestaurantDto } from "../business/contracts.js";
+import type { BillingPlanStatus, RestaurantScope, RestaurantWriteScope, TenantActor } from '../tenancy/contracts.js';
+import { authorizeRestaurant, legacyWriteActor, resolveLegacyRestaurant, withRestaurantWrite } from '../tenancy/authorization.js';
+import { lockSlugs } from '../tenancy/locks.js';
 import type {
   OnboardingBody,
   UpdateOwnedRestaurantBody,
@@ -23,7 +26,7 @@ type RestaurantRow = {
   font_family: string;
   logo_url: string | null;
   plan_type: "starter" | "pro" | "business";
-  plan_status: "trialing" | "active" | "expired" | "cancelled";
+  plan_status: BillingPlanStatus;
   trial_ends_at: string | Date | null;
   total_tables: number;
   max_tables: number;
@@ -36,11 +39,15 @@ type RestaurantRow = {
 };
 
 export interface RestaurantRepository {
+  resolveLegacyRestaurant(userId:string):Promise<RestaurantScope>;
+  getRestaurant(scope:RestaurantScope):Promise<RestaurantDto|null>;
+  updateRestaurant(scope:RestaurantWriteScope,patch:UpdateOwnedRestaurantBody):Promise<RestaurantDto|null>;
   createOwnedRestaurant(userId: string, input: OnboardingBody): Promise<RestaurantDto>;
   findOwnedRestaurant(userId: string): Promise<RestaurantDto | null>;
   updateOwnedRestaurant(
     userId: string,
     patch: UpdateOwnedRestaurantBody,
+    actor?:TenantActor,
   ): Promise<RestaurantDto | null>;
 }
 
@@ -91,6 +98,9 @@ const PATCH_COLUMNS: Record<keyof UpdateOwnedRestaurantBody, string> = {
   localEnabled: "local_enabled",
   deliveryEnabled: "delivery_enabled",
 };
+
+const SCOPED_COLUMNS = RESTAURANT_COLUMNS.split(',').map(c=>c.trim()).filter(Boolean)
+  .map(c=>`${['plan_type','plan_status','trial_ends_at'].includes(c)?'subscription':'restaurant'}.${c}`).join(',');
 
 function isoString(value: string | Date): string {
   return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
@@ -144,7 +154,41 @@ export function createRestaurantRepository(
   const queryable = options.transaction ?? database;
   const inTransaction = <T>(work: (client: PoolClient) => Promise<T>): Promise<T> =>
     options.transaction ? work(options.transaction) : withTransaction(database, work);
-  return {
+  const repository:RestaurantRepository = {
+    resolveLegacyRestaurant(userId) { return resolveLegacyRestaurant(queryable,userId); },
+    async getRestaurant(scope) {
+      try {
+        await authorizeRestaurant(queryable,scope,'restaurant.read');
+        const result = await queryable.query<RestaurantRow>(`select ${SCOPED_COLUMNS} from public.restaurants restaurant
+          join public.organization_subscriptions subscription on subscription.organization_id=restaurant.organization_id
+          join public.organization_members member on member.organization_id=restaurant.organization_id
+          where restaurant.id=$1::uuid and member.user_id=$2::uuid and member.status='active'`,[scope.restaurantId,scope.userId]);
+        return result.rows[0] ? mapRestaurant(result.rows[0]) : null;
+      } catch(error) { mapStorageError(error); }
+    },
+    async updateRestaurant(scope,patch) {
+      try {
+        return await withRestaurantWrite(database,scope,'restaurant.manage',async client=> {
+          const entries = Object.entries(patch) as [keyof UpdateOwnedRestaurantBody,unknown][];
+          if (!entries.length || entries.some(([key])=>!Object.hasOwn(PATCH_COLUMNS,key))) {
+            throw new AppError(400,'invalid_request','Invalid request');
+          }
+          const values = entries.map(([,value])=>value); values.push(scope.restaurantId,scope.userId);
+          const n = entries.length;
+          const result = await client.query<RestaurantRow>(`update public.restaurants restaurant
+            set ${entries.map(([key],i)=>`${PATCH_COLUMNS[key]}=$${i+1}`).join(',')}
+            from public.organization_subscriptions subscription
+            where restaurant.id=$${n+1}::uuid and subscription.organization_id=restaurant.organization_id
+              and exists(select 1 from public.organization_members member where member.organization_id=restaurant.organization_id
+                and member.user_id=$${n+2}::uuid and member.status='active') returning ${SCOPED_COLUMNS}`,values);
+          return result.rows[0] ? mapRestaurant(result.rows[0]) : null;
+        },{ transaction:options.transaction, beforeSession: async client=> {
+          if (patch.slug === undefined) return;
+          const row = (await client.query<{ slug:string }>('select slug from public.restaurants where id=$1::uuid',[scope.restaurantId])).rows[0];
+          await lockSlugs(client,[...(row?[row.slug]:[]),patch.slug]);
+        } });
+      } catch(error) { mapStorageError(error); }
+    },
     async createOwnedRestaurant(userId, input) {
       try {
         return await inTransaction(async (client) => {
@@ -196,43 +240,17 @@ export function createRestaurantRepository(
 
     async findOwnedRestaurant(userId) {
       try {
-        const result = await queryable.query<RestaurantRow>(
-          `select ${RESTAURANT_COLUMNS}
-          from public.restaurants
-          where owner_id = $1::uuid
-          limit 1`,
-          [userId],
-        );
-        const row = result.rows[0];
-        return row ? mapRestaurant(row) : null;
+        return await repository.getRestaurant(await repository.resolveLegacyRestaurant(userId));
       } catch (error) {
+        if (error instanceof AppError && error.statusCode===404) return null;
         mapStorageError(error);
       }
     },
 
-    async updateOwnedRestaurant(userId, patch) {
-      const entries = Object.entries(patch) as Array<
-        [keyof UpdateOwnedRestaurantBody, UpdateOwnedRestaurantBody[keyof UpdateOwnedRestaurantBody]]
-      >;
-      const assignments = entries.map(
-        ([key], index) => `${PATCH_COLUMNS[key]} = $${index + 1}`,
-      );
-      const values = entries.map(([, value]) => value);
-      values.push(userId);
-
-      try {
-        const result = await queryable.query<RestaurantRow>(
-          `update public.restaurants
-          set ${assignments.join(", ")}, updated_at = now()
-          where owner_id = $${entries.length + 1}::uuid
-          returning ${RESTAURANT_COLUMNS}`,
-          values,
-        );
-        const row = result.rows[0];
-        return row ? mapRestaurant(row) : null;
-      } catch (error) {
-        mapStorageError(error);
-      }
+    async updateOwnedRestaurant(userId, patch, actor) {
+      const verified = legacyWriteActor(userId,actor);
+      return repository.updateRestaurant({ ...verified,...await repository.resolveLegacyRestaurant(userId) },patch);
     },
   };
+  return repository;
 }

@@ -10,6 +10,7 @@ const owner = "11111111-1111-4111-8111-111111111111";
 const restaurant = "22222222-2222-4222-8222-222222222222";
 const operation = "33333333-3333-4333-8333-333333333333";
 const session = "44444444-4444-4444-8444-444444444444";
+const organization = '55555555-5555-4555-8555-555555555555';
 const command: CatalogCommand = { operationId: operation, restaurantId: restaurant,
   actor: { userId: owner, sessionId: session, sessionExpiresAt: 4_000_000_000_000 },
   mutation: { type: "restaurant.patch", input: { name: "Novo bistrô", cnpj: "synthetic-private" } } };
@@ -37,7 +38,7 @@ function databaseFixture(options: { empty?: boolean; restaurantId?: string } = {
     description: null, category: "Pratos", available: true, image_url: null, available_from: null,
     available_until: null, badge: null, is_chef_suggestion: false, prep_time_minutes: null,
     created_at: "2026-10-15T00:00:00Z", updated_at: "2026-10-15T00:00:00Z", variations: [] });
-  const row = () => ({ id: fixtureRestaurant, owner_id: owner, name, slug, cnpj: "synthetic-private",
+  const row = () => ({ id: fixtureRestaurant, organization_id:organization, owner_id: owner, name, slug, cnpj: "synthetic-private",
     whatsapp: null, address: null, phone: null, hours: null, description: oversized ? "é".repeat(4_194_304) : null,
     primary_color: "#123456", secondary_color: "#654321", font_family: "modern", logo_url: null,
     plan_type: "starter", plan_status: "active", trial_ends_at: null, total_tables: 1, max_tables: 1,
@@ -64,6 +65,10 @@ function databaseFixture(options: { empty?: boolean; restaurantId?: string } = {
           previous_slug: values[7], expires_at: new Date("2100-01-01") };
         return { rows: [] };
       }
+      if(sql.startsWith('select r.organization_id,m.role from public.restaurants r')) {
+        assert.deepEqual(values,[fixtureRestaurant,owner]);
+        return { rows:exists?[{ organization_id:organization,role:'owner' }]:[] };
+      }
       if (/update public\.restaurants/i.test(sql)) { mutations++; name = values[0] as string; return { rows: [row()] }; }
       if (sql.includes("insert into public.restaurants")) {
         assert.equal(values[3], fixtureRestaurant, "onboarding inserts its preallocated UUID");
@@ -72,8 +77,8 @@ function databaseFixture(options: { empty?: boolean; restaurantId?: string } = {
       if (sql.includes("insert into public.menu_items")) { mutations++; item = itemRow(); return { rows: [{ id: session }] }; }
       if (sql.includes("delete from public.menu_items")) { const deleted = item; item = null; mutations++;
         return { rows: deleted ? [{ id: session }] : [] }; }
-      if (sql.includes("from public.restaurants")) return { rows: exists ? [row()] : [] };
       if (sql.includes("from public.menu_items")) return { rows: item ? [item] : [] };
+      if (sql.includes("from public.restaurants")) return { rows: exists ? [row()] : [] };
       throw new Error(`Unexpected query in test fixture: ${sql.slice(0, 80)}`);
     },
     release() { calls.push({ sql: "RELEASE", values: [] }); },

@@ -1,6 +1,7 @@
 import { AppError } from "../../lib/errors.js";
 import type { MenuRepository } from "./repository.js";
 import type { CreateMenuItemBody, UpdateMenuItemBody } from "./schemas.js";
+import type { RestaurantScope, RestaurantWriteScope, TenantActor } from '../tenancy/contracts.js';
 
 type MenuServiceOptions = {
   publicBaseUrl: URL | null;
@@ -33,26 +34,40 @@ function assertPublicImageUrl(imageUrl: string | null | undefined, publicBaseUrl
 
 export function createMenuService(repository: MenuRepository, options: MenuServiceOptions) {
   return {
+    resolveLegacyRestaurant(userId:string) { return repository.resolveLegacyRestaurant(userId); },
+    listMenuItems(scope:RestaurantScope) { return repository.listMenuItems(scope); },
+    async createMenuItem(scope:RestaurantWriteScope,input:CreateMenuItemBody) {
+      assertPublicImageUrl(input.imageUrl,options.publicBaseUrl);
+      const item=await repository.createMenuItem(scope,input);
+      if(!item) throw new AppError(404,'restaurant_not_found','Restaurant not found'); return item;
+    },
+    async updateMenuItem(scope:RestaurantWriteScope,itemId:string,patch:UpdateMenuItemBody) {
+      assertPublicImageUrl(patch.imageUrl,options.publicBaseUrl);
+      const item=await repository.updateMenuItem(scope,itemId,patch); if(!item) throw notFound(); return item;
+    },
+    async deleteMenuItem(scope:RestaurantWriteScope,itemId:string) {
+      if(!await repository.deleteMenuItem(scope,itemId)) throw notFound();
+    },
     listOwnedMenuItems(userId: string) {
       return repository.listOwnedMenuItems(userId);
     },
 
-    async createOwnedMenuItem(userId: string, input: CreateMenuItemBody) {
+    async createOwnedMenuItem(userId: string, input: CreateMenuItemBody, actor?:TenantActor) {
       assertPublicImageUrl(input.imageUrl, options.publicBaseUrl);
-      const item = await repository.createOwnedMenuItem(userId, input);
+      const item = await repository.createOwnedMenuItem(userId, input,actor);
       if (!item) throw new AppError(404, "restaurant_not_found", "Restaurant not found");
       return item;
     },
 
-    async updateOwnedMenuItem(userId: string, itemId: string, patch: UpdateMenuItemBody) {
+    async updateOwnedMenuItem(userId: string, itemId: string, patch: UpdateMenuItemBody, actor?:TenantActor) {
       assertPublicImageUrl(patch.imageUrl, options.publicBaseUrl);
-      const item = await repository.updateOwnedMenuItem(userId, itemId, patch);
+      const item = await repository.updateOwnedMenuItem(userId, itemId, patch,actor);
       if (!item) throw notFound();
       return item;
     },
 
-    async deleteOwnedMenuItem(userId: string, itemId: string) {
-      if (!await repository.deleteOwnedMenuItem(userId, itemId)) throw notFound();
+    async deleteOwnedMenuItem(userId: string, itemId: string, actor?:TenantActor) {
+      if (!await repository.deleteOwnedMenuItem(userId, itemId,actor)) throw notFound();
     },
   };
 }

@@ -9,6 +9,8 @@ import type { StripeGateway } from "../modules/billing/stripe/types.js";
 import type { OrderService } from "../modules/orders/service.js";
 import type { MenuRepository } from "../modules/menu/repository.js";
 import { createMenuService } from "../modules/menu/service.js";
+import { createRestaurantService } from '../modules/restaurants/service.js';
+import type { RestaurantDto } from '../modules/business/contracts.js';
 import type { CatalogService, FeedbackService, MercadoPagoServices, StripeBillingService, StripeWebhookService, TableSessionService } from "../composition/api-services.js";
 import { createPaymentModule } from "../modules/payments/composition.js";
 import type { PaymentTransactionRecord } from "../modules/payments/repository.js";
@@ -38,8 +40,8 @@ const fakeAuthRuntime: AuthRuntime = {
   async getSession(headers) {
     if (!headers.get("cookie")?.includes("session=owner")) return null;
     return {
-      user: { id: "user-1", email: "owner@vapt.test", name: "Owner" },
-      session: { id: "session-1", userId: "user-1", expiresAt: new Date("2030-01-01") },
+      user: { id: "20000000-0000-4000-8000-000000000001", email: "owner@vapt.test", name: "Owner" },
+      session: { id: "20000000-0000-4000-8000-000000000002", userId: "20000000-0000-4000-8000-000000000001", expiresAt: new Date("2030-01-01") },
     };
   },
   async close() {},
@@ -99,29 +101,62 @@ const fakeTableSessions = {
   },
 } as TableSessionService;
 const fakeMenu = createMenuService({
+  async resolveLegacyRestaurant(userId:string) { return { userId,restaurantId:"10000000-0000-4000-8000-000000000001" }; },
+  async listMenuItems(scope:{userId:string;restaurantId:string}) {
+    if(scope.restaurantId!=="10000000-0000-4000-8000-000000000001") throw new AppError(403,"forbidden","Forbidden"); return [];
+  },
+  async createMenuItem() { return null; },
+  async updateMenuItem() { return null; },
+  async deleteMenuItem(scope:{userId:string;restaurantId:string},itemId:string) {
+    return scope.userId==="20000000-0000-4000-8000-000000000001" && scope.restaurantId==="10000000-0000-4000-8000-000000000001"
+      && itemId==="10000000-0000-4000-8000-000000000021";
+  },
   async listOwnedMenuItems() { return []; },
   async createOwnedMenuItem() { return null; },
   async updateOwnedMenuItem() { return null; },
   async deleteOwnedMenuItem(userId: string, itemId: string) {
-    return userId === "user-1" && itemId === "10000000-0000-4000-8000-000000000021";
+    return userId === "20000000-0000-4000-8000-000000000001" && itemId === "10000000-0000-4000-8000-000000000021";
   },
 } satisfies MenuRepository, { publicBaseUrl: null });
+const fixtureRestaurant:RestaurantDto={
+  id:'10000000-0000-4000-8000-000000000001',name:'Restaurante fixture',slug:'restaurante-fixture',
+  cnpj:null,whatsapp:null,address:null,phone:null,hours:null,description:null,primaryColor:'#5C8A72',
+  secondaryColor:'#111114',fontFamily:'modern',logoUrl:null,planType:'business',planStatus:'active',trialEndsAt:null,
+  totalTables:1,maxTables:20,paymentMode:'open_tab',maxPendingOrders:3,localEnabled:true,deliveryEnabled:false,
+  onboardingCompleted:true,updatedAt:'2026-10-19T00:00:00Z',
+};
+function assertFixtureScope(scope:{ userId:string;restaurantId:string }) {
+  if(scope.userId!=='20000000-0000-4000-8000-000000000001' || scope.restaurantId!==fixtureRestaurant.id) {
+    throw new AppError(403,'forbidden','Forbidden');
+  }
+}
+const fakeRestaurants=createRestaurantService({
+  async resolveLegacyRestaurant(userId) { assertFixtureScope({ userId,restaurantId:fixtureRestaurant.id }); return { userId,restaurantId:fixtureRestaurant.id }; },
+  async getRestaurant(scope) { assertFixtureScope(scope); return fixtureRestaurant; },
+  async updateRestaurant(scope,patch) { assertFixtureScope(scope); return { ...fixtureRestaurant,...patch }; },
+  async createOwnedRestaurant(userId) { assertFixtureScope({ userId,restaurantId:fixtureRestaurant.id }); return fixtureRestaurant; },
+  async findOwnedRestaurant(userId) { assertFixtureScope({ userId,restaurantId:fixtureRestaurant.id }); return fixtureRestaurant; },
+  async updateOwnedRestaurant(userId,patch,actor) {
+    if(!actor || actor.userId!==userId) throw new AppError(401,'unauthorized','Unauthorized');
+    assertFixtureScope({ userId,restaurantId:fixtureRestaurant.id }); return { ...fixtureRestaurant,...patch };
+  },
+});
 const fakeStripeBilling = {
   async createCheckout(input: { userId: string; restaurantId: string; email: string; idempotencyKey: string }) {
-    if (input.userId !== "user-1" || input.restaurantId !== "10000000-0000-4000-8000-000000000001") {
+    if (input.userId !== "20000000-0000-4000-8000-000000000001" || input.restaurantId !== "10000000-0000-4000-8000-000000000001") {
       throw new AppError(403, "forbidden", "Forbidden");
     }
     if (!input.idempotencyKey) throw new AppError(400, "invalid_request", "A valid Idempotency-Key is required");
     return { checkoutSessionId: "cs_synthetic", url: "https://checkout.stripe.com/synthetic" };
   },
   async createPortal(input: { userId: string; restaurantId: string }) {
-    if (input.userId !== "user-1" || input.restaurantId !== "10000000-0000-4000-8000-000000000001") {
+    if (input.userId !== "20000000-0000-4000-8000-000000000001" || input.restaurantId !== "10000000-0000-4000-8000-000000000001") {
       throw new AppError(403, "forbidden", "Forbidden");
     }
     return { url: "https://billing.stripe.com/synthetic" };
   },
   async getSubscriptionStatus(input: { userId: string; restaurantId: string }) {
-    if (input.userId !== "user-1" || input.restaurantId !== "10000000-0000-4000-8000-000000000001") {
+    if (input.userId !== "20000000-0000-4000-8000-000000000001" || input.restaurantId !== "10000000-0000-4000-8000-000000000001") {
       throw new AppError(403, "forbidden", "Forbidden");
     }
     return { planType: "pro", planStatus: "active" };
@@ -179,7 +214,7 @@ const syntheticR2 = {
 };
 const fakeMenuImages = createMenuImageService({
   assertRestaurantAccess: async ({ userId, restaurantId }) => {
-    if (userId !== "user-1" || restaurantId !== "10000000-0000-4000-8000-000000000001") {
+    if (userId !== "20000000-0000-4000-8000-000000000001" || restaurantId !== "10000000-0000-4000-8000-000000000001") {
       throw new AppError(403, "forbidden", "Forbidden");
     }
   },
@@ -253,6 +288,7 @@ const createFixtureServices = (env: WorkerBindings, context: ExecutionContext) =
     feedback: fakeFeedback,
     tableSessions: fakeTableSessions,
     menu: fakeMenu,
+    restaurants: fakeRestaurants,
     stripeWebhooks: fakeStripeWebhooks,
     stripeBilling: fakeStripeBilling,
     ...(mercadoPagoEnabled ? { mercadoPago: fakeMercadoPago, payments: fakePaymentModule } : {}),
@@ -263,7 +299,7 @@ const createFixtureServices = (env: WorkerBindings, context: ExecutionContext) =
       },
     } } : {}),
     ownershipLookup: async ({ userId, restaurantId }) =>
-      userId === "user-1" && restaurantId === "10000000-0000-4000-8000-000000000001",
+      userId === "20000000-0000-4000-8000-000000000001" && restaurantId === "10000000-0000-4000-8000-000000000001",
   });
 };
 const app = createWorkerApp(createFixtureServices, {

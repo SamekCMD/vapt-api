@@ -80,7 +80,7 @@ test("additive realtime contracts are Worker-only public-rate routes", () => {
 test("route contract covers every enabled Fastify method and path", async () => {
   const app = await buildApp(config, { authRuntime, database, startPaymentReconciliation: false });
   try {
-    assert.equal(ROUTE_CONTRACTS.length, 44);
+    assert.equal(ROUTE_CONTRACTS.length, 50);
     for (const route of ROUTE_CONTRACTS) {
       assert.equal(app.hasRoute({ method: route.method, url: route.path }), true, `${route.method} ${route.path}`);
     }

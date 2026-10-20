@@ -50,6 +50,9 @@ export const menuItemParamsSchema = z.object({
   itemId: z.string().uuid(),
 }).strict();
 
+export const restaurantMenuParamsSchema=z.object({ restaurantId:z.string().uuid().transform(id=>id.toLowerCase()) }).strict();
+export const restaurantMenuItemParamsSchema=restaurantMenuParamsSchema.extend({ itemId:z.string().uuid().transform(id=>id.toLowerCase()) });
+
 export type MenuVariationInput = z.infer<typeof variationSchema>;
 export type CreateMenuItemBody = z.infer<typeof createMenuItemBodySchema>;
 export type UpdateMenuItemBody = z.infer<typeof updateMenuItemBodySchema>;

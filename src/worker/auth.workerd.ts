@@ -37,7 +37,7 @@ test("native auth forwards Fetch requests and protects sessions and ownership", 
     assert.equal(bearerOnly.status, 401);
     const owner = await fixture.fetch(`${base}/auth/me`, { headers: { cookie: "session=owner" } });
     assert.equal(owner.status, 200);
-    assert.deepEqual(await owner.json(), { userId: "user-1", email: "owner@vapt.test", role: "authenticated" });
+    assert.deepEqual(await owner.json(), { userId: "20000000-0000-4000-8000-000000000001", email: "owner@vapt.test", role: "authenticated" });
 
     const allowed = await fixture.fetch(`${base}/auth/restaurants/${ownerRestaurant}/access`, {
       headers: { cookie: "session=owner" },

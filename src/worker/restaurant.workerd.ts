@@ -11,6 +11,12 @@ test("private Worker route inventory requires a session and scopes owner operati
     await server.listen();
     const fixture = server.getWorker("vapt-api-worker-test");
     const routes = [
+      ['GET','/restaurants/10000000-0000-4000-8000-000000000001'],
+      ['PATCH','/restaurants/10000000-0000-4000-8000-000000000001'],
+      ['GET','/restaurants/10000000-0000-4000-8000-000000000001/menu-items'],
+      ['POST','/restaurants/10000000-0000-4000-8000-000000000001/menu-items'],
+      ['PATCH',`/restaurants/10000000-0000-4000-8000-000000000001/menu-items/${uuid}`],
+      ['DELETE',`/restaurants/10000000-0000-4000-8000-000000000001/menu-items/${uuid}`],
       ["POST", "/onboarding"], ["GET", "/restaurants/me"], ["PATCH", "/restaurants/me"],
       ["GET", "/restaurants/me/menu-items"], ["POST", "/restaurants/me/menu-items"],
       ["PATCH", `/restaurants/me/menu-items/${uuid}`], ["DELETE", `/restaurants/me/menu-items/${uuid}`],
@@ -44,6 +50,21 @@ test("private Worker route inventory requires a session and scopes owner operati
       method: "DELETE", headers: { cookie: "session=owner" },
     });
     assert.equal(malformed.status, 400);
+
+    const explicit='/restaurants/10000000-0000-4000-8000-000000000001';
+    const headers={ cookie:'session=owner','content-type':'application/json' };
+    const scopedRead=await fixture.fetch(base+explicit,{ headers });
+    assert.equal(scopedRead.status,200);
+    assert.equal((await scopedRead.json() as { id:string }).id,'10000000-0000-4000-8000-000000000001');
+    const scopedPatch=await fixture.fetch(base+explicit,{ method:'PATCH',headers,body:JSON.stringify({ name:'Nome scoped' }) });
+    assert.equal(scopedPatch.status,200);
+    assert.equal((await scopedPatch.json() as { name:string }).name,'Nome scoped');
+    assert.equal((await fixture.fetch(base+explicit+'/menu-items',{ headers })).status,200);
+    assert.equal((await fixture.fetch(base+explicit+'/menu-items/'+uuid,{ method:'DELETE',headers })).status,204);
+    assert.equal((await fixture.fetch(base+'/restaurants/10000000-0000-4000-8000-000000000002',{ headers })).status,403);
+    assert.equal((await fixture.fetch(base+'/restaurants/10000000-0000-4000-8000-000000000002/menu-items',{ headers })).status,403);
+    assert.equal((await fixture.fetch(base+explicit+'/menu-items/10000000-0000-4000-8000-000000000022',{ method:'DELETE',headers })).status,404);
+    assert.equal((await fixture.fetch(base+explicit,{ method:'PATCH',headers,body:JSON.stringify({ name:'Forjado',ownerId:uuid }) })).status,400);
   } finally {
     await server.close();
   }

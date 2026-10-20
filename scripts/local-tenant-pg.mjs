@@ -94,6 +94,7 @@ try {
   childEnv.TENANT_SCHEMA_ROOT = schemaRoot;
   const tests = ['src/modules/tenancy/schema.pg-integration.ts'];
   if (through !== '009') tests.push('src/modules/tenancy/authorization.pg-integration.ts');
+  if (through !== '009') tests.push('src/modules/tenancy/restaurant-scope.pg-integration.ts');
   const result = await command(process.execPath,
     ['--import', 'tsx', '--test', '--test-concurrency=1', ...tests], childEnv);
   process.stdout.write(result.output);

@@ -31,7 +31,8 @@ export async function requireCatalogActor(context: Context<WorkerHonoEnv>): Prom
     throw new AppError(401, "unauthorized", "Unauthorized");
   }
   const actor = { userId: session.user.id, sessionId: session.session.id, sessionExpiresAt: session.session.expiresAt.getTime() };
-  context.set("auth", { userId: session.user.id, email: session.user.email ?? null, role: "authenticated" });
+  context.set("auth", { userId: session.user.id, email: session.user.email ?? null, role: "authenticated",
+    sessionId:actor.sessionId,sessionExpiresAt:actor.sessionExpiresAt });
   context.set("catalogActor", actor);
   return actor;
 }
