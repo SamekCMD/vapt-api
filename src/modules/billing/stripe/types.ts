@@ -20,7 +20,7 @@ export type StripeCheckoutInput = {
   clientReferenceId: string; successUrl: string; cancelUrl: string;
 };
 export interface StripeGateway {
-  findCustomers(restaurantId: string): Promise<StripeCustomer[]>;
+  findCustomers(organizationId: string): Promise<StripeCustomer[]>;
   getCustomer(id: string): Promise<StripeCustomer>;
   createCustomer(input: { email: string; metadata: StripeMetadata }, idempotencyKey: string): Promise<StripeCustomer>;
   getCheckout(id: string): Promise<StripeCheckoutSession>;

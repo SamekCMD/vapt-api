@@ -43,10 +43,10 @@ export function createStripeGateway(client: Stripe): StripeGateway {
       expiresAt: new Date(value.expires_at * 1000).toISOString() };
   }
   return {
-    findCustomers: (restaurantId) => safe(async () => {
-      const literal = restaurantId.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+    findCustomers: (organizationId) => safe(async () => {
+      const literal = organizationId.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
       const matches = await client.customers.search({
-        query: `metadata['vapt_restaurant_id']:'${literal}'`, limit: 2,
+        query: `metadata['vapt_organization_id']:'${literal}'`, limit: 2,
       });
       if (matches.has_more) throw new AppError(409, "billing_conflict", "Multiple billing Customers found");
       return matches.data.map(customer);

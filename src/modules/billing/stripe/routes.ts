@@ -1,14 +1,8 @@
 import type { FastifyInstance } from "fastify";
 
 import type { AppConfig } from "../../../lib/config.js";
-import { AppError } from "../../../lib/errors.js";
-import {
-  testOwnershipLookup,
-  type OwnershipLookup,
-} from "../../../lib/permissions.js";
 import { validateWithSchema } from "../../../lib/validation.js";
-import { requireAuth } from "../../../plugins/auth.js";
-import { createStripeClient, createStripeGateway } from "./client.js";
+import {actorFromAuth,requireAuth} from "../../../plugins/auth.js";
 import type { StripeGateway } from "./types.js";
 import {
   stripeCheckoutBodySchema,
@@ -21,26 +15,11 @@ import type { StripeBillingStore } from "./repository.js";
 export async function registerStripeBillingRoutes(
   app: FastifyInstance,
   config: AppConfig,
-  ownershipLookup?: OwnershipLookup,
-  repository?: StripeBillingStore,
-  gateway?: StripeGateway,
+  repository:StripeBillingStore,
+  gateway:StripeGateway,
+  resolveOrganization:(input:{userId:string;organizationId?:string;restaurantId?:string},capability:import('../../tenancy/contracts.js').Capability)=>Promise<import('../../tenancy/contracts.js').OrganizationScope>,
 ) {
-  const resolvedOwnershipLookup =
-    ownershipLookup ??
-    (config.nodeEnv === "test"
-      ? testOwnershipLookup
-      : (() => {
-          throw new AppError(500, "internal_error", "Ownership lookup is not configured");
-        })());
-  if (!repository) {
-    throw new AppError(500, "internal_error", "Stripe billing repository is not configured");
-  }
-  const service = createStripeBillingService(
-    gateway ?? createStripeGateway(createStripeClient(config.stripe)),
-    resolvedOwnershipLookup,
-    repository,
-    config,
-  );
+  const service=createStripeBillingService(gateway,repository,config);
 
   app.post(
     "/billing/stripe/checkout",
@@ -54,12 +33,9 @@ export async function registerStripeBillingRoutes(
     async (request) => {
       const body = validateWithSchema(stripeCheckoutBodySchema, request.body);
 
+      const scope=await resolveOrganization({userId:request.auth!.userId,...body},'billing.manage');
       return service.createCheckout({
-        userId: request.auth!.userId,
-        restaurantId: body.restaurantId,
-        email: request.auth!.email ?? (() => {
-          throw new AppError(400, "invalid_request", "Authenticated email is required");
-        })(),
+        ...actorFromAuth(request.auth!),...scope,
         planType: body.planType,
         idempotencyKey: typeof request.headers["idempotency-key"] === "string"
           ? request.headers["idempotency-key"] : "",
@@ -75,7 +51,8 @@ export async function registerStripeBillingRoutes(
     },
     async (request) => {
       const body = validateWithSchema(stripePortalBodySchema, request.body);
-      return service.createPortal({ userId: request.auth!.userId, restaurantId: body.restaurantId });
+      const scope=await resolveOrganization({userId:request.auth!.userId,...body},'billing.manage');
+      return service.createPortal({...actorFromAuth(request.auth!),...scope});
     },
   );
 
@@ -91,10 +68,7 @@ export async function registerStripeBillingRoutes(
     async (request) => {
       const query = validateWithSchema(stripeSubscriptionStatusQuerySchema, request.query);
 
-      return service.getSubscriptionStatus({
-        userId: request.auth!.userId,
-        restaurantId: query.restaurantId,
-      });
+      return service.getSubscriptionStatus(await resolveOrganization({userId:request.auth!.userId,...query},'billing.read'));
     },
   );
 }

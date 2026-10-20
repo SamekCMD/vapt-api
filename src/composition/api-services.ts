@@ -239,7 +239,6 @@ export function createApiServices(config: AppConfig, dependencies: ApiServiceDep
     get stripeBilling() {
       stripeBilling ??= createStripeBillingService(
         this.stripeGateway,
-        this.ownershipLookup,
         createStripeBillingRepository(dependencies.database),
         config,
       );

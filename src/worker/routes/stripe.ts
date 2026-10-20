@@ -1,5 +1,7 @@
 import type { Hono, MiddlewareHandler } from "hono";
 
+import {actorFromAuth} from "../../plugins/auth.js";
+import {resolveBillingOrganization} from "../../modules/billing/stripe/repository.js";
 import { AppError } from "../../lib/errors.js";
 import { validateWithSchema } from "../../lib/validation.js";
 import { constructStripeWebhookEvent, createStripeClient } from "../../modules/billing/stripe/client.js";
@@ -26,12 +28,10 @@ export function registerWorkerStripeRoutes(
   app.post("/billing/stripe/checkout", billingRate, authenticated, async (context) => {
     const body = validateWithSchema(stripeCheckoutBodySchema, await parseWorkerJson(context.req.raw));
     const auth = context.get("auth");
-    if (!auth.email) throw new AppError(400, "invalid_request", "Authenticated email is required");
     const services = await context.get("getServices")();
+    const scope=await resolveBillingOrganization(services.database,{userId:auth.userId,...body},'billing.manage');
     return context.json(await services.stripeBilling.createCheckout({
-      userId: auth.userId,
-      restaurantId: body.restaurantId,
-      email: auth.email,
+      ...actorFromAuth(auth),...scope,
       planType: body.planType,
       idempotencyKey: context.req.header("idempotency-key") ?? "",
     }));
@@ -40,17 +40,15 @@ export function registerWorkerStripeRoutes(
   app.post("/billing/stripe/portal", billingRate, authenticated, async (context) => {
     const body = validateWithSchema(stripePortalBodySchema, await parseWorkerJson(context.req.raw));
     const services = await context.get("getServices")();
-    return context.json(await services.stripeBilling.createPortal({
-      userId: context.get("auth").userId, restaurantId: body.restaurantId,
-    }));
+    const scope=await resolveBillingOrganization(services.database,{userId:context.get('auth').userId,...body},'billing.manage');
+    return context.json(await services.stripeBilling.createPortal({...actorFromAuth(context.get('auth')),...scope}));
   });
 
   app.get("/billing/stripe/subscription", billingRate, authenticated, async (context) => {
     const query = validateWithSchema(stripeSubscriptionStatusQuerySchema, context.req.query());
     const services = await context.get("getServices")();
-    return context.json(await services.stripeBilling.getSubscriptionStatus({
-      userId: context.get("auth").userId, restaurantId: query.restaurantId,
-    }));
+    const scope=await resolveBillingOrganization(services.database,{userId:context.get('auth').userId,...query},'billing.read');
+    return context.json(await services.stripeBilling.getSubscriptionStatus(scope));
   });
 
   app.post("/webhooks/stripe", webhookRate, async (context) => {

@@ -1,4 +1,5 @@
 import {resolveLegacyRestaurant} from "./modules/tenancy/authorization.js";
+import {resolveBillingOrganization} from "./modules/billing/stripe/repository.js";
 import { randomUUID } from "node:crypto";
 import Fastify from "fastify";
 import { Pool } from "pg";
@@ -182,9 +183,9 @@ export async function buildApp(
   await registerStripeBillingRoutes(
     app,
     config,
-    ownershipLookup,
     createStripeBillingRepository(database),
     stripeGateway,
+    (input,capability)=>resolveBillingOrganization(database,input,capability),
   );
   await registerOrderRoutes(app, config, orderRepository);
   if (config.r2) {

@@ -18,21 +18,36 @@ test("Stripe Worker routes protect billing and verify the untouched webhook body
     const ownedRestaurant = "10000000-0000-4000-8000-000000000001";
     const foreignRestaurant = "10000000-0000-4000-8000-000000000002";
     const ownedCheckout = await fixture.fetch(`${base}/billing/stripe/checkout`, {
-      method: "POST", headers: { cookie: "session=owner", "content-type": "application/json", "idempotency-key": "synthetic-checkout" },
+      method: "POST", headers: { cookie: "session=admin", "content-type": "application/json", "idempotency-key": "synthetic-checkout" },
       body: JSON.stringify({ restaurantId: ownedRestaurant, planType: "pro" }),
     });
     assert.equal(ownedCheckout.status, 200);
     const crossTenant = await fixture.fetch(`${base}/billing/stripe/checkout`, {
-      method: "POST", headers: { cookie: "session=owner", "content-type": "application/json", "idempotency-key": "synthetic-checkout" },
+      method: "POST", headers: { cookie: "session=admin", "content-type": "application/json", "idempotency-key": "synthetic-checkout" },
       body: JSON.stringify({ restaurantId: foreignRestaurant, planType: "pro" }),
     });
     assert.equal(crossTenant.status, 403);
     const missingIdempotency = await fixture.fetch(`${base}/billing/stripe/checkout`, {
-      method: "POST", headers: { cookie: "session=owner", "content-type": "application/json" },
+      method: "POST", headers: { cookie: "session=admin", "content-type": "application/json" },
       body: JSON.stringify({ restaurantId: ownedRestaurant, planType: "pro" }),
     });
     assert.equal(missingIdempotency.status, 400);
 
+    const staff = await fixture.fetch(`${base}/billing/stripe/checkout`, {
+      method:"POST",headers:{cookie:"session=owner","content-type":"application/json","idempotency-key":"staff-denied"},
+      body:JSON.stringify({restaurantId:ownedRestaurant,planType:"pro"}),
+    });
+    assert.equal(staff.status,403);
+    const canonical=await fixture.fetch(`${base}/billing/stripe/checkout`,{
+      method:"POST",headers:{cookie:"session=admin","content-type":"application/json","idempotency-key":"canonical"},
+      body:JSON.stringify({organizationId:"30000000-0000-4000-8000-000000000001",planType:"pro"}),
+    });
+    assert.equal(canonical.status,200);
+    const crossed=await fixture.fetch(`${base}/billing/stripe/checkout`,{
+      method:"POST",headers:{cookie:"session=admin","content-type":"application/json","idempotency-key":"crossed"},
+      body:JSON.stringify({restaurantId:ownedRestaurant,organizationId:"30000000-0000-4000-8000-000000000002",planType:"pro"}),
+    });
+    assert.equal(crossed.status,400);
     const raw = JSON.stringify({ id: "evt_synthetic", type: "customer.created", created: 1790500000,
       livemode: false, data: { object: { id: "cus_synthetic", object: "customer" } } }, null, 2);
     const client = new Stripe("sk_test_synthetic", { apiVersion: "2026-08-26.dahlia" });

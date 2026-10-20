@@ -20,7 +20,7 @@ function id(value: unknown): string | null {
 }
 function metadata(value: unknown): Record<string, string> {
   const source = object(value); const safe: Record<string, string> = {};
-  for (const field of ["vapt_restaurant_id", "vapt_owner_id", "vapt_plan_type"]) {
+  for (const field of ["vapt_organization_id", "vapt_billing_contact_user_id", "vapt_restaurant_id", "vapt_owner_id", "vapt_plan_type"]) {
     if (typeof source[field] === "string") safe[field] = source[field];
   }
   return safe;
@@ -86,13 +86,15 @@ export function createStripeWebhookService(config: StripeBillingConfig, reposito
         }
         await repository.withClaimedEvent(token, async transaction => {
           if (!supported || !hasReferences) return "ignored";
-          const scope = await repository.resolveRestaurant(transaction, { subscriptionId, customerId,
-            restaurantId: meta.vapt_restaurant_id ?? null });
+          const scope = await repository.resolveOrganization(transaction, { subscriptionId, customerId,
+            organizationId: meta.vapt_organization_id ?? null, restaurantId: meta.vapt_restaurant_id ?? null,
+            checkoutSessionId: checkout ? resourceId : null, claim: token });
           if (!scope) return "ignored";
-          fields.restaurantId = scope.restaurantId;
+          fields.organizationId = scope.organizationId;
           if (scope.stripeCustomerId !== null && scope.stripeCustomerId !== customerId) invalidStripeResponse();
-          if (!invoice || meta.vapt_restaurant_id !== undefined || meta.vapt_owner_id !== undefined) assertStripeMetadata(meta, scope);
-          if (checkout && resource.client_reference_id !== scope.restaurantId) invalidStripeResponse();
+          if (!invoice || Object.keys(meta).length > 0) assertStripeMetadata(meta, scope, invoice ? subscriptionId! : resourceId!);
+          const legacyCheckout = scope.legacyResources.find(value => value.resourceId === resourceId);
+          if (checkout && resource.client_reference_id !== (meta.vapt_organization_id ? scope.organizationId : legacyCheckout?.restaurantId)) invalidStripeResponse();
           if (event.type === "checkout.session.expired") {
             ignored = !await repository.clearPendingCheckout(transaction, scope, resourceId!);
             return ignored ? "ignored" : "processed";
@@ -104,7 +106,7 @@ export function createStripeWebhookService(config: StripeBillingConfig, reposito
           const canonical = await gateway.getSubscription(subscriptionId);
           assertStripeMode(canonical.livemode, config.environment);
           if (canonical.id !== subscriptionId || canonical.customerId !== customerId) invalidStripeResponse();
-          assertStripeMetadata(canonical.metadata, scope);
+          assertStripeMetadata(canonical.metadata, scope, canonical.id);
           if (scope.stripeSubscriptionId !== null && scope.stripeSubscriptionId !== canonical.id) {
             // A newer subscription owns this Customer. Never let an old delayed event rebind it.
             const replacement = event.type === "checkout.session.completed" && scope.checkoutSessionId === resourceId;
@@ -114,7 +116,7 @@ export function createStripeWebhookService(config: StripeBillingConfig, reposito
             }
             const previous = await gateway.getSubscription(scope.stripeSubscriptionId);
             assertStripeMode(previous.livemode, config.environment);
-            assertStripeMetadata(previous.metadata, scope);
+            assertStripeMetadata(previous.metadata, scope, previous.id);
             if (previous.id !== scope.stripeSubscriptionId || previous.customerId !== canonical.customerId ||
               !["canceled", "incomplete_expired"].includes(previous.status)) invalidStripeResponse();
           }
@@ -134,7 +136,7 @@ export function createStripeWebhookService(config: StripeBillingConfig, reposito
           });
           if (!changed) return "ignored";
           const kind = emailKind(event.type, resource.billing_reason, status);
-          if (kind) await repository.enqueueEmail(transaction, { restaurantId: scope.restaurantId,
+          if (kind) await repository.enqueueEmail(transaction, { organizationId: scope.organizationId, restaurantId: scope.restaurantId,
             providerEventId: event.id, billingResourceId: resourceId!, emailKind: kind,
             payload: { planType, planStatus: status, currentPeriodEnd: item.currentPeriodEnd } });
           ignored = false;

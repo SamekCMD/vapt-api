@@ -11,7 +11,8 @@ const event = {
 };
 const now = new Date("2026-09-27T12:00:00Z");
 const reconciliationScope: ReconciliationScope = {
-  restaurantId: "10000000-0000-4000-8000-000000000001", userId: "20000000-0000-4000-8000-000000000001",
+  organizationId:"30000000-0000-4000-8000-000000000001",billingContactUserId:"20000000-0000-4000-8000-000000000001",
+  restaurantId:null,legacyResources:[],claim:{providerEventId:"evt_test",attemptCount:1},
   stripeCustomerId: "cus_vapt", stripeSubscriptionId: null, checkoutSessionId: "cs_test_vapt",
   planStatus: "trialing", stateUpdatedAt: null,
 };
@@ -45,48 +46,46 @@ test("Stripe event claim is atomic and begins with attempt one", async () => {
   assert.equal(calls[0]!.values?.[0], event.providerEventId);
 });
 
-test("restaurant resolution prioritizes unique Subscription then Customer then UUID metadata and locks row", async () => {
-  for (const foundAt of [0, 1, 2]) {
-    const responses = Array.from({ length: foundAt }, () => [] as unknown[]);
-    responses.push([{ ...reconciliationScope, stateUpdatedAt: now }]);
-    const { database, calls } = scriptedDatabase(responses);
-    const scope = await createStripeWebhookRepository(database).resolveRestaurant(database, {
-      subscriptionId: "sub_vapt", customerId: "cus_vapt", restaurantId: reconciliationScope.restaurantId,
-    });
-    assert.equal(calls.length, foundAt + 1);
-    assert.match(calls[0]!.sql, /where stripe_subscription_id = \$1::text for update/);
-    if (foundAt > 0) assert.match(calls[1]!.sql, /where stripe_customer_id = \$1::text for update/);
-    if (foundAt > 1) assert.match(calls[2]!.sql, /where id = \$1::uuid for update/);
-    assert.equal(scope?.stateUpdatedAt, now.toISOString());
-  }
-});
-test("unknown/untrusted non-UUID metadata never becomes a SQL identifier or cast", async () => {
-  const { database, calls } = scriptedDatabase([]);
-  assert.equal(await createStripeWebhookRepository(database).resolveRestaurant(database, {
-    subscriptionId: null, customerId: null, restaurantId: "not-a-uuid' OR true",
-  }), null);
-  assert.equal(calls.length, 0);
-});
-test("canonical reconciliation is parameterized and owner-fenced without a host-clock ordering predicate", async () => {
-  const { database, calls } = scriptedDatabase([[{ id: reconciliationScope.restaurantId }]]);
-  const changed = await createStripeWebhookRepository(database).applySubscription(database, reconciliationScope, {
-    customerId: "cus_vapt", subscriptionId: "sub_vapt", subscriptionItemId: "si_vapt", planType: "pro",
-    planStatus: "active", trialEndsAt: null, currentPeriodEnd: "2030-01-01T00:00:00.000Z",
-    cancelAtPeriodEnd: false, subscriptionCanceledAt: null, observedAt: now.toISOString(),
-    checkoutSessionId: "cs_test_vapt", billingLastError: null,
+test("organization resolution checks every resource selector then locks and binds the claimed event",async()=>{
+  const org=reconciliationScope.organizationId;
+  const {database,calls}=scriptedDatabase([
+    [{resource_id:"sub_vapt",resource_type:"subscription",organization_id:org}],
+    [{id:org}],[{organization_id:null}],[],[{...reconciliationScope,stateUpdatedAt:now}],[{id:"event-row"}],
+  ]);
+  const scope=await createStripeWebhookRepository(database).resolveOrganization(database,{
+    organizationId:org,subscriptionId:"sub_vapt",customerId:"cus_vapt",restaurantId:null,checkoutSessionId:null,claim:reconciliationScope.claim,
   });
-  assert.equal(changed, true);
-  assert.match(calls[0]!.sql, /owner_id = \$2::uuid/);
-  assert.doesNotMatch(calls[0]!.sql, /stripe_state_updated_at <=/);
-  assert.match(calls[0]!.sql, /stripe_subscription_item_id = \$5::text/);
-  assert.deepEqual(calls[0]!.values?.slice(0, 5), [reconciliationScope.restaurantId, reconciliationScope.userId, "cus_vapt", "sub_vapt", "si_vapt"]);
+  assert.equal(scope?.stateUpdatedAt,now.toISOString());assert.equal(scope?.organizationId,org);
+  assert.deepEqual(calls[0].values,[["cus_vapt","sub_vapt"]]);
+  assert.deepEqual(calls[3].values,[`tenant:organization:${org}`]);
+  assert.deepEqual(calls.at(-1)?.values,["evt_test",1,org]);
 });
-test("expiration clears all three pending columns only for matching owned Session", async () => {
-  const { database, calls } = scriptedDatabase([[]]);
-  assert.equal(await createStripeWebhookRepository(database).clearPendingCheckout(database, reconciliationScope, "cs_test_old"), false);
-  assert.match(calls[0]!.sql, /owner_id = \$2::uuid and stripe_checkout_session_id = \$3::text/);
-  assert.match(calls[0]!.sql, /stripe_checkout_plan_type = null/);
-  assert.match(calls[0]!.sql, /stripe_checkout_expires_at = null/);
+test("unknown non-UUID metadata is rejected before SQL",async()=>{
+  const {database,calls}=scriptedDatabase([]);
+  await assert.rejects(createStripeWebhookRepository(database).resolveOrganization(database,{
+    organizationId:null,subscriptionId:null,customerId:null,restaurantId:"not-a-uuid' OR true",checkoutSessionId:null,claim:reconciliationScope.claim,
+  }),{code:"billing_association_conflict"});
+  assert.equal(calls.length,0);
+});
+test("canonical reconciliation binds immutable resource identities and calls the organization claim fence",async()=>{
+  const org=reconciliationScope.organizationId;
+  const {database,calls}=scriptedDatabase([[],[{organization_id:org,resource_type:"customer"}],[],
+    [{organization_id:org,resource_type:"subscription"}],[{applied:true}]]);
+  const changed=await createStripeWebhookRepository(database).applySubscription(database,reconciliationScope,{
+    customerId:"cus_vapt",subscriptionId:"sub_vapt",subscriptionItemId:"si_vapt",planType:"pro",planStatus:"active",trialEndsAt:null,
+    currentPeriodEnd:"2030-01-01T00:00:00.000Z",cancelAtPeriodEnd:false,subscriptionCanceledAt:null,observedAt:now.toISOString(),
+    checkoutSessionId:"cs_test_vapt",billingLastError:null,
+  });
+  assert.equal(changed,true);
+  assert.match(calls.at(-1)!.sql,/public.reconcile_organization_subscription/);
+  assert.deepEqual(calls.at(-1)!.values?.slice(0,6),[org,"evt_test",1,"cus_vapt","sub_vapt","si_vapt"]);
+  assert.ok(calls.every(call=>!call.sql.includes('update public.restaurants')));
+});
+test("expiration clears only a matching organization Checkout under its active event claim",async()=>{
+  const {database,calls}=scriptedDatabase([[]]);
+  assert.equal(await createStripeWebhookRepository(database).clearPendingCheckout(database,reconciliationScope,"cs_test_old"),false);
+  assert.match(calls[0].sql,/stripe_checkout_session_id=\$2::text/);
+  assert.deepEqual(calls[0].values,[reconciliationScope.organizationId,"cs_test_old","evt_test",1]);
 });
 
 for (const status of ["processed", "ignored"]) {
@@ -124,7 +123,7 @@ test("Stripe event completion and email intent share one transaction and dedupli
   const repository = createStripeWebhookRepository(database, { now: () => now });
   await repository.withClaimedEvent({ providerEventId: "evt_test", attemptCount: 2 }, async (transaction) => {
     const intent = {
-      restaurantId: "restaurant-1", providerEventId: "evt_test", billingResourceId: "in_vapt",
+      organizationId:reconciliationScope.organizationId, restaurantId:null, providerEventId: "evt_test", billingResourceId: "in_vapt",
       emailKind: "subscription_activated" as const, payload: { planType: "starter" },
     };
     await repository.enqueueEmail(transaction, intent);
@@ -135,7 +134,7 @@ test("Stripe event completion and email intent share one transaction and dedupli
   assert.match(calls[0]!.sql, /for update/i);
   for (const call of calls.slice(1, 3)) {
     assert.match(call.sql, /on conflict do nothing/i);
-    assert.deepEqual(call.values?.slice(0, 3), ["restaurant-1", "evt_test", "subscription_activated"]);
+    assert.deepEqual(call.values?.slice(0, 4), [reconciliationScope.organizationId,null,"evt_test", "subscription_activated"]);
   }
   assert.match(calls.at(-1)!.sql, /attempt_count = \$2::integer/i);
   assert.deepEqual(operations.slice(-2), ["COMMIT", "RELEASE"]);
@@ -168,7 +167,7 @@ test("Stripe failure records a safe retry code only for its owned attempt", asyn
 test("email insertion includes the business resource key and suppresses either deduplication constraint", async () => {
   const { database, calls } = scriptedDatabase([[]]);
   await createStripeWebhookRepository(database).enqueueEmail(database, {
-    restaurantId: "restaurant-1", providerEventId: "evt_one", billingResourceId: "in_same",
+    organizationId:reconciliationScope.organizationId, restaurantId:null, providerEventId: "evt_one", billingResourceId: "in_same",
     emailKind: "subscription_activated", payload: {},
   });
   assert.match(calls[0]!.sql, /billing_resource_id/);
@@ -183,7 +182,7 @@ test("Stripe persistence failure rolls back intents and sanitizes details", asyn
     { providerEventId: "evt_test", attemptCount: 1 },
     async (transaction) => {
       await repository.enqueueEmail(transaction, {
-        restaurantId: "restaurant-1", providerEventId: "evt_test", billingResourceId: "in_vapt",
+        organizationId:reconciliationScope.organizationId, restaurantId:null, providerEventId: "evt_test", billingResourceId: "in_vapt",
         emailKind: "payment_failed", payload: {},
       });
       return "processed";

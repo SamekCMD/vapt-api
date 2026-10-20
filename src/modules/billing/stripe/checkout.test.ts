@@ -15,13 +15,15 @@ const config = { nodeEnv: "test", frontendUrl: new URL("https://app.vapt.test"),
     environment: "test", portalConfigurationId: "bpc_vapt",
     prices: { starter: "price_starter", pro: "price_pro", business: "price_business" } },
 } as AppConfig;
-const owned = { userId: "owner-1", restaurantId: "restaurant-1" };
-const metadata = { vapt_restaurant_id: owned.restaurantId, vapt_owner_id: owned.userId, vapt_plan_type: "pro" };
-const input = { ...owned, email: "owner@example.com", planType: "pro" as const,
+const restaurantId='33333333-3333-4333-8333-333333333333';
+const owned={userId:'11111111-1111-4111-8111-111111111111',organizationId:'22222222-2222-4222-8222-222222222222'};
+const writer={...owned,sessionId:'44444444-4444-4444-8444-444444444444',sessionExpiresAt:new Date('2030-01-01').getTime()};
+const metadata={vapt_organization_id:owned.organizationId,vapt_billing_contact_user_id:owned.userId,vapt_plan_type:"pro"};
+const input = { ...writer, email: "owner@example.com", planType: "pro" as const,
   idempotencyKey: "a9d1b2c3-1234-4321-9876-0123456789ab" };
 const code = (expected: string) => (error: unknown) => error instanceof AppError && error.code === expected;
 function fixture(initial: Partial<BillingScope> = {}, authorized = true) {
-  const scope: BillingScope = { ...owned, planType: "starter", planStatus: "trialing", stripeCustomerId: null,
+  const scope: BillingScope = { ...owned,billingContactUserId:owned.userId,billingContactEmail:input.email,role:'owner',legacyResources:[],planType: "starter", planStatus: "trialing", stripeCustomerId: null,
     stripeSubscriptionId: null, trialEndsAt: "2026-10-01T00:00:00Z", currentPeriodEnd: null,
     cancelAtPeriodEnd: false, subscriptionCanceledAt: null, checkoutSessionId: null,
     checkoutPlanType: null, checkoutExpiresAt: null, ...initial };
@@ -29,7 +31,7 @@ function fixture(initial: Partial<BillingScope> = {}, authorized = true) {
   let locked = false;
   const customer = { id: "cus_vapt", livemode: false, metadata: { ...metadata } };
   const session: StripeCheckoutSession = { id: "cs_test_vapt", livemode: false, metadata: { ...metadata },
-    customerId: customer.id, subscriptionId: null, status: "open", clientReferenceId: owned.restaurantId,
+    customerId: customer.id, subscriptionId: null, status: "open", clientReferenceId: owned.organizationId,
     url: "https://checkout.stripe.com/c/pay/vapt", expiresAt: "2030-10-01T00:00:00.000Z" };
   const subscription: StripeSubscription = { id: "sub_vapt", livemode: false, metadata: { ...metadata },
     customerId: customer.id, status: "active", items: [], trialEndsAt: null, canceledAt: null, cancelAtPeriodEnd: false };
@@ -48,7 +50,7 @@ function fixture(initial: Partial<BillingScope> = {}, authorized = true) {
   const store: StripeBillingStore = {
     async getScope() { return scope; }, async getPublicStatus() { return publicStatus; },
     async withBillingLock(value, work) {
-      assert.deepEqual(value, owned); locked = true;
+      assert.deepEqual(value,writer);if(!authorized) throw new AppError(403,"forbidden","Forbidden");locked=true;
       try { return await work({ scope,
         async associateCustomer(id) { calls.push({ name: "associate", input: id }); scope.stripeCustomerId = id; },
         async savePendingCheckout(pending) { calls.push({ name: "save", input: pending }); scope.checkoutSessionId = pending.id; scope.checkoutPlanType = pending.planType; scope.checkoutExpiresAt = pending.expiresAt; },
@@ -57,7 +59,7 @@ function fixture(initial: Partial<BillingScope> = {}, authorized = true) {
     },
   };
   return { scope, calls, customer, session, subscription, gateway, store, publicStatus,
-    service: () => createStripeBillingService(gateway, async () => authorized, store, config) };
+    service: () => createStripeBillingService(gateway,store,config) };
 }
 test("checkout authorizes before provider operations", async () => {
   const f = fixture({}, false); await assert.rejects(f.service().createCheckout(input), code("forbidden")); assert.deepEqual(f.calls, []);
@@ -65,10 +67,10 @@ test("checkout authorizes before provider operations", async () => {
 test("free local trial creates trusted hosted Checkout under lock without activating entitlement", async () => {
   const f = fixture(); assert.deepEqual(await f.service().createCheckout(input), { checkoutSessionId: f.session.id, url: f.session.url });
   assert.deepEqual(f.calls.map(c => c.name), ["search", "createCustomer", "associate", "checkout", "save"]);
-  assert.deepEqual(f.calls[1], { name: "createCustomer", input: { email: input.email, metadata }, key: "vapt:customer:restaurant-1" });
+  assert.deepEqual(f.calls[1], { name: "createCustomer", input: { email: input.email, metadata }, key: "vapt:customer:"+owned.organizationId });
   assert.deepEqual(f.calls[3], { name: "checkout", input: { customerId: "cus_vapt", priceId: "price_pro", metadata,
-    clientReferenceId: owned.restaurantId, successUrl: "https://app.vapt.test/dashboard/subscription?checkout=returned",
-    cancelUrl: "https://app.vapt.test/dashboard/subscription?checkout=cancelled" }, key: "vapt:checkout:restaurant-1:pro:" + input.idempotencyKey });
+    clientReferenceId: owned.organizationId, successUrl: "https://app.vapt.test/dashboard/subscription?checkout=returned",
+    cancelUrl: "https://app.vapt.test/dashboard/subscription?checkout=cancelled" }, key: "vapt:checkout:"+owned.organizationId+":pro:" + input.idempotencyKey });
   assert.equal(f.scope.planType, "starter"); assert.equal(f.scope.planStatus, "trialing"); assert.equal(f.scope.stripeSubscriptionId, null);
 });
 test("existing Customer is validated/reused and interrupted association is recovered", async () => {
@@ -124,15 +126,15 @@ test("Checkout requires a bounded request idempotency key", async () => {
   }
 });
 test("Portal uses server-owned Customer, configuration and return URL", async () => {
-  const f = fixture({ stripeCustomerId: "cus_vapt" }); assert.deepEqual(await f.service().createPortal(owned), { url: "https://billing.stripe.com/p/session/vapt" });
+  const f = fixture({ stripeCustomerId: "cus_vapt" }); assert.deepEqual(await f.service().createPortal(writer), { url: "https://billing.stripe.com/p/session/vapt" });
   assert.deepEqual(f.calls.at(-1), { name: "portal", input: { customerId: "cus_vapt", configurationId: "bpc_vapt", returnUrl: "https://app.vapt.test/dashboard/subscription" } });
-  await assert.rejects(fixture().service().createPortal(owned), code("billing_conflict"));
-  await assert.rejects(fixture({}, false).service().createPortal(owned), code("forbidden"));
+  await assert.rejects(fixture().service().createPortal(writer), code("billing_conflict"));
+  await assert.rejects(fixture({}, false).service().createPortal(writer), code("forbidden"));
 });
 test("Portal rejects insecure URL, wrong mode or mismatched Customer", async () => {
   for (const invalid of [{ url: "http://billing.stripe.com/vapt" }, { livemode: true }, { customerId: "cus_foreign" }]) {
     const f = fixture({ stripeCustomerId: "cus_vapt" }); f.gateway.createPortal = async () => ({ url: "https://billing.stripe.com/p/session/vapt", livemode: false, customerId: "cus_vapt", ...invalid });
-    await assert.rejects(f.service().createPortal(owned), code("invalid_stripe_response"));
+    await assert.rejects(f.service().createPortal(writer), code("invalid_stripe_response"));
   }
 });
 test("raw provider failure never reaches response or logs", async () => {
@@ -144,17 +146,20 @@ test("status returns server snapshot without provider call", async () => {
 });
 test("routes require cookie auth and strict body, then expose hosted contracts; legacy mutations return 404", async () => {
   const f = fixture(); const app = Fastify(); registerErrorHandler(app);
-  registerAuthDecorator(app, async headers => headers.cookie === "session=valid" ? { userId: owned.userId, email: input.email, role: "authenticated" } : null);
-  await registerStripeBillingRoutes(app, config, async () => true, f.store, f.gateway);
+  registerAuthDecorator(app, async headers => headers.cookie === "session=valid" ? { userId: owned.userId, email: input.email, role: "authenticated",sessionId:writer.sessionId,sessionExpiresAt:writer.sessionExpiresAt } : null);
+  await registerStripeBillingRoutes(app,config,f.store,f.gateway,async value=>{
+    assert.equal(value.userId,owned.userId);if(value.restaurantId) assert.equal(value.restaurantId,restaurantId);
+    return owned;
+  });
   const request = (payload: Record<string, unknown>, auth = true) => app.inject({ method: "POST", url: "/billing/stripe/checkout", headers: { ...(auth ? { cookie: "session=valid" } : {}), "idempotency-key": input.idempotencyKey }, payload });
-  assert.equal((await request({ restaurantId: owned.restaurantId, planType: "pro" }, false)).statusCode, 401);
+  assert.equal((await request({ restaurantId: restaurantId, planType: "pro" }, false)).statusCode, 401);
   for (const extra of [{ email: "attacker" }, { priceId: "price_evil" }, { successUrl: "https://evil.example" }, { customerId: "cus_evil" }])
-    assert.equal((await request({ restaurantId: owned.restaurantId, planType: "pro", ...extra })).statusCode, 400);
-  const result = await request({ restaurantId: owned.restaurantId, planType: "pro" }); assert.equal(result.statusCode, 200);
+    assert.equal((await request({ restaurantId: restaurantId, planType: "pro", ...extra })).statusCode, 400);
+  const result = await request({ restaurantId: restaurantId, planType: "pro" }); assert.equal(result.statusCode, 200);
   assert.deepEqual(result.json(), { checkoutSessionId: "cs_test_vapt", url: f.session.url });
-  const portal = await app.inject({ method: "POST", url: "/billing/stripe/portal", headers: { cookie: "session=valid" }, payload: { restaurantId: owned.restaurantId } });
+  const portal = await app.inject({ method: "POST", url: "/billing/stripe/portal", headers: { cookie: "session=valid" }, payload: { restaurantId: restaurantId } });
   assert.equal(portal.statusCode, 200); assert.deepEqual(portal.json(), { url: "https://billing.stripe.com/p/session/vapt" });
-  const status = await app.inject({ url: "/billing/stripe/subscription?restaurantId=restaurant-1", headers: { cookie: "session=valid" } }); assert.deepEqual(status.json(), f.publicStatus);
-  for (const operation of ["change", "cancel"]) assert.equal((await app.inject({ method: "POST", url: "/billing/stripe/subscription/" + operation, headers: { cookie: "session=valid" }, payload: { restaurantId: owned.restaurantId, ...(operation === "change" ? { targetPlanType: "pro" } : {}) } })).statusCode, 404);
+  const status = await app.inject({ url: `/billing/stripe/subscription?restaurantId=${restaurantId}`, headers: { cookie: "session=valid" } }); assert.deepEqual(status.json(), f.publicStatus);
+  for (const operation of ["change", "cancel"]) assert.equal((await app.inject({ method: "POST", url: "/billing/stripe/subscription/" + operation, headers: { cookie: "session=valid" }, payload: { restaurantId: restaurantId, ...(operation === "change" ? { targetPlanType: "pro" } : {}) } })).statusCode, 404);
   await app.close();
 });

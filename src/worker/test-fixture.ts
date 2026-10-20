@@ -25,8 +25,11 @@ type FixtureBindings = WorkerBindings & { TEST_GREETING: string };
 const fakeDatabase = {
   async query(sql:string,values:unknown[]=[]) {
     if(sql.startsWith('select r.organization_id,m.role')) return {rows:
-      values[0]==='10000000-0000-4000-8000-000000000001' && values[1]==='20000000-0000-4000-8000-000000000001'
-      ? [{organization_id:'30000000-0000-4000-8000-000000000001',role:'staff'}]:[]};
+      values[0]==='10000000-0000-4000-8000-000000000001' && ['20000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000003'].includes(String(values[1]))
+      ? [{organization_id:'30000000-0000-4000-8000-000000000001',role:values[1]==='20000000-0000-4000-8000-000000000003'?'admin':'staff'}]:[]};
+    if(sql.startsWith('select organization_id,role from public.organization_members')) return {rows:
+      values[0]==='30000000-0000-4000-8000-000000000001' && values[1]==='20000000-0000-4000-8000-000000000003'
+      ?[{organization_id:values[0],role:'admin'}]:[]};
     if(sql.startsWith('select r.id from public.restaurants r')) return {rows:
       values[0]==='20000000-0000-4000-8000-000000000001'?[{id:'10000000-0000-4000-8000-000000000001'}]:[]};
     return {rows:[]};
@@ -45,6 +48,10 @@ const fakeAuthRuntime: AuthRuntime = {
     }), { headers });
   },
   async getSession(headers) {
+    if(headers.get("cookie")==="session=admin")return {
+      user:{id:"20000000-0000-4000-8000-000000000003",email:"admin@vapt.test",name:"Admin"},
+      session:{id:"20000000-0000-4000-8000-000000000004",userId:"20000000-0000-4000-8000-000000000003",expiresAt:new Date("2030-01-01")},
+    };
     if (!headers.get("cookie")?.includes("session=owner")) return null;
     return {
       user: { id: "20000000-0000-4000-8000-000000000001", email: "owner@vapt.test", name: "Owner" },
@@ -149,21 +156,21 @@ const fakeRestaurants=createRestaurantService({
   },
 });
 const fakeStripeBilling = {
-  async createCheckout(input: { userId: string; restaurantId: string; email: string; idempotencyKey: string }) {
-    if (input.userId !== "20000000-0000-4000-8000-000000000001" || input.restaurantId !== "10000000-0000-4000-8000-000000000001") {
+  async createCheckout(input: { userId: string; organizationId: string; email: string; idempotencyKey: string }) {
+    if (input.userId !== "20000000-0000-4000-8000-000000000003" || input.organizationId !== "30000000-0000-4000-8000-000000000001") {
       throw new AppError(403, "forbidden", "Forbidden");
     }
     if (!input.idempotencyKey) throw new AppError(400, "invalid_request", "A valid Idempotency-Key is required");
     return { checkoutSessionId: "cs_synthetic", url: "https://checkout.stripe.com/synthetic" };
   },
-  async createPortal(input: { userId: string; restaurantId: string }) {
-    if (input.userId !== "20000000-0000-4000-8000-000000000001" || input.restaurantId !== "10000000-0000-4000-8000-000000000001") {
+  async createPortal(input: { userId: string; organizationId: string }) {
+    if (input.userId !== "20000000-0000-4000-8000-000000000003" || input.organizationId !== "30000000-0000-4000-8000-000000000001") {
       throw new AppError(403, "forbidden", "Forbidden");
     }
     return { url: "https://billing.stripe.com/synthetic" };
   },
-  async getSubscriptionStatus(input: { userId: string; restaurantId: string }) {
-    if (input.userId !== "20000000-0000-4000-8000-000000000001" || input.restaurantId !== "10000000-0000-4000-8000-000000000001") {
+  async getSubscriptionStatus(input: { userId: string; organizationId: string }) {
+    if (input.userId !== "20000000-0000-4000-8000-000000000003" || input.organizationId !== "30000000-0000-4000-8000-000000000001") {
       throw new AppError(403, "forbidden", "Forbidden");
     }
     return { planType: "pro", planStatus: "active" };

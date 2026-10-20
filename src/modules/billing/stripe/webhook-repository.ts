@@ -1,6 +1,6 @@
 import { withTransaction, type Database, type Queryable } from "../../../lib/database.js";
 import { AppError } from "../../../lib/errors.js";
-import type { OwnedBillingScope, StripePlanStatus } from "./repository.js";
+import {bindBillingResource,type LegacyBillingResource,type StripePlanStatus} from "./repository.js";
 import type { StripePlanType } from "./schemas.js";
 
 export type BillingEventClaim =
@@ -18,13 +18,15 @@ export type BillingClaimToken = { providerEventId: string; attemptCount: number 
 export type BillingEmailKind =
   | "subscription_activated" | "subscription_renewed" | "payment_failed" | "subscription_cancelled";
 export type BillingEmailIntent = {
-  restaurantId: string;
+  organizationId: string;
+  restaurantId: string | null;
   providerEventId: string;
   emailKind: BillingEmailKind;
   billingResourceId: string;
   payload: Record<string, unknown>;
 };
-export type ReconciliationScope = OwnedBillingScope & {
+export type ReconciliationScope = { organizationId:string;billingContactUserId:string;legacyResources:LegacyBillingResource[];
+  restaurantId:string|null;claim:BillingClaimToken;
   stripeCustomerId: string | null; stripeSubscriptionId: string | null;
   checkoutSessionId: string | null; planStatus: StripePlanStatus; stateUpdatedAt: string | null;
 };
@@ -41,8 +43,9 @@ export interface StripeWebhookRepository {
   withClaimedEvent(input: BillingClaimToken,
     work: (transaction: Queryable) => Promise<"processed" | "ignored">): Promise<void>;
   enqueueEmail(transaction: Queryable, input: BillingEmailIntent): Promise<void>;
-  resolveRestaurant(transaction: Queryable, input: {
-    subscriptionId: string | null; customerId: string | null; restaurantId: string | null;
+  resolveOrganization(transaction: Queryable, input: {
+    organizationId:string|null; subscriptionId:string|null;customerId:string|null;restaurantId:string|null;
+    checkoutSessionId:string|null;claim:BillingClaimToken;
   }): Promise<ReconciliationScope | null>;
   applySubscription(transaction: Queryable, scope: ReconciliationScope, input: SubscriptionReconciliation): Promise<boolean>;
   clearPendingCheckout(transaction: Queryable, scope: ReconciliationScope, sessionId: string): Promise<boolean>;
@@ -60,56 +63,78 @@ export function createStripeWebhookRepository(
   const now = options.now ?? (() => new Date());
   const leaseMs = options.leaseMs ?? 60000;
   return {
-    async resolveRestaurant(transaction, input) {
+    async resolveOrganization(transaction,input) {
       try {
-        const selectors: Array<[string, string]> = [];
-        if (input.subscriptionId) selectors.push(["stripe_subscription_id = $1::text", input.subscriptionId]);
-        if (input.customerId) selectors.push(["stripe_customer_id = $1::text", input.customerId]);
-        if (input.restaurantId && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(input.restaurantId)) {
-          selectors.push(["id = $1::uuid", input.restaurantId]);
+        const conflict=()=>{throw new AppError(409,"billing_association_conflict","Billing resource association conflicts");};
+        const uuid=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
+        if(input.organizationId && !uuid.test(input.organizationId)) conflict();
+        if(input.restaurantId && !uuid.test(input.restaurantId)) conflict();
+        const references=[input.customerId,input.subscriptionId,input.checkoutSessionId].filter((v):v is string=>v!==null);
+        const resources=await transaction.query<{resource_id:string;resource_type:string;organization_id:string}>(
+          'select resource_id,resource_type,organization_id from public.organization_billing_resources where resource_id=any($1::text[])',[references]);
+        for(const resource of resources.rows){
+          const expected=resource.resource_id===input.customerId?'customer':resource.resource_id===input.subscriptionId?'subscription':'checkout';
+          if(resource.resource_type!==expected)conflict();
         }
-        for (const [predicate, value] of selectors) {
-          const result = await transaction.query<Omit<ReconciliationScope, "stateUpdatedAt"> & { stateUpdatedAt: Date | string | null }>(
-            `select id as "restaurantId", owner_id as "userId", stripe_customer_id as "stripeCustomerId",
-              stripe_subscription_id as "stripeSubscriptionId", stripe_checkout_session_id as "checkoutSessionId",
-              plan_status as "planStatus", stripe_state_updated_at as "stateUpdatedAt"
-             from public.restaurants where ${predicate} for update`, [value]);
-          if (result.rows.length > 1) throw new AppError(500, "billing_association_conflict", "Ambiguous billing association");
-          const row = result.rows[0];
-          if (row) return { ...row, stateUpdatedAt: row.stateUpdatedAt === null ? null : new Date(row.stateUpdatedAt).toISOString() };
+        const candidates=new Set(resources.rows.map(row=>row.organization_id));
+        if(input.organizationId){
+          const org=await transaction.query<{id:string}>('select id from public.organizations where id=$1::uuid',[input.organizationId]);
+          if(!org.rows[0]){if(candidates.size)conflict();return null;}
+          candidates.add(org.rows[0].id);
         }
-        return null;
-      } catch (error) { storageError(error); }
+        if(input.restaurantId){
+          const legacy=await transaction.query<{organization_id:string}>('select organization_id from public.restaurants where id=$1::uuid',[input.restaurantId]);
+          if(!legacy.rows[0]){if(candidates.size)conflict();return null;}
+          candidates.add(legacy.rows[0].organization_id);
+        }
+        const existing=await transaction.query<{organization_id:string|null}>(
+          "select organization_id from public.billing_provider_events where provider='stripe' and provider_event_id=$1::text and attempt_count=$2::integer",
+          [input.claim.providerEventId,input.claim.attemptCount]);
+        if(existing.rows[0]?.organization_id)candidates.add(existing.rows[0].organization_id);
+        if(candidates.size>1)conflict();
+        const organizationId=[...candidates][0];if(!organizationId)return null;
+        await transaction.query('select pg_advisory_xact_lock(hashtextextended($1::text,0))',[`tenant:organization:${organizationId}`]);
+        const result=await transaction.query<Omit<ReconciliationScope,'claim'|'restaurantId'>>(`select organization_id as "organizationId",
+          billing_contact_user_id as "billingContactUserId",stripe_customer_id as "stripeCustomerId",
+          stripe_subscription_id as "stripeSubscriptionId",stripe_checkout_session_id as "checkoutSessionId",
+          plan_status as "planStatus",stripe_state_updated_at as "stateUpdatedAt",
+          coalesce((select jsonb_agg(jsonb_build_object('resourceId',resource_id,'resourceType',resource_type,
+            'restaurantId',restaurant_id,'legacyOwnerId',legacy_owner_id) order by resource_id)
+            from public.organization_billing_legacy_resources where organization_id=$1::uuid),'[]'::jsonb) as "legacyResources"
+          from public.organization_subscriptions where organization_id=$1::uuid for update`,[organizationId]);
+        const row=result.rows[0];if(!row)conflict();
+        const bound=await transaction.query(`update public.billing_provider_events set organization_id=$3::uuid
+          where provider='stripe' and provider_event_id=$1::text and attempt_count=$2::integer
+            and processing_status='processing' and (organization_id is null or organization_id=$3::uuid) returning id`,
+          [input.claim.providerEventId,input.claim.attemptCount,organizationId]);
+        if(!bound.rows[0])throw new AppError(409,"billing_claim_lost","Stripe event claim is no longer owned");
+        return {...row,claim:input.claim,restaurantId:input.restaurantId,
+          stateUpdatedAt:row.stateUpdatedAt===null?null:new Date(row.stateUpdatedAt).toISOString()};
+      }catch(error){storageError(error);}
     },
-    async applySubscription(transaction, scope, input) {
-      try {
-        const result = await transaction.query<{ id: string }>(`update public.restaurants
-          set stripe_customer_id = $3::text, stripe_subscription_id = $4::text,
-            stripe_subscription_item_id = $5::text, plan_type = $6::text, plan_status = $7::text,
-            trial_ends_at = $8::timestamptz, stripe_current_period_end = $9::timestamptz,
-            stripe_cancel_at_period_end = $10::boolean, subscription_canceled_at = $11::timestamptz,
-            stripe_state_updated_at = $12::timestamptz, billing_last_error = $14::text,
-            stripe_checkout_session_id = case when stripe_checkout_session_id = $13::text then null else stripe_checkout_session_id end,
-            stripe_checkout_plan_type = case when stripe_checkout_session_id = $13::text then null else stripe_checkout_plan_type end,
-            stripe_checkout_expires_at = case when stripe_checkout_session_id = $13::text then null else stripe_checkout_expires_at end,
-            updated_at = now()
-          where id = $1::uuid and owner_id = $2::uuid
-          returning id`, [scope.restaurantId, scope.userId, input.customerId, input.subscriptionId,
-          input.subscriptionItemId, input.planType, input.planStatus, input.trialEndsAt, input.currentPeriodEnd,
-          input.cancelAtPeriodEnd, input.subscriptionCanceledAt, input.observedAt, input.checkoutSessionId,
-          input.billingLastError]);
-        return result.rows.length === 1;
-      } catch (error) { storageError(error); }
+    async applySubscription(transaction,scope,input) {
+      try{
+        await bindBillingResource(transaction,scope.organizationId,input.customerId,'customer');
+        await bindBillingResource(transaction,scope.organizationId,input.subscriptionId,'subscription');
+        const result=await transaction.query<{applied:boolean}>(`select public.reconcile_organization_subscription(
+          $1::uuid,$2::text,$3::integer,$4::text,$5::text,$6::text,$7::text,$8::text,$9::timestamptz,
+          $10::timestamptz,$11::boolean,$12::timestamptz,$13::timestamptz,$14::text,$15::text) applied`,
+          [scope.organizationId,scope.claim.providerEventId,scope.claim.attemptCount,input.customerId,input.subscriptionId,
+            input.subscriptionItemId,input.planType,input.planStatus,input.trialEndsAt,input.currentPeriodEnd,
+            input.cancelAtPeriodEnd,input.subscriptionCanceledAt,input.observedAt,input.checkoutSessionId,input.billingLastError]);
+        return result.rows[0]?.applied===true;
+      }catch(error){storageError(error);}
     },
-    async clearPendingCheckout(transaction, scope, sessionId) {
-      try {
-        const result = await transaction.query<{ id: string }>(`update public.restaurants
-          set stripe_checkout_session_id = null, stripe_checkout_plan_type = null,
-              stripe_checkout_expires_at = null, updated_at = now()
-          where id = $1::uuid and owner_id = $2::uuid and stripe_checkout_session_id = $3::text
-          returning id`, [scope.restaurantId, scope.userId, sessionId]);
-        return result.rows.length === 1;
-      } catch (error) { storageError(error); }
+    async clearPendingCheckout(transaction,scope,sessionId){
+      try{
+        const result=await transaction.query(`update public.organization_subscriptions set stripe_checkout_session_id=null,
+          stripe_checkout_plan_type=null,stripe_checkout_expires_at=null where organization_id=$1::uuid
+          and stripe_checkout_session_id=$2::text and exists(select 1 from public.billing_provider_events
+            where provider='stripe' and provider_event_id=$3::text and attempt_count=$4::integer and processing_status='processing'
+              and organization_id=$1::uuid) returning organization_id`,
+          [scope.organizationId,sessionId,scope.claim.providerEventId,scope.claim.attemptCount]);
+        return result.rows.length===1;
+      }catch(error){storageError(error);}
     },
     async claimEvent(input) {
       try {
@@ -188,10 +213,10 @@ export function createStripeWebhookRepository(
     async enqueueEmail(transaction, input) {
       try {
         await transaction.query(`insert into public.billing_email_outbox (
-          restaurant_id, provider_event_id, email_kind, payload, billing_resource_id
-        ) values ($1::uuid, $2::text, $3::text, $4::jsonb, $5::text)
+          organization_id, restaurant_id, provider_event_id, email_kind, payload, billing_resource_id
+        ) values ($1::uuid, $2::uuid, $3::text, $4::text, $5::jsonb, $6::text)
         on conflict do nothing`,
-        [input.restaurantId, input.providerEventId, input.emailKind, JSON.stringify(input.payload), input.billingResourceId]);
+        [input.organizationId, input.restaurantId, input.providerEventId, input.emailKind, JSON.stringify(input.payload), input.billingResourceId]);
       } catch (error) { storageError(error); }
     },
   };

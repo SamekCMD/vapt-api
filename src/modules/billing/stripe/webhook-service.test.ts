@@ -10,18 +10,19 @@ import type { ReconciliationScope, StripeWebhookRepository, BillingEmailIntent }
 const config: StripeBillingConfig = { secretKey: "sk_test_vapt", webhookSecret: "whsec_vapt", environment: "test",
   webhookToleranceSeconds: 300, portalConfigurationId: "bpc_vapt",
   prices: { starter: "price_starter", pro: "price_pro", business: "price_business" } };
-const metadata = { vapt_restaurant_id: "10000000-0000-4000-8000-000000000001",
-  vapt_owner_id: "20000000-0000-4000-8000-000000000001", vapt_plan_type: "pro" };
+const metadata = { vapt_organization_id: "10000000-0000-4000-8000-000000000001",
+  vapt_billing_contact_user_id: "20000000-0000-4000-8000-000000000001", vapt_plan_type: "pro" };
 function event(type: string, extra: Record<string, unknown> = {}) {
   const object = type.startsWith("checkout.") ? { object: "checkout.session", id: "cs_test_vapt", mode: "subscription",
-    customer: "cus_vapt", subscription: type.endsWith("expired") ? null : "sub_vapt", client_reference_id: metadata.vapt_restaurant_id, metadata } :
+    customer: "cus_vapt", subscription: type.endsWith("expired") ? null : "sub_vapt", client_reference_id: metadata.vapt_organization_id, metadata } :
     type.startsWith("invoice.") ? { object: "invoice", id: "in_vapt", customer: "cus_vapt",
       parent: { subscription_details: { subscription: "sub_vapt", metadata } }, billing_reason: "subscription_create" } :
       { object: "subscription", id: "sub_vapt", customer: "cus_vapt", metadata };
   return { id: "evt_vapt", type, created: 1790500000, livemode: false, data: { object: { ...object, ...extra } } };
 }
 function fixture() {
-  const scope: ReconciliationScope = { restaurantId: metadata.vapt_restaurant_id, userId: metadata.vapt_owner_id,
+  const scope: ReconciliationScope = { organizationId: metadata.vapt_organization_id, billingContactUserId: metadata.vapt_billing_contact_user_id,
+    restaurantId:null,legacyResources:[],claim:{providerEventId:"evt_vapt",attemptCount:1},
     stripeCustomerId: "cus_vapt", stripeSubscriptionId: null, checkoutSessionId: "cs_test_vapt",
     planStatus: "trialing", stateUpdatedAt: null };
   const subscription: StripeSubscription = { id: "sub_vapt", customerId: "cus_vapt", livemode: false, metadata: { ...metadata },
@@ -35,7 +36,7 @@ function fixture() {
     async claimEvent(input) { claims.push(input); return terminal ? { kind: "duplicate_processed" } : { kind: "claimed", attemptCount: ++attempts }; },
     async markFailed(input) { writes.push({ failed: input }); },
     async withClaimedEvent(_input, work) { const outcome = await work(transaction); writes.push({ outcome }); terminal = true; },
-    async resolveRestaurant(tx, input) { assert.equal(tx, transaction); writes.push({ lookup: input }); return lookup; },
+    async resolveOrganization(tx, input) { assert.equal(tx, transaction); writes.push({ lookup: input }); return lookup; },
     async applySubscription(tx, owner, value) { assert.equal(tx, transaction); assert.equal(owner, scope); writes.push({ applied: value }); return true; },
     async clearPendingCheckout(tx, owner, id) { assert.equal(tx, transaction); assert.equal(owner, scope); writes.push({ cleared: id }); return scope.checkoutSessionId === id; },
     async enqueueEmail(tx, intent) { assert.equal(tx, transaction); intents.push(intent); },
@@ -94,8 +95,8 @@ test("canonical provider mode, tenant, Customer, Subscription, item count/recurr
   for (const kind of ["mode", "tenant", "owner", "customer", "subscription", "zero", "multiple", "nonrecurring", "price"]) {
     const f = fixture();
     if (kind === "mode") f.subscription.livemode = true;
-    if (kind === "tenant") f.subscription.metadata.vapt_restaurant_id = "foreign";
-    if (kind === "owner") f.subscription.metadata.vapt_owner_id = "foreign";
+    if (kind === "tenant") f.subscription.metadata.vapt_organization_id = "foreign";
+    if (kind === "owner") f.subscription.metadata.vapt_billing_contact_user_id = "foreign";
     if (kind === "customer") f.subscription.customerId = "cus_foreign";
     if (kind === "subscription") f.subscription.id = "sub_foreign";
     if (kind === "zero") f.subscription.items = [];
@@ -108,7 +109,7 @@ test("canonical provider mode, tenant, Customer, Subscription, item count/recurr
 });
 test("event identifiers/metadata cannot bind to another tenant", async () => {
   const f = fixture(); await assert.rejects(f.service.handleEvent(event("checkout.session.completed", {
-    metadata: { ...metadata, vapt_owner_id: "foreign" } })), code("billing_processing_failed"));
+    metadata: { ...metadata, vapt_billing_contact_user_id: "foreign" } })), code("billing_processing_failed"));
   assert.equal(f.intents.length, 0);
 });
 test("expired old Checkout leaves a different pending Session intact", async () => {
@@ -132,16 +133,16 @@ test("event audit payload and email intent omit raw URLs, email/card data and un
   const f = fixture(); await f.service.handleEvent(event("invoice.paid", { customer_email: "private@example.com", hosted_invoice_url: "https://secret.example", payment_method: "card_secret" }));
   assert.doesNotMatch(JSON.stringify([...f.claims, ...f.intents, ...f.logs]), /private@example|secret.example|card_secret/);
 });
-test("host clock skew never discards canonical state read under the restaurant lock", async () => {
+test("host clock skew never discards canonical state read under the organization lock", async () => {
   const f = fixture(); f.scope.stateUpdatedAt = "2026-09-27T14:00:00.000Z";
   f.subscription.status = "canceled";
   assert.equal((await f.service.handleEvent(event("customer.subscription.deleted"))).ignored, false);
   assert.equal(f.intents.length, 1);
 });
-test("canonical retrieval follows the restaurant lock so concurrent events cannot overwrite a newer snapshot", async () => {
+test("canonical retrieval follows the organization lock so concurrent events cannot overwrite a newer snapshot", async () => {
   const f = fixture();
   f.gateway.getSubscription = async () => {
-    assert.ok(f.writes.some(value => typeof value === "object" && value !== null && "lookup" in value), "restaurant must be locked first");
+    assert.ok(f.writes.some(value => typeof value === "object" && value !== null && "lookup" in value), "organization must be locked first");
     return f.subscription;
   };
   await f.service.handleEvent(event("invoice.paid"));
@@ -164,8 +165,8 @@ for (const type of ["checkout.session.completed", "checkout.session.expired", "i
     await assert.rejects(foreign.service.handleEvent(first), code("billing_processing_failed"));
     const mismatched = fixture();
     const invalid = type.startsWith("invoice.") ? event(type, { parent: { subscription_details: {
-      subscription: "sub_vapt", metadata: { ...metadata, vapt_owner_id: "foreign" } } } }) :
-      event(type, { metadata: { ...metadata, vapt_owner_id: "foreign" } });
+      subscription: "sub_vapt", metadata: { ...metadata, vapt_billing_contact_user_id: "foreign" } } } }) :
+      event(type, { metadata: { ...metadata, vapt_billing_contact_user_id: "foreign" } });
     await assert.rejects(mismatched.service.handleEvent(invalid), code("billing_processing_failed"));
     const retry = fixture(); let fail = true;
     if (type.endsWith("expired")) retry.repository.clearPendingCheckout = async () => { if (fail) throw new Error("private database detail"); return true; };
