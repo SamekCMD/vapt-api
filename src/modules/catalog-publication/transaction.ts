@@ -8,8 +8,9 @@ import { createRestaurantRepository } from "../restaurants/repository.js";
 import { createRestaurantService } from "../restaurants/service.js";
 import type { CatalogCommand, CatalogState, CommandIdentity, CommandReceipt } from "./contracts.js";
 import { commandConflict, readJournal, writeJournal } from "./journal.js";
-import { withRestaurantWrite } from '../tenancy/authorization.js';
-import { lockOperation,lockSlugs } from '../tenancy/locks.js';
+import { authorizeRestaurant,withRestaurantWrite } from '../tenancy/authorization.js';
+import { lockOperation,lockOrganization,lockSlugs } from '../tenancy/locks.js';
+import {createOnboardingRepository} from '../onboarding/repository.js';
 import { affectsPublicCatalog, allocateOnboardingRestaurantId, fingerprintCommand, validateCatalogCommand } from "./policy.js";
 
 export type CommittedCommand = { receipt: CommandReceipt; result: unknown; state: CatalogState; previousSlug: string | null };
@@ -21,7 +22,8 @@ async function mutate(database: Database, client: PoolClient, command: CatalogCo
   const menu = createMenuService(createMenuRepository(database, { transaction: client }), { publicBaseUrl });
   const { mutation, actor } = command;
   switch (mutation.type) {
-    case "onboarding": return restaurants.createOwnedRestaurant(actor.userId, mutation.input);
+    case "onboarding": throw new AppError(410,'legacy_onboarding_retired','Use canonical draft finalization');
+    case "onboarding.finalize": return createOnboardingRepository(database,{transaction:client}).finalizeDraft(actor,command.restaurantId,command.operationId);
     case "restaurant.patch": return restaurants.updateRestaurant({ ...actor,restaurantId:command.restaurantId }, mutation.input);
     case "item.create": return menu.createMenuItem({ ...actor,restaurantId:command.restaurantId }, mutation.input);
     case "item.patch": return menu.updateMenuItem({ ...actor,restaurantId:command.restaurantId }, mutation.itemId, mutation.input);
@@ -36,6 +38,7 @@ export async function applyCatalogCommand(
   } = {},
 ): Promise<CommittedCommand> {
   const command = validateCatalogCommand(input);
+  if(command.mutation.type==='onboarding.finalize'&&command.mutation.input.restaurantId!==command.restaurantId)throw commandConflict();
   if (command.mutation.type === "restaurant.patch" && !affectsPublicCatalog(command.mutation.input)) {
     throw new AppError(400, "catalog_private_only_patch", "Private-only patches do not publish a catalog");
   }
@@ -49,9 +52,13 @@ export async function applyCatalogCommand(
     await lockOperation(client,command.operationId);
     const existing = await readJournal(client, identity);
     if (existing) return existing;
-    if(command.mutation.type==='onboarding') throw new AppError(503,'catalog_onboarding_pending','Canonical onboarding unavailable');
+    if(command.mutation.type==='onboarding') throw new AppError(410,'legacy_onboarding_retired','Use canonical draft finalization');
     let restaurant:{id:string;slug:string}|undefined;
     const scope={...command.actor,restaurantId:command.restaurantId};
+    if(command.mutation.type==='onboarding.finalize'){
+      const access=await authorizeRestaurant(client,scope,'restaurant.manage');
+      await lockOrganization(client,access.organizationId,'exclusive');
+    }
     return withRestaurantWrite(database,scope,'restaurant.manage',async()=>{
     const owned=restaurant!;
     const mutation=command.mutation;

@@ -104,7 +104,7 @@ export async function reconcileCatalogImages(context: Context<WorkerHonoEnv>) {
 export async function submitCatalogMutation(context:Context<WorkerHonoEnv>,mutation:CatalogMutation,restaurantId:string):Promise<CommandOutcome<unknown>> {
   const operationId=catalogOperationId(context);
   const actor=await authorizeTarget(context,validateWithSchema(uuid,restaurantId));
-  if(mutation.type==='onboarding') throw new AppError(503,'catalog_onboarding_pending','Canonical onboarding unavailable');
+  if(mutation.type==='onboarding') throw new AppError(410,'legacy_onboarding_retired','Use canonical draft finalization');
   return room(context,restaurantId).submit(validateCatalogCommand({operationId,restaurantId,actor,mutation}));
 }
 export async function controlCatalogOperation(context:Context<WorkerHonoEnv>,action:'status'|'retry',restaurantId:string) {

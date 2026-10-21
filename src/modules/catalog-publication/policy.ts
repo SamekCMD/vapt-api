@@ -11,6 +11,7 @@ const commandSchema = z.object({
   actor: z.object({ userId: uuid, sessionId: uuid, sessionExpiresAt: z.number().int().positive() }).strict(),
   mutation: z.discriminatedUnion("type", [
     z.object({ type: z.literal("onboarding"), input: onboardingBodySchema }).strict(),
+    z.object({ type: z.literal("onboarding.finalize"), input: z.object({restaurantId:uuid}).strict() }).strict(),
     z.object({ type: z.literal("restaurant.patch"), input: updateOwnedRestaurantBodySchema }).strict(),
     z.object({ type: z.literal("item.create"), input: createMenuItemBodySchema }).strict(),
     z.object({ type: z.literal("item.patch"), itemId: uuid, input: updateMenuItemBodySchema }).strict(),

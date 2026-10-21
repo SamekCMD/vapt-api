@@ -24,6 +24,12 @@ type FixtureBindings = WorkerBindings & { TEST_GREETING: string };
 
 const fakeDatabase = {
   async query(sql:string,values:unknown[]=[]) {
+    if(sql.startsWith('with access as materialized'))return {rows:[{
+      organizations:[{id:'30000000-0000-4000-8000-000000000001',name:'Grupo Teste',
+        role:values[0]==='20000000-0000-4000-8000-000000000003'?'admin':'staff',planType:'business',planStatus:'active',trialEndsAt:null}],
+      restaurants:[{id:'10000000-0000-4000-8000-000000000001',organizationId:'30000000-0000-4000-8000-000000000001',name:'A',slug:'a-test',onboardingStatus:'complete'}],
+      preference:null,
+    }]};
     if(sql.startsWith('select r.organization_id,m.role')) return {rows:
       values[0]==='10000000-0000-4000-8000-000000000001' && ['20000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000003'].includes(String(values[1]))
       ? [{organization_id:'30000000-0000-4000-8000-000000000001',role:values[1]==='20000000-0000-4000-8000-000000000003'?'admin':'staff'}]:[]};
@@ -155,6 +161,7 @@ const fakeRestaurants=createRestaurantService({
     assertFixtureScope({ userId,restaurantId:fixtureRestaurant.id }); return { ...fixtureRestaurant,...patch };
   },
 });
+let fixtureKitchenActivated=false;
 const fakeStripeBilling = {
   async createCheckout(input: { userId: string; organizationId: string; email: string; idempotencyKey: string }) {
     if (input.userId !== "20000000-0000-4000-8000-000000000003" || input.organizationId !== "30000000-0000-4000-8000-000000000001") {
@@ -304,6 +311,25 @@ const createFixtureServices = (env: WorkerBindings, context: ExecutionContext) =
     tableSessions: fakeTableSessions,
     menu: fakeMenu,
     restaurants: fakeRestaurants,
+    onboarding:{
+      async createInitialDraft(){throw new AppError(409,'onboarding_conflict','Use an existing organization');},
+      async createOrganizationDraft(actor,organizationId,_key,input){
+        if(actor.userId!=='20000000-0000-4000-8000-000000000003'||organizationId!=='30000000-0000-4000-8000-000000000001')
+          throw new AppError(403,'forbidden','Forbidden');
+        if(actor.sessionId!=='20000000-0000-4000-8000-000000000004'||actor.sessionExpiresAt<=Date.now())
+          throw new AppError(401,'unauthorized','Unauthorized');
+        return {id:'10000000-0000-4000-8000-000000000003',organizationId,name:input.name,slug:input.slug,whatsapp:input.whatsapp??'',
+          localEnabled:true,deliveryEnabled:false,totalTables:1,onboardingStep:0};
+      },
+      async getDraft(){throw new Error('not used by this fixture');},async saveDraft(){throw new Error('not used by this fixture');},
+      async finalizeDraft(actor,restaurantId){
+        if(actor.userId!=='20000000-0000-4000-8000-000000000003'||restaurantId!==fixtureRestaurant.id)throw new AppError(403,'forbidden','Forbidden');
+        if(actor.sessionId!=='20000000-0000-4000-8000-000000000004'||actor.sessionExpiresAt<=Date.now())throw new AppError(401,'unauthorized','Unauthorized');
+        return {...fixtureRestaurant,onboardingCompleted:true};
+      },
+      async getActivation(scope){assertFixtureScope(scope);return {cashier:false,menu:false,kitchen:fixtureKitchenActivated,settings:false,overview:false};},
+      async completeActivation(scope,module){assertFixtureScope(scope);if(module==='kitchen')fixtureKitchenActivated=true;},
+    },
     stripeWebhooks: fakeStripeWebhooks,
     stripeBilling: fakeStripeBilling,
     manualPayments:{async confirm(input){

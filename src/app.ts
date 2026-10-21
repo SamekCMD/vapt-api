@@ -1,4 +1,6 @@
 import {resolveLegacyRestaurant} from "./modules/tenancy/authorization.js";
+import {registerAccountRoutes} from './modules/account/routes.js';
+import {registerOnboardingRoutes} from './modules/onboarding/routes.js';
 import {resolveBillingOrganization} from "./modules/billing/stripe/repository.js";
 import { randomUUID } from "node:crypto";
 import Fastify from "fastify";
@@ -167,6 +169,8 @@ export async function buildApp(
   await registerHealthRoutes(app);
   await registerCatalogRoutes(app, createCatalogRepository(database));
   await registerRestaurantRoutes(app, createRestaurantRepository(database));
+  await registerAccountRoutes(app,services.account);
+  await registerOnboardingRoutes(app,services.onboarding);
   await registerMenuRoutes(app, createMenuRepository(database), {
     publicBaseUrl: config.r2?.publicBaseUrl ?? null,
   });

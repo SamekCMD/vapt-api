@@ -9,6 +9,16 @@ type RouteContract = {
 };
 
 export const ROUTE_CONTRACTS: readonly RouteContract[] = [
+  {method:'GET',path:'/account/bootstrap',group:'auth',auth:true},
+  {method:'PATCH',path:'/account/preference',group:'auth',auth:true},
+  {method:'GET',path:'/organizations/:organizationId/restaurant-entitlement',group:'auth',auth:true},
+  {method:'POST',path:'/account/onboarding-draft',group:'auth',auth:true},
+  {method:'POST',path:'/organizations/:organizationId/restaurants/drafts',group:'auth',auth:true},
+  {method:'GET',path:'/restaurants/:restaurantId/onboarding',group:'auth',auth:true},
+  {method:'PATCH',path:'/restaurants/:restaurantId/onboarding',group:'auth',auth:true},
+  {method:'POST',path:'/restaurants/:restaurantId/onboarding/finalize',group:'auth',auth:true},
+  {method:'GET',path:'/restaurants/:restaurantId/activation',group:'auth',auth:true},
+  {method:'POST',path:'/restaurants/:restaurantId/activation/:module',group:'auth',auth:true},
   {method:'POST',path:'/restaurants/:restaurantId/orders/:orderId/payments/manual-confirmation',group:'billing',auth:true},
   {method:'GET',path:'/restaurants/:restaurantId/kitchen/orders',group:'auth',auth:true},
   {method:'PATCH',path:'/restaurants/:restaurantId/kitchen/orders/:orderId/status',group:'auth',auth:true},

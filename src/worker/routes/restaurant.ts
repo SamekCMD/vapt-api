@@ -29,9 +29,7 @@ export function registerWorkerRestaurantRoutes(
 
   app.post("/onboarding", rate, authenticated, async (context) => {
     const body = validateWithSchema(onboardingBodySchema, await parseWorkerJson(context.req.raw));
-    if (isCatalogWriterEnabled(context.env)) throw new AppError(503,'catalog_onboarding_pending','Canonical onboarding unavailable');
-    const services = await context.get("getServices")();
-    return context.json(await services.restaurants.createOwnedRestaurant(context.get("auth").userId, body), 201);
+    throw new AppError(410,'legacy_onboarding_retired','Use account onboarding drafts and explicit finalization');
   });
   app.get("/restaurants/me", rate, authenticated, async (context) => {
     const services = await context.get("getServices")();

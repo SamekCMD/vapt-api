@@ -208,6 +208,6 @@ test("duplicateCreateDeleteAndOnboarding never starts a second nested transactio
   const onboardingFixture = databaseFixture({ empty: true, restaurantId: id });
   const onboarding: CatalogCommand = { ...command, restaurantId: id, mutation: { type: "onboarding", input: {
     restaurantName: "Bistrô", slug: "novo-bistro", dishName: "Prato", dishPrice: "12.00" } } };
-  await assert.rejects(applyCatalogCommand(onboardingFixture.database,onboarding),{statusCode:503,code:'catalog_onboarding_pending'});
+  await assert.rejects(applyCatalogCommand(onboardingFixture.database,onboarding),{statusCode:410,code:'legacy_onboarding_retired'});
   assert.equal(onboardingFixture.committedMutations(),0);
 });

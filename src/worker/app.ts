@@ -9,6 +9,7 @@ import type { CatalogActor } from "../modules/catalog-publication/contracts.js";
 import { registerWorkerAuthRoutes } from "./routes/auth.js";
 import { registerWorkerPublicRoutes } from "./routes/public.js";
 import { registerWorkerRestaurantRoutes } from "./routes/restaurant.js";
+import {registerWorkerAccountRoutes} from './routes/account.js';
 import { registerWorkerStripeRoutes } from "./routes/stripe.js";
 import { registerWorkerMercadoPagoRoutes } from "./routes/mercado-pago.js";
 import { registerWorkerMiscRoutes } from "./routes/misc.js";
@@ -33,6 +34,7 @@ export function createWorkerApp(
     registerWorkerAuthRoutes(app, { rateLimit: options.authRateLimit });
     registerWorkerPublicRoutes(app, { rateLimit: options.publicRateLimit });
     registerWorkerRestaurantRoutes(app, { rateLimit: options.privateRateLimit });
+    registerWorkerAccountRoutes(app,{rateLimit:options.privateRateLimit});
     registerWorkerStripeRoutes(app, { rateLimit: options.stripeRateLimit });
     registerWorkerMercadoPagoRoutes(app, { rateLimit: options.paymentRateLimit });
     registerWorkerMiscRoutes(app, { rateLimit: options.miscRateLimit });

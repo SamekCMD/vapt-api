@@ -195,11 +195,11 @@ test("pending commit returns an explicit 202, never a fake published response", 
   assert.equal((await response.json() as { receipt: CommandReceipt }).receipt.phase, "committed");
 });
 
-test("new catalog onboarding is closed until the canonical draft finalizer is paired",async()=>{
+test("legacy onboarding cannot bypass canonical draft finalization",async()=>{
   const value=fixture({noRestaurant:true});
   const response=await value.request('/onboarding','POST',{restaurantName:'Bistrô',slug:'bistro',dishName:'Prato',dishPrice:'12.00'});
-  assert.equal(response.status,503);
-  assert.equal((await response.json() as {error:{code:string}}).error.code,'catalog_onboarding_pending');
+  assert.equal(response.status,410);
+  assert.equal((await response.json() as {error:{code:string}}).error.code,'legacy_onboarding_retired');
   assert.deepEqual(value.commands,[]);assert.deepEqual(value.roomNames,[]);
 });
 

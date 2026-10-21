@@ -7,6 +7,7 @@ export type CatalogState = { version: CatalogVersion; catalog: PublicCatalogDto 
 export type CatalogActor = import("../tenancy/contracts.js").TenantActor;
 export type CatalogMutation =
   | { type: "onboarding"; input: OnboardingBody }
+  | { type: "onboarding.finalize"; input: {restaurantId:string} }
   | { type: "restaurant.patch"; input: UpdateOwnedRestaurantBody }
   | { type: "item.create"; input: CreateMenuItemBody }
   | { type: "item.patch"; itemId: string; input: UpdateMenuItemBody }

@@ -1,4 +1,8 @@
 import type { Pool } from "pg";
+import {createAccountRepository} from '../modules/account/repository.js';
+import {createAccountService} from '../modules/account/service.js';
+import {createOnboardingRepository} from '../modules/onboarding/repository.js';
+import {createOnboardingService} from '../modules/onboarding/service.js';
 import {authorizeRestaurant,authorizeOrganization} from '../modules/tenancy/authorization.js';
 import type {RestaurantScope,OrganizationScope,Capability,Access,RestaurantMembership} from '../modules/tenancy/contracts.js';
 import { createRealtimeAuthorization, type RealtimeAuthorization } from "../modules/realtime/authorization.js";
@@ -72,6 +76,8 @@ export type MercadoPagoServices = {
 };
 
 export type ApiServiceDependencies = {
+  account?:ReturnType<typeof createAccountService>;
+  onboarding?:ReturnType<typeof createOnboardingService>;
   database: Database;
   publishCommittedChange?: CommittedChangePublisher;
   authRuntime?: AuthRuntime;
@@ -103,6 +109,8 @@ export type ApiServiceDependencies = {
 };
 
 export type ApiServices = {
+  account:ReturnType<typeof createAccountService>;
+  onboarding:ReturnType<typeof createOnboardingService>;
   authorizeRestaurant(scope:RestaurantScope,capability:Capability):Promise<Access>;
   authorizeOrganization(scope:OrganizationScope,capability:Capability):Promise<RestaurantMembership>;
   realtimeAuthorization: RealtimeAuthorization;
@@ -129,6 +137,7 @@ export type ApiServices = {
 };
 
 export function createApiServices(config: AppConfig, dependencies: ApiServiceDependencies): ApiServices {
+  let account=dependencies.account,onboarding=dependencies.onboarding;
   let realtimeAuthorization: RealtimeAuthorization | undefined;
   let authRuntime = dependencies.authRuntime;
   let stripeGateway = dependencies.stripeGateway;
@@ -222,6 +231,8 @@ export function createApiServices(config: AppConfig, dependencies: ApiServiceDep
       restaurants ??= createRestaurantService(createRestaurantRepository(dependencies.database));
       return restaurants;
     },
+    get account(){return account??=createAccountService(createAccountRepository(dependencies.database));},
+    get onboarding(){return onboarding??=createOnboardingService(createOnboardingRepository(dependencies.database));},
     get menu() {
       menu ??= createMenuService(createMenuRepository(dependencies.database), {
         publicBaseUrl: config.r2?.publicBaseUrl ?? null,

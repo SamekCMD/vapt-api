@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+import {AppError} from "../../lib/errors.js";
 
 import { validateWithSchema } from "../../lib/validation.js";
 import { actorFromAuth, requireAuth } from "../../plugins/auth.js";
@@ -23,9 +24,7 @@ export async function registerRestaurantRoutes(
     { config: { rateLimitGroup: "auth" }, preHandler: authenticated },
     async (request, reply) => {
       const body = validateWithSchema(onboardingBodySchema, request.body);
-      const restaurant = await service.createOwnedRestaurant(request.auth!.userId, body);
-      reply.status(201);
-      return restaurant;
+      throw new AppError(410,'legacy_onboarding_retired','Use account onboarding drafts and explicit finalization');
     },
   );
 

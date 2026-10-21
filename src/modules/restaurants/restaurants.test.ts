@@ -83,6 +83,13 @@ const onboardingInput = {
   dishPrice: "29.90",
 };
 
+test('retired owner-only onboarding cannot execute legacy SQL or bypass canonical draft routines',async()=>{
+  let writes=0;
+  const database={async query(){writes++;throw new Error('Legacy SQL forbidden');},async connect(){writes++;throw new Error('Legacy transaction forbidden');}} as unknown as Database;
+  await assert.rejects(createRestaurantRepository(database).createOwnedRestaurant(ownerId,onboardingInput),{statusCode:410,code:'legacy_onboarding_retired'});
+  assert.equal(writes,0);
+});
+
 function testRestaurantRepository(overrides:Partial<RestaurantRepository>):RestaurantRepository {
   const unexpected=async()=>{ throw new Error('Unexpected repository operation in this unit fixture'); };
   return { resolveLegacyRestaurant:unexpected,getRestaurant:unexpected,updateRestaurant:unexpected,
@@ -146,112 +153,6 @@ test("restaurant patch has an explicit allow-list and rejects tenant, plan, and 
   assert.equal(updateOwnedRestaurantBodySchema.safeParse({}).success, false);
 });
 
-test("baseline001-009: onboarding commits the restaurant and first dish in one transaction", async () => {
-  const events: string[] = [];
-  const calls: Array<{ sql: string; values: unknown[] | undefined }> = [];
-  const client = {
-    async query(sql: string, values?: unknown[]) {
-      events.push(sql.trim().split(/\s+/)[0]!.toUpperCase());
-      calls.push({ sql, values });
-      if (/insert into public\.restaurants/i.test(sql)) return { rows: [rawRestaurant] };
-      return { rows: [] };
-    },
-    release() {
-      events.push("RELEASE");
-    },
-  };
-  const database = {
-    async query() {
-      return { rows: [] };
-    },
-    async connect() {
-      events.push("CONNECT");
-      return client;
-    },
-  } as unknown as Database;
-
-  const created = await createRestaurantRepository(database).createOwnedRestaurant(ownerId, onboardingInput);
-
-  assert.deepEqual(events, ["CONNECT", "BEGIN", "INSERT", "INSERT", "COMMIT", "RELEASE"]);
-  assert.match(calls[1]?.sql ?? "", /insert into public\.restaurants/i);
-  assert.match(calls[1]?.sql ?? "", /trial_ends_at/i);
-  assert.deepEqual(calls[1]?.values, [ownerId, "Vapt Burger", "vapt-burger"]);
-  assert.match(calls[2]?.sql ?? "", /insert into public\.menu_items/i);
-  assert.deepEqual(calls[2]?.values, [restaurantId, "X-Burguer Especial", "29.90"]);
-  assert.deepEqual(created, restaurantDto);
-});
-
-test("baseline001-009: a first-dish failure rolls the entire onboarding transaction back", async () => {
-  const events: string[] = [];
-  const client = {
-    async query(sql: string) {
-      const operation = sql.trim().split(/\s+/)[0]!.toUpperCase();
-      events.push(operation);
-      if (/insert into public\.restaurants/i.test(sql)) return { rows: [rawRestaurant] };
-      if (/insert into public\.menu_items/i.test(sql)) throw new Error("dish write failed with secret SQL");
-      return { rows: [] };
-    },
-    release() {
-      events.push("RELEASE");
-    },
-  };
-  const database = {
-    async query() {
-      return { rows: [] };
-    },
-    async connect() {
-      events.push("CONNECT");
-      return client;
-    },
-  } as unknown as Database;
-
-  await assert.rejects(
-    () => createRestaurantRepository(database).createOwnedRestaurant(ownerId, onboardingInput),
-    (error: unknown) => {
-      assert.ok(error instanceof AppError);
-      assert.equal(error.code, "internal_error");
-      assert.doesNotMatch(error.message, /secret|dish write|sql/i);
-      return true;
-    },
-  );
-  assert.deepEqual(events, ["CONNECT", "BEGIN", "INSERT", "INSERT", "ROLLBACK", "RELEASE"]);
-});
-
-test("baseline001-009: duplicate owner or slug conflicts are exposed as a safe 409", async () => {
-  const client = {
-    async query(sql: string) {
-      if (/insert into public\.restaurants/i.test(sql)) {
-        throw Object.assign(new Error("duplicate key owner_id secret"), {
-          code: "23505",
-          constraint: "restaurants_owner_id_unique",
-        });
-      }
-      return { rows: [] };
-    },
-    release() {},
-  };
-  const database = {
-    async query() {
-      return { rows: [] };
-    },
-    async connect() {
-      return client;
-    },
-  } as unknown as Database;
-
-  await assert.rejects(
-    () => createRestaurantRepository(database).createOwnedRestaurant(ownerId, onboardingInput),
-    (error: unknown) => {
-      assert.ok(error instanceof AppError);
-      assert.equal(error.statusCode, 409);
-      assert.equal(error.code, "restaurant_conflict");
-      assert.doesNotMatch(error.message, /secret|owner_id/i);
-      return true;
-    },
-  );
-});
-
-
 test("service returns 404 when the authenticated owner has no restaurant", async () => {
   const repository = testRestaurantRepository({
     async createOwnedRestaurant() {
@@ -281,7 +182,7 @@ test("service returns 404 when the authenticated owner has no restaurant", async
   );
 });
 
-test("authenticated onboarding derives owner from the session and returns 201", async () => {
+test("authenticated legacy onboarding is explicitly retired without invoking owner-only creation", async () => {
   let receivedOwnerId: string | null = null;
   const repository = testRestaurantRepository({
     async createOwnedRestaurant(userId) {
@@ -310,9 +211,9 @@ test("authenticated onboarding derives owner from the session and returns 201", 
     payload: onboardingInput,
   });
 
-  assert.equal(response.statusCode, 201);
-  assert.equal(receivedOwnerId, ownerId);
-  assert.equal(response.json().id, restaurantId);
+  assert.equal(response.statusCode, 410);
+  assert.equal(receivedOwnerId, null);
+  assert.equal(response.json().error.code, 'legacy_onboarding_retired');
 
   const rejected = await app.inject({
     method: "POST",

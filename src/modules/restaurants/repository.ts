@@ -1,6 +1,5 @@
 import type { PoolClient } from "pg";
 import type { Database } from "../../lib/database.js";
-import { withTransaction } from "../../lib/database.js";
 import { AppError } from "../../lib/errors.js";
 import type { RestaurantDto } from "../business/contracts.js";
 import type { BillingPlanStatus, RestaurantScope, RestaurantWriteScope, TenantActor } from '../tenancy/contracts.js';
@@ -152,8 +151,6 @@ export function createRestaurantRepository(
   options: { transaction?: PoolClient; onboardingRestaurantId?: string } = {},
 ): RestaurantRepository {
   const queryable = options.transaction ?? database;
-  const inTransaction = <T>(work: (client: PoolClient) => Promise<T>): Promise<T> =>
-    options.transaction ? work(options.transaction) : withTransaction(database, work);
   const repository:RestaurantRepository = {
     resolveLegacyRestaurant(userId) { return resolveLegacyRestaurant(queryable,userId); },
     async getRestaurant(scope) {
@@ -189,53 +186,8 @@ export function createRestaurantRepository(
         } });
       } catch(error) { mapStorageError(error); }
     },
-    async createOwnedRestaurant(userId, input) {
-      try {
-        return await inTransaction(async (client) => {
-          const restaurantResult = await client.query<RestaurantRow>(
-            `insert into public.restaurants (
-              ${options.onboardingRestaurantId ? "id," : ""}
-              owner_id,
-              name,
-              slug,
-              trial_ends_at,
-              total_tables,
-              max_tables,
-              onboarding_completed,
-              onboarding_completed_at
-            ) values (
-              ${options.onboardingRestaurantId ? "$4::uuid," : ""}
-              $1::uuid,
-              $2::text,
-              $3::text,
-              now() + interval '3 days',
-              1,
-              1,
-              true,
-              now()
-            )
-            returning ${RESTAURANT_COLUMNS}`,
-            [userId, input.restaurantName, input.slug, ...(options.onboardingRestaurantId ? [options.onboardingRestaurantId] : [])],
-          );
-          const restaurant = restaurantResult.rows[0];
-          if (!restaurant) {
-            throw new AppError(500, "internal_error", "Failed to persist restaurant");
-          }
-
-          await client.query(
-            `insert into public.menu_items (
-              restaurant_id,
-              name,
-              price
-            ) values ($1::uuid, $2::text, $3::numeric)`,
-            [restaurant.id, input.dishName, input.dishPrice],
-          );
-
-          return mapRestaurant(restaurant);
-        });
-      } catch (error) {
-        mapStorageError(error);
-      }
+    async createOwnedRestaurant() {
+      throw new AppError(410,'legacy_onboarding_retired','Use account onboarding drafts and explicit finalization');
     },
 
     async findOwnedRestaurant(userId) {

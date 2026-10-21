@@ -112,6 +112,9 @@ export async function withTenantFixture(work: (f: TenantFixture) => Promise<void
     const restA = await seedRestaurant(pool, orgA, owner, 'Restaurante A');
     const restB = await seedRestaurant(pool, orgA, owner, 'Restaurante B');
     const restOther = await seedRestaurant(pool, orgB, other, 'Restaurante Outro');
+    // Operational/catalog fixtures represent completed restaurants; seedRestaurant itself remains a draft for capacity/onboarding tests.
+    await pool.query(`update public.restaurants set onboarding_status='complete',onboarding_completed=true,onboarding_step=2
+      where id=any($1::uuid[])`,[[restA,restB,restOther]]);
     const itemB = randomUUID(), orderB = randomUUID(), sessionB = randomUUID();
     await pool.query(`insert into public.menu_items (id,restaurant_id,name,price) values ($1,$2,'Prato B',12)`, [itemB, restB]);
     await pool.query(`insert into public.table_sessions (id,restaurant_id,table_number) values ($1,$2,'1')`, [sessionB, restB]);

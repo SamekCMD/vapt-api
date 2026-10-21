@@ -147,7 +147,7 @@ export function createCatalogRepository(database: Queryable): CatalogRepository 
             delivery_enabled,
             updated_at
           from public.restaurants
-          where slug = $1
+          where slug = $1 and onboarding_status = 'complete'
           limit 1`,
           [slug],
         );
