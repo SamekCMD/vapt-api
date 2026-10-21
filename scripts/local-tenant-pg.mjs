@@ -95,6 +95,7 @@ try {
   // These are the only database/test configuration values inherited by the test child.
   childEnv.TENANT_TEST_DATABASE_URL = url.href;
   childEnv.TENANT_SCHEMA_ROOT = schemaRoot;
+  childEnv.TENANT_TEST_API_ROOT = apiRoot;
   let tests = ['src/modules/tenancy/schema.pg-integration.ts'];
   if (through !== '009') tests.push('src/modules/tenancy/authorization.pg-integration.ts');
   if (through !== '009') tests.push('src/modules/tenancy/restaurant-scope.pg-integration.ts');
@@ -104,6 +105,7 @@ try {
   if (through !== '009') tests.push('src/modules/tenancy/payment-realtime.pg-integration.ts');
   if (through !== '009') tests.push('src/modules/billing/stripe/organization-billing.pg-integration.ts');
   if(onlyBilling) tests=['src/modules/billing/stripe/organization-billing.pg-integration.ts'];
+  if (through !== '009' && through !== '010') tests.push(resolve(schemaRoot,'infra/cloudflare/billing-email-worker/src/outbox-repository.integration.test.ts'));
   const result = await command(process.execPath,
     ['--import', 'tsx', '--test', '--test-concurrency=1', ...tests], childEnv);
   process.stdout.write(result.output);

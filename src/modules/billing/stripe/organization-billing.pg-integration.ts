@@ -99,6 +99,19 @@ test('cross-organization Stripe resources cannot reconcile or enqueue and remain
     assert.equal((await f.pool.query('select stripe_customer_id from public.organization_subscriptions where organization_id=$1',[f.orgA])).rows[0].stripe_customer_id,null);
   });
 });
+
+test('different restaurant origins and provider event retries still emit one organization resource intent',async()=>{
+  await withTenantFixture(async f=>{
+    const repository=createStripeWebhookRepository(f.pool);
+    const input={organizationId:f.orgA,restaurantId:f.restA,providerEventId:'evt_intentfirst',emailKind:'subscription_activated' as const,
+      billingResourceId:'in_shared_org',payload:{planType:'pro'}};
+    await repository.enqueueEmail(f.pool,input);
+    const original=(await f.pool.query('select id,payload,provider_event_id from public.billing_email_outbox')).rows[0];
+    await repository.enqueueEmail(f.pool,{...input,restaurantId:f.restB,providerEventId:'evt_intentsecond'});
+    await repository.enqueueEmail(f.pool,input);
+    assert.deepEqual((await f.pool.query('select id,payload,provider_event_id from public.billing_email_outbox where organization_id=$1',[f.orgA])).rows,[original]);
+  });
+});
 test('billing selector agreement, manager read-only, revoked creator and expired session are enforced',async()=>{
   await withTenantFixture(async f=>{
     const repo=createStripeBillingRepository(f.pool);
