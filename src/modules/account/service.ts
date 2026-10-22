@@ -12,9 +12,11 @@ export function createAccountService(repository:AccountRepository){
       userId=validateWithSchema(uuidSchema,userId);
       if(routeRestaurantId!==undefined)routeRestaurantId=validateWithSchema(uuidSchema,routeRestaurantId);
       const data=await repository.loadAccount(userId);
+      const now=Date.now();
       const organizations=data.organizations.map(org=>({id:org.id,name:org.name,role:org.role,
         capabilities:capabilities.filter(capability=>hasCapability(org.role,capability)),
-        features:operationFeatures(org.planType,org.planStatus,org.trialEndsAt,Date.now())}));
+        operationActive:org.planStatus==="active"||(org.planStatus==="trialing"&&org.trialEndsAt!==null&&Date.parse(org.trialEndsAt)>now),
+        features:operationFeatures(org.planType,org.planStatus,org.trialEndsAt,now)}));
       const organizationsById=new Set(organizations.map(org=>org.id));
       const restaurants=data.restaurants.filter(restaurant=>organizationsById.has(restaurant.organizationId))
         .map(restaurant=>({id:restaurant.id,organizationId:restaurant.organizationId,name:restaurant.name,slug:restaurant.slug,onboardingStatus:restaurant.onboardingStatus}));

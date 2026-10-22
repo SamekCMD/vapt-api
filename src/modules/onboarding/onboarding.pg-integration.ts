@@ -15,7 +15,13 @@ test('staff bootstrap supplies operation features without private billing fields
     const service=createAccountService(createAccountRepository(f.pool));
     const bootstrap=await service.getBootstrap(f.staff,f.restB);
     assert.equal(bootstrap.currentRestaurantId,f.restB);assert.equal(bootstrap.organizations[0].features.cashier,true);
-    assert.deepEqual(Object.keys(bootstrap.organizations[0]).sort(),['capabilities','features','id','name','role']);
+    assert.deepEqual(Object.keys(bootstrap.organizations[0]).sort(),['capabilities','features','id','name','operationActive','role']);
+    assert.equal(bootstrap.organizations[0].operationActive,true);
+    await f.pool.query("update public.organization_subscriptions set plan_type='starter',plan_status='active' where organization_id=$1",[f.orgA]);
+    const starter=(await service.getBootstrap(f.staff,f.restB)).organizations[0];
+    assert.equal(starter.operationActive,true);assert.equal(Object.values(starter.features).some(Boolean),false);
+    await f.pool.query("update public.organization_subscriptions set plan_status='expired' where organization_id=$1",[f.orgA]);
+    assert.equal((await service.getBootstrap(f.staff,f.restB)).organizations[0].operationActive,false);
     await assert.rejects(service.getBootstrap(f.staff,f.restOther),{statusCode:403});
     await assert.rejects(service.savePreference(f.staffActor,{organizationId:f.orgA,restaurantId:f.restOther}),{statusCode:403});
     await service.savePreference(f.staffActor,{organizationId:f.orgA,restaurantId:f.restA});

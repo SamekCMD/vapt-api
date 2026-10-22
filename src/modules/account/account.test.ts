@@ -9,8 +9,8 @@ import type {AccountRepository} from './repository.js';
 const userId='10000000-0000-4000-8000-000000000001',organizationId='20000000-0000-4000-8000-000000000001';
 const a='30000000-0000-4000-8000-000000000001',b='30000000-0000-4000-8000-000000000002';
 function fixture(){
-  const data={organizations:[{id:organizationId,name:'Grupo Teste',role:'staff' as const,planType:'business' as const,
-    planStatus:'active' as const,trialEndsAt:null,stripeCustomerId:'cus_private',billingContactEmail:'private@example.invalid'}],
+  const data={organizations:[{id:organizationId,name:'Grupo Teste',role:'staff' as const,planType:'business' as import('../tenancy/contracts.js').PlanType,
+    planStatus:'active' as import('../tenancy/contracts.js').BillingPlanStatus,trialEndsAt:null as string|null,stripeCustomerId:'cus_private',billingContactEmail:'private@example.invalid'}],
     restaurants:[{id:a,organizationId,name:'A',slug:'a-test',onboardingStatus:'complete' as 'complete'|'draft'}],
     preference:null as {organizationId:string;restaurantId:string}|null};
   const repository={async loadAccount(id:string){assert.equal(id,userId);return data;},
@@ -20,10 +20,24 @@ function fixture(){
 test('staff bootstrap supplies operation features without private billing fields',async()=>{
   const {service}=fixture();const bootstrap=await service.getBootstrap(userId);
   assert.equal(bootstrap.organizations[0].features.cashier,true);
-  assert.deepEqual(Object.keys(bootstrap.organizations[0]).sort(),['capabilities','features','id','name','role']);
+  assert.deepEqual(Object.keys(bootstrap.organizations[0]).sort(),['capabilities','features','id','name','operationActive','role']);
   assert.deepEqual(bootstrap.organizations[0].capabilities,['restaurant.read','restaurant.operate']);
   assert.equal(bootstrap.currentRestaurantId,a);assert.equal(bootstrap.destination,'dashboard');
   assert.doesNotMatch(JSON.stringify(bootstrap),/cus_private|private@example|billingContact|planStatus|trialEndsAt/);
+});
+test('staff operational admission distinguishes active Starter from expired and dormant trials without billing fields',async()=>{
+  const f=fixture();f.data.organizations[0].planType='starter';
+  const bootstrap=await f.service.getBootstrap(userId);
+  assert.equal(bootstrap.organizations[0].operationActive,true);
+  assert.equal(Object.values(bootstrap.organizations[0].features).some(Boolean),false);
+  f.data.organizations[0].planStatus='expired';
+  assert.equal((await f.service.getBootstrap(userId)).organizations[0].operationActive,false);
+  f.data.organizations[0].planStatus='trialing';
+  assert.equal((await f.service.getBootstrap(userId)).organizations[0].operationActive,false);
+  f.data.organizations[0].trialEndsAt='2030-01-01T00:00:00Z';
+  assert.equal((await f.service.getBootstrap(userId)).organizations[0].operationActive,true);
+  f.data.organizations[0].trialEndsAt='2020-01-01T00:00:00Z';
+  assert.equal((await f.service.getBootstrap(userId)).organizations[0].operationActive,false);
 });
 test('bootstrap selects only a unique restaurant, explicit route or accessible preference',async()=>{
   const f=fixture();f.data.restaurants.push({...f.data.restaurants[0],id:b,name:'B',slug:'b-test'});
