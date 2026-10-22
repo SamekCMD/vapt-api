@@ -96,6 +96,19 @@ test("image upload uses the same owner-scoped coordinator and sends no cookie/em
     actor: { userId, sessionId, sessionExpiresAt: new Date("2030-01-01").getTime() }, contentType: "image/webp", contentLength: 123 } }]);
   assert.equal(value.authReads(), 1); assert.equal(value.legacyWrites(), 0);
 });
+test("branding routes require the writer and live manage scope without a fictitious item",async()=>{
+  const value=fixture(),path=`/restaurants/${restaurantId}/branding/image`;
+  assert.equal((await value.request(path+"/upload","POST",{contentType:"image/webp",contentLength:123})).status,200);
+  assert.deepEqual(value.imageCalls[0],{action:"prepare",input:{kind:"branding",restaurantId,leaseId:operationId,actor:{userId,sessionId,sessionExpiresAt:new Date("2030-01-01").getTime()},contentType:"image/webp",contentLength:123}});
+  const key=restaurantId+"/branding/"+operationId;
+  assert.equal((await value.request(path+"?objectKey="+key,"DELETE")).status,204);
+  assert.equal((await value.request(path+"?objectKey="+restaurantId+"/"+sessionId+"/"+operationId,"DELETE")).status,400);
+  assert.equal((await value.request(path+"/upload","POST",{contentType:"image/webp",contentLength:123},{Cookie:""})).status,401);
+  value.revoke();assert.equal((await value.request(path+"/upload","POST",{contentType:"image/webp",contentLength:123})).status,403);
+  const disabled=fixture({enabled:false});assert.equal((await disabled.request(path+"/upload","POST",{contentType:"image/webp",contentLength:123})).status,404);
+  assert.equal(disabled.legacyWrites(),0);assert.equal(value.imageCalls.length,2);
+});
+
 
 test('scoped public writes publish to the selected restaurant instead of any implicit owner target',async()=>{
   const value=fixture();

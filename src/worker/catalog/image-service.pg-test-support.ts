@@ -32,7 +32,7 @@ async function sqlWait(pool: Pool) {
   assert.fail("the competing operation must actually wait for a PostgreSQL lock");
 }
 
-async function fixture(pool: Pool, base: CatalogCommand,retireActor=base.actor) {
+async function fixture(pool: Pool, base: CatalogCommand,retireActor=base.actor,branding=false) {
   const initial = await applyCatalogCommand(pool, { ...base, operationId: randomUUID(), mutation: { type: "rebuild" } });
   const retained = [initial.state];
   const sqlite = new DatabaseSync(":memory:");
@@ -44,10 +44,11 @@ async function fixture(pool: Pool, base: CatalogCommand,retireActor=base.actor) 
   const budget = new SqliteImageBudget(sql);
   const itemId = initial.state.catalog.items[0]!.id;
   const leaseId = randomUUID();
-  const lease = budget.reserve({ leaseId, restaurantId: base.restaurantId, itemId,
+  const target=branding?{restaurantId:base.restaurantId,kind:"branding" as const}:{restaurantId:base.restaurantId,itemId};
+  const lease = budget.reserve({ leaseId, ...target,
     contentType: "image/webp", bytes: 123, now: Date.now(), ttlMs: 300_000 }, []);
   budget.stageAttempt(leaseId); budget.staged(leaseId, "staging-etag"); budget.uploaded(leaseId);
-  const access = { restaurantId: base.restaurantId, itemId, actor: retireActor, objectKey: lease.objectKey };
+  const access = { ...target, actor: retireActor, objectKey: lease.objectKey };
   const deleting = barrier(); const finishDelete = barrier();
   let pauseDelete = false; let imagePresent = true; let deletions = 0;
   // Storage/projection are controlled adapters, deliberately not a claim of R2
@@ -82,8 +83,9 @@ async function fixture(pool: Pool, base: CatalogCommand,retireActor=base.actor) 
 }
 
 export async function verifyImagePostgresConcurrency(t: TestContext, pool: Pool, base: CatalogCommand,retireActor=base.actor): Promise<void> {
-  for (const method of ["retire", "reconcile"] as const) await t.test(`SQL ${method} holds its lock through storage deletion and a delayed attachment cannot resurrect the image`, async () => {
-    const value = await fixture(pool, base,retireActor);
+  for(const branding of [false,true]){
+  for (const method of ["retire", "reconcile"] as const) await t.test(`SQL ${branding?"branding":"product"} ${method} holds its lock through storage deletion and a delayed attachment cannot resurrect the image`, async () => {
+    const value = await fixture(pool, base,retireActor,branding);
     value.pauseDeletion();
     if (method === "reconcile") value.ports.now = () => Date.now() + 300_001;
     const retirement = observe<unknown>(method === "retire" ? value.service.retire(value.access)
@@ -115,8 +117,8 @@ export async function verifyImagePostgresConcurrency(t: TestContext, pool: Pool,
     }
   });
 
-  await t.test("SQL attachment commits before waiting retirement; revision lag and both retained snapshots protect the object", async () => {
-    const value = await fixture(pool, base,retireActor);
+  await t.test(`SQL ${branding?"branding":"product"} attachment commits before waiting retirement; revision lag and both retained snapshots protect the object`, async () => {
+    const value = await fixture(pool, base,retireActor,branding);
     const validating = barrier(); const finishValidation = barrier();
     const command = value.attachment();
     const applying = observe(applyCatalogCommand(pool, command, { validateImages: async current => {
@@ -157,8 +159,8 @@ export async function verifyImagePostgresConcurrency(t: TestContext, pool: Pool,
     }
   });
 
-  await t.test("session revocation waits for an already authorized retirement to complete its physical deletion", async () => {
-    const value = await fixture(pool, base,retireActor);
+  await t.test(`${branding?"branding":"product"} session revocation waits for an already authorized retirement to complete its physical deletion`, async () => {
+    const value = await fixture(pool, base,retireActor,branding);
     value.pauseDeletion();
     const retirement = observe(value.service.retire(value.access));
     let revocation: ReturnType<typeof observe<unknown>> | undefined;
@@ -178,5 +180,16 @@ export async function verifyImagePostgresConcurrency(t: TestContext, pool: Pool,
         values ($1, $2, $3, now() + interval '1 hour', now()) on conflict (id) do nothing`,
       [value.access.actor.sessionId, value.access.actor.userId, randomUUID()]);
     }
+  });
+
+  }
+  await t.test("two different active members prepare one branding lease without double reserving bytes",async()=>{
+    const value=await fixture(pool,base,retireActor,true);
+    try{
+      value.ports.bucket.list=(async()=>({truncated:false,objects:[{key:value.lease.objectKey,size:123}]})) as CatalogImageServicePorts["bucket"]["list"];
+      const input={restaurantId:base.restaurantId,kind:"branding" as const,leaseId:value.leaseId,contentType:"image/webp" as const,contentLength:123};
+      const [one,two]=await Promise.all([value.service.prepare({...input,actor:base.actor}),value.service.prepare({...input,actor:retireActor})]);
+      assert.deepEqual(one,two);assert.equal(value.budget.usage(base.restaurantId,[]),123);
+    }finally{value.sqlite.close();}
   });
 }

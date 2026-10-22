@@ -12,6 +12,7 @@ import type { CatalogCoordinator } from "./runner.js";
 import { unwrapCatalogRpc } from "./rpc.js";
 import type { MenuImageContentType } from "../../modules/storage/service.js";
 
+type ImageTarget={restaurantId:string;kind:"branding"}|{restaurantId:string;itemId:string;kind?:"menu-item"};
 const uuid = z.string().uuid().transform(value => value.toLowerCase());
 
 export function isCatalogWriterEnabled(env: Pick<WorkerBindings, "PUBLIC_CATALOG_WRITER_ENABLED">): boolean {
@@ -79,18 +80,18 @@ async function imageRoom(context: Context<WorkerHonoEnv>, restaurantId: string) 
   return { actor, target: namespace.get(namespace.idFromName(`${context.env.ENVIRONMENT}:${restaurantId}`)) };
 }
 
-export async function prepareCatalogImage(context: Context<WorkerHonoEnv>, params: { restaurantId: string; itemId: string },
+export async function prepareCatalogImage(context: Context<WorkerHonoEnv>, params: ImageTarget,
   body: { contentType: MenuImageContentType; contentLength: number }) {
   const leaseId = catalogOperationId(context);
   const { actor, target } = await imageRoom(context, params.restaurantId);
   return unwrapCatalogRpc(await target.prepareImage({ ...params, ...body, actor, leaseId }));
 }
 
-export async function retireCatalogImage(context: Context<WorkerHonoEnv>, params: { restaurantId: string; itemId: string }) {
+export async function retireCatalogImage(context: Context<WorkerHonoEnv>, params: ImageTarget) {
   const objectKey = validateWithSchema(z.string().min(1).max(200), context.req.query("objectKey"));
   const parts = objectKey.split("/");
-  if (parts.length !== 3 || !parts.every(part => uuid.safeParse(part).success)
-    || parts[0] !== params.restaurantId || parts[1] !== params.itemId) throw new AppError(400, "invalid_image_key", "Invalid image key");
+  if (parts.length !== 3 || !uuid.safeParse(parts[0]).success||!uuid.safeParse(parts[2]).success
+    || parts[0] !== params.restaurantId || parts[1] !== (params.kind==="branding"?"branding":params.itemId)) throw new AppError(400, "invalid_image_key", "Invalid image key");
   const { actor, target } = await imageRoom(context, params.restaurantId);
   return unwrapCatalogRpc(await target.retireImage({ ...params, objectKey, actor }));
 }

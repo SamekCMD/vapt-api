@@ -82,6 +82,8 @@ export const ROUTE_CONTRACTS: readonly RouteContract[] = [
 
 // Cloudflare-only additions are intentionally absent from legacy Fastify.
 export const WORKER_ONLY_ROUTE_CONTRACTS: readonly RouteContract[] = [
+  {method:"POST",path:"/restaurants/:restaurantId/branding/image/upload",group:"storage",auth:true,condition:"r2"},
+  {method:"DELETE",path:"/restaurants/:restaurantId/branding/image",group:"storage",auth:true,condition:"r2"},
   {method:'GET',path:'/restaurants/:restaurantId/catalog-operations/:operationId',group:'auth',auth:true},
   {method:'POST',path:'/restaurants/:restaurantId/catalog-operations/:operationId/retry',group:'auth',auth:true},
   {method:'POST',path:'/restaurants/:restaurantId/catalog/rebuild',group:'auth',auth:true},

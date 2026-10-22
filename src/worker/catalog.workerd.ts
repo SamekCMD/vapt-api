@@ -112,6 +112,12 @@ test("maxPayloadBounded at 8MiB snapshot and 1MiB optimized image on actual work
     assert.equal(oversizedImage.status, 400);
     const image = await worker.fetch("https://api.test/_test/image-budget", { method: "POST", body: JSON.stringify({ bytes: 1_048_576 }) });
     assert.equal(image.status, 200);
+    const logo=await worker.fetch("https://api.test/_test/image-budget",{method:"POST",body:JSON.stringify({bytes:512,branding:true})});
+    assert.equal(logo.status,200);const reserved=await logo.json() as {objectKey:string;usage:number};
+    assert.match(reserved.objectKey,/\/branding\//);assert.equal(reserved.usage,1049088);
+    await worker.evictDurableObject("PUBLIC_CATALOG_COORDINATOR",{name:"image-boundary"});
+    const replay=await worker.fetch("https://api.test/_test/image-budget",{method:"POST",body:JSON.stringify({bytes:512,branding:true})});
+    assert.equal(replay.status,200);assert.deepEqual(await replay.json(),{status:200,...reserved});
     const value = state("11"); value.catalog.restaurant.description = "";
     const base = Buffer.byteLength(JSON.stringify(value));
     value.catalog.restaurant.description = "a".repeat(8_388_608 - base);

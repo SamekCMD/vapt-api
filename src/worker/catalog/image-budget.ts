@@ -4,13 +4,15 @@ import type { MenuImageContentType } from "../../modules/storage/service.js";
 import { MENU_IMAGE_MAX_BYTES, RESTAURANT_IMAGE_QUOTA_BYTES } from "../../modules/storage/policy.js";
 
 export type ImageInventoryEntry = { key: string; size: number };
-export type ImageReservation = {
-  leaseId: string; restaurantId: string; itemId: string; objectKey: string;
+export type AssetTarget = {restaurantId:string;kind:"menu-item";itemId:string}|{restaurantId:string;kind:"branding";itemId?:never};
+type CompatibleAssetTarget = AssetTarget|{restaurantId:string;kind?: "menu-item";itemId:string};
+export type ImageReservation = AssetTarget & {
+  leaseId: string; objectKey: string;
   contentType: MenuImageContentType; bytes: number; expiresAt: number;
   state: "reserved" | "staged" | "uploaded" | "retired";
   stagingAttempts: number; fenceEtag?: string; retiredBytes?: number; retiredAt?: number; cleanupCheckedAt?: number;
 };
-export type ImageReservationInput = Pick<ImageReservation, "leaseId" | "restaurantId" | "itemId" | "contentType" | "bytes"> & {
+export type ImageReservationInput = CompatibleAssetTarget & Pick<ImageReservation, "leaseId" | "contentType" | "bytes"> & {
   now: number; ttlMs: number;
 };
 
@@ -22,12 +24,16 @@ export class SqliteImageBudget {
   constructor(private readonly sql: SqlStorage) {
     sql.exec("create table if not exists catalog_image_scope(singleton integer primary key check(singleton = 1), restaurant_id text not null)");
     sql.exec("create table if not exists catalog_image_leases(lease_id text primary key, reservation text not null)");
+    // In-place JSON schema upgrade; old keys, byte reservations and fences survive.
+    // The predicate makes interrupted/repeated upgrades idempotent.
+    sql.exec("update catalog_image_leases set reservation=json_set(reservation, '$.kind', 'menu-item') where json_type(reservation, '$.kind') is null");
   }
 
   // Caller serializes with catalog work and commits/syncs this reservation BEFORE
   // creating any R2 object or signing a PUT. Time alone never releases bytes.
   reserve(input: ImageReservationInput, inventory: readonly ImageInventoryEntry[]): ImageReservation {
-    if (![input.restaurantId, input.itemId, input.leaseId].every(value => typeof value === "string" && uuid.test(value))
+    if (![input.restaurantId, input.leaseId].every(value => typeof value === "string" && uuid.test(value))
+      || (input.kind==="branding" ? input.itemId!==undefined : (input.kind!==undefined&&input.kind!=="menu-item")||!uuid.test(input.itemId??""))
       || !Number.isSafeInteger(input.bytes) || input.bytes < 1 || input.bytes > MENU_IMAGE_MAX_BYTES
       || !["image/jpeg", "image/png", "image/webp"].includes(input.contentType)
       || !Number.isSafeInteger(input.now) || input.now < 0
@@ -41,7 +47,7 @@ export class SqliteImageBudget {
       and json_extract(reservation, '$.retiredAt') <= ? order by lease_id limit 100)`, input.now - 604_800_000);
     const existing = this.get(input.leaseId);
     if (existing) {
-      if (existing.itemId !== input.itemId || existing.bytes !== input.bytes || existing.contentType !== input.contentType) {
+      if (existing.kind !== (input.kind??"menu-item") || existing.itemId !== input.itemId || existing.bytes !== input.bytes || existing.contentType !== input.contentType) {
         throw new AppError(409, "menu_image_upload_conflict", "Image upload conflicts with existing work");
       }
       return existing;
@@ -56,8 +62,9 @@ export class SqliteImageBudget {
       from catalog_image_leases`).toArray()[0]!;
     if (total.pending >= 10) throw new AppError(429, "menu_image_uploads_pending", "Too many pending image uploads");
     if (total.total >= 1000) throw new AppError(429, "menu_image_history_full", "Image upload history requires cleanup");
-    const reservation: ImageReservation = { leaseId: input.leaseId, restaurantId: input.restaurantId, itemId: input.itemId,
-      objectKey: `${input.restaurantId}/${input.itemId}/${crypto.randomUUID()}`, contentType: input.contentType,
+    const target:AssetTarget=input.kind==="branding"?{kind:"branding",restaurantId:input.restaurantId}:{kind:"menu-item",restaurantId:input.restaurantId,itemId:input.itemId};
+    const reservation: ImageReservation = { ...target, leaseId: input.leaseId,
+      objectKey: `${input.restaurantId}/${input.kind==="branding"?"branding":input.itemId}/${crypto.randomUUID()}`, contentType: input.contentType,
       bytes: input.bytes, expiresAt: input.now + input.ttlMs, state: "reserved", stagingAttempts: 0 };
     this.sql.exec("insert into catalog_image_scope(singleton, restaurant_id) values(1, ?) on conflict(singleton) do nothing", input.restaurantId);
     this.sql.exec("insert into catalog_image_leases(lease_id, reservation) values(?, ?)", input.leaseId, JSON.stringify(reservation));

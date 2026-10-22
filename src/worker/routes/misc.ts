@@ -35,6 +35,19 @@ export function registerWorkerMiscRoutes(
     await next();
   };
 
+  const brandingEnabled:MiddlewareHandler<WorkerHonoEnv>=async(context,next)=>{
+    if(!isCatalogWriterEnabled(context.env))return context.json({error:{code:"not_found",message:"Route not found"}},404);
+    await next();
+  };
+  app.post("/restaurants/:restaurantId/branding/image/upload",enabledStorage,storageRate,brandingEnabled,imageAuthenticated,async context=>{
+    const params=validateWithSchema(restaurantParamsSchema,context.req.param());
+    const body=validateWithSchema(prepareMenuImageUploadBodySchema,await parseWorkerJson(context.req.raw));
+    return context.json(await prepareCatalogImage(context,{...params,kind:"branding"},body));
+  });
+  app.delete("/restaurants/:restaurantId/branding/image",enabledStorage,storageRate,brandingEnabled,imageAuthenticated,async context=>{
+    const params=validateWithSchema(restaurantParamsSchema,context.req.param());
+    await retireCatalogImage(context,{...params,kind:"branding"});return context.body(null,204);
+  });
   app.post("/restaurants/:restaurantId/menu-images/reconcile", enabledStorage, storageRate, async (context) => {
     if (!isCatalogWriterEnabled(context.env)) return context.json({ error: { code: "not_found", message: "Route not found" } }, 404);
     return context.json(await reconcileCatalogImages(context));

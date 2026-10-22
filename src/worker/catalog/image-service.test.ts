@@ -84,6 +84,23 @@ test("manual reconciliation rediscovers an old image after page loss, retaining 
     assert.deepEqual(await reopened.reconcile({ restaurantId, actor }), { checked: 0, retired: 0, protected: 0 });
   } finally { value.sqlite.close(); }
 });
+test("branding prepare skips a fictitious menu item and retained logos still block retirement",async()=>{
+  const value=fixture();
+  try{
+    const logo=value.ports.budget.reserve({restaurantId,kind:"branding",leaseId:userId,contentType:"image/webp",bytes:123,now,ttlMs:300000} as never,[]);
+    value.ports.budget.stageAttempt(userId);value.ports.budget.staged(userId,"branding-fence");
+    const descriptor=await value.service.prepare({restaurantId,kind:"branding",actor,leaseId:userId,contentType:"image/webp",contentLength:123} as never);
+    assert.equal(descriptor.state,"uploaded");
+    assert.equal(value.calls.some(query=>query.includes("from public.menu_items")),false);
+    await value.service.validateAttachment({operationId:sessionId,restaurantId,actor,mutation:{type:"restaurant.patch",input:{logoUrl:"https://assets.test/"+logo.objectKey}}});
+    value.retained[1]!.catalog.restaurant.logoUrl="https://assets.test/"+logo.objectKey;
+    await assert.rejects(value.service.retire({restaurantId,kind:"branding",actor,objectKey:logo.objectKey} as never),pending);
+    value.retained[1]!.catalog.restaurant.logoUrl=null;
+    await value.service.retire({restaurantId,kind:"branding",actor,objectKey:logo.objectKey} as never);
+    assert.equal(value.ports.budget.usage(restaurantId,[]),123);
+  }finally{value.sqlite.close();}
+});
+
 
 test("expired abandoned reservations can be retired in a bounded batch, but expiry alone never refunds quota", async () => {
   const value = fixture();

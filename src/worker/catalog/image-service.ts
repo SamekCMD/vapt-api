@@ -6,13 +6,13 @@ import { z } from "zod";
 import type { PoolClient } from "pg";
 import type { CatalogActor, CatalogCommand } from "../../modules/catalog-publication/contracts.js";
 import type { MenuImageContentType } from "../../modules/storage/service.js";
-import type { SqliteImageBudget } from "./image-budget.js";
+import type { AssetTarget,SqliteImageBudget } from "./image-budget.js";
 import type { ImageUploadDescriptor, ImageUploadPorts } from "./image-uploads.js";
 import type { CatalogProjection } from "./projection.js";
 import { createImageUploads } from "./image-uploads.js";
 import { MENU_IMAGE_MAX_BYTES } from "../../modules/storage/policy.js";
 
-export type CatalogImageAccess = { restaurantId: string; itemId: string; actor: CatalogActor };
+export type CatalogImageAccess = (AssetTarget|{restaurantId:string;kind?:"menu-item";itemId:string}) & { actor: CatalogActor };
 export type CatalogImagePrepare = CatalogImageAccess & { leaseId: string; contentType: MenuImageContentType; contentLength: number };
 export type CatalogImageRetire = CatalogImageAccess & { objectKey: string };
 export type CatalogImageReconcile = Pick<CatalogImageAccess, "restaurantId" | "actor">;
@@ -27,11 +27,13 @@ export type CatalogImageServicePorts = {
 
 const uuid = z.string().uuid().transform(value => value.toLowerCase());
 const actorSchema = z.object({ userId: uuid, sessionId: uuid, sessionExpiresAt: z.number().int().positive() }).strict();
-const accessSchema = z.object({ restaurantId: uuid, itemId: uuid, actor: actorSchema }).strict();
-const prepareSchema = accessSchema.extend({ leaseId: uuid, contentType: z.enum(["image/jpeg", "image/png", "image/webp"]),
-  contentLength: z.number().int().positive().max(MENU_IMAGE_MAX_BYTES) });
-const retireSchema = accessSchema.extend({ objectKey: z.string().min(1).max(200) });
-const reconcileSchema = accessSchema.omit({ itemId: true });
+const reconcileSchema=z.object({restaurantId:uuid,actor:actorSchema}).strict();
+const menuAccessSchema=reconcileSchema.extend({kind:z.literal("menu-item").optional(),itemId:uuid}).strict();
+const brandingAccessSchema=reconcileSchema.extend({kind:z.literal("branding")}).strict();
+const prepareFields={leaseId:uuid,contentType:z.enum(["image/jpeg","image/png","image/webp"]),contentLength:z.number().int().positive().max(MENU_IMAGE_MAX_BYTES)};
+const prepareSchema=z.union([menuAccessSchema.extend(prepareFields),brandingAccessSchema.extend(prepareFields)]);
+const retireFields={objectKey:z.string().min(1).max(200)};
+const retireSchema=z.union([menuAccessSchema.extend(retireFields),brandingAccessSchema.extend(retireFields)]);
 const blocked = () => new AppError(409, "menu_image_cleanup_pending", "Image cleanup is not safe yet");
 
 export function createCatalogImageService(ports: CatalogImageServicePorts) {
@@ -47,7 +49,8 @@ export function createCatalogImageService(ports: CatalogImageServicePorts) {
   }
   function assertKey(key: string, restaurantId: string, itemId?: string): void {
     const parts = key.split("/");
-    if (parts.length !== 3 || !parts.every(part => uuid.safeParse(part).success)
+    if (parts.length !== 3 || !uuid.safeParse(parts[0]).success || !uuid.safeParse(parts[2]).success
+      || (parts[1]!=="branding"&&!uuid.safeParse(parts[1]).success)
       || parts[0] !== restaurantId || (itemId && parts[1] !== itemId)) {
       throw new AppError(400, "invalid_image_key", "Invalid image key");
     }
@@ -77,14 +80,15 @@ export function createCatalogImageService(ports: CatalogImageServicePorts) {
   return {
     async prepare(input: CatalogImagePrepare): Promise<ImageUploadDescriptor> {
       const access = validateWithSchema(prepareSchema, input);
-      return ports.exclusive(() => restaurantLock(access, true, async () => uploads(async () => { throw blocked(); }).prepare({
-        leaseId: access.leaseId, restaurantId: access.restaurantId, itemId: access.itemId,
+      return ports.exclusive(() => restaurantLock(access, access.kind!=="branding", async () => uploads(async () => { throw blocked(); }).prepare({
+        leaseId: access.leaseId, restaurantId: access.restaurantId,
+        ...(access.kind==="branding"?{kind:"branding" as const}:{kind:"menu-item" as const,itemId:access.itemId}),
         contentType: access.contentType, bytes: access.contentLength, now: ports.now(), ttlMs: ports.ttlMs,
       })));
     },
     async retire(input: CatalogImageRetire): Promise<void> {
       const access = validateWithSchema(retireSchema, input);
-      assertKey(access.objectKey, access.restaurantId, access.itemId);
+      assertKey(access.objectKey, access.restaurantId, access.kind==="branding"?"branding":access.itemId);
       return ports.exclusive(() => restaurantLock(access, false, async client => {
         const lease = ports.budget.getByObjectKey(access.objectKey);
         if (!lease) throw new AppError(404, "menu_image_upload_not_found", "Image upload not found");
@@ -103,7 +107,7 @@ export function createCatalogImageService(ports: CatalogImageServicePorts) {
         const referenced = await retirementGuard(client, access.restaurantId);
         const storage = uploads(async key => { if (referenced(key)) throw blocked(); });
         for (const lease of candidates) {
-          assertKey(lease.objectKey, access.restaurantId, lease.itemId);
+          assertKey(lease.objectKey, access.restaurantId, lease.kind==="branding"?"branding":lease.itemId);
           await ports.atomic(() => ports.budget.cleanupChecked(lease.leaseId, ports.now()));
           if (referenced(lease.objectKey)) { result.protected++; continue; }
           // Expiry only selects candidates. The existing physical retirement and

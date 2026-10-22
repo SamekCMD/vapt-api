@@ -33,6 +33,34 @@ test("100 MiB includes retained images and pending uploads; the exact boundary i
     assert.throws(() => budget.reserve({ ...input, leaseId: "44444444-4444-4444-8444-444444444444", bytes: 1 }, inventory), quotaError);
   } finally { database.close(); }
 });
+test("branding and product leases share one100MiB budget across members and restarts",()=>{
+  const {database,sql,budget}=fixture();
+  try{
+    const menu=budget.reserve(input,[]);
+    const logo=budget.reserve({leaseId:"44444444-4444-4444-8444-444444444444",restaurantId,kind:"branding",contentType:"image/png",bytes:512,now,ttlMs:300000} as never,[]);
+    assert.match(logo.objectKey,new RegExp(`^${restaurantId}/branding/[a-f0-9-]{36}$`));
+    assert.equal(budget.usage(restaurantId,[]),1049088);
+    assert.deepEqual(new SqliteImageBudget(sql).get(logo.leaseId),logo);
+    const inventory=[{key:restaurantId+"/legacy",size:104857600-1049088}];
+    assert.equal(budget.usage(restaurantId,inventory),104857600);
+    assert.throws(()=>budget.reserve({...input,leaseId:"55555555-5555-4555-8555-555555555555",bytes:1},inventory),quotaError);
+    assert.throws(()=>budget.reserve({...input,leaseId:logo.leaseId,bytes:512,contentType:"image/png"},[]),error=>error instanceof AppError&&error.statusCode===409);
+    assert.equal(budget.get(menu.leaseId)?.objectKey,menu.objectKey);
+  }finally{database.close();}
+});
+test("upgrading populated legacy SQLite leases preserves quota fences keys and retirement state",()=>{
+  const {database,sql,budget}=fixture();
+  try{
+    const lease=budget.reserve(input,[]);budget.stageAttempt(leaseId);budget.staged(leaseId,"original-fence");
+    const legacy={...budget.get(leaseId)!} as Record<string,unknown>;delete legacy.kind;
+    sql.exec("update catalog_image_leases set reservation=? where lease_id=?",JSON.stringify(legacy),leaseId);
+    const upgraded=new SqliteImageBudget(sql),actual=upgraded.get(leaseId)!;
+    assert.equal((actual as unknown as {kind:string}).kind,"menu-item");assert.equal(actual.fenceEtag,"original-fence");
+    assert.equal(actual.stagingAttempts,1);assert.equal(actual.objectKey,lease.objectKey);assert.equal(upgraded.usage(restaurantId,[]),1048576);
+    assert.deepEqual(new SqliteImageBudget(sql).get(leaseId),actual);
+  }finally{database.close();}
+});
+
 
 test("successful uploads are counted once, but a smaller object does not refund its unresolved reservation", () => {
   const { database, budget } = fixture();

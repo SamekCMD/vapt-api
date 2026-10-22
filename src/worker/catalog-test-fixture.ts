@@ -24,13 +24,13 @@ export class CatalogRuntimeProbe extends PublicCatalogCoordinator {
     this.ctx.storage.sql.exec("INSERT INTO catalog_test_metrics VALUES (?, 1) ON CONFLICT(key) DO UPDATE SET value = value + 1", key);
   }
   async testSignal(state: CatalogState) { await this.sendPublishedSignal(state); }
-  async testReserveImage(bytes: number) {
+  async testReserveImage(bytes: number,branding=false) {
     try {
       const budget = new SqliteImageBudget(this.ctx.storage.sql);
-      await this.ctx.storage.transaction(async () => budget.reserve({ bytes, now: Date.now(), ttlMs: 60_000,
-        restaurantId: "11111111-1111-4111-8111-111111111111", itemId: "22222222-2222-4222-8222-222222222222",
-        leaseId: "33333333-3333-4333-8333-333333333333", contentType: "image/webp" }, []));
-      await this.ctx.storage.sync(); return { status: 200 };
+      const restaurantId="11111111-1111-4111-8111-111111111111";
+      const lease=await this.ctx.storage.transaction(async () => budget.reserve({ bytes, now: Date.now(), ttlMs: 60_000,restaurantId,
+        ...(branding?{kind:"branding" as const,leaseId:"44444444-4444-4444-8444-444444444444"}:{itemId:"22222222-2222-4222-8222-222222222222",leaseId:"33333333-3333-4333-8333-333333333333"}),contentType:"image/webp"},[]));
+      await this.ctx.storage.sync(); return { status: 200,objectKey:lease.objectKey,usage:budget.usage(restaurantId,[]) };
     } catch (error) { return { status: error instanceof AppError ? error.statusCode : 503 }; }
   }
   async testInfo() {
@@ -68,8 +68,9 @@ export default {
     if (url.pathname === "/_test/services") return Response.json({ calls: serviceCalls, hyperdrivePresent: !!env.HYPERDRIVE });
     if (url.pathname === "/_test/image-budget") {
       const room = env.PUBLIC_CATALOG_COORDINATOR.get(env.PUBLIC_CATALOG_COORDINATOR.idFromName("image-boundary"));
-      const result = await room.testReserveImage((await request.json() as { bytes: number }).bytes);
-      return Response.json({ ok: result.status === 200 }, { status: result.status });
+      const input=await request.json() as {bytes:number;branding?:boolean};
+      const result = await room.testReserveImage(input.bytes,input.branding);
+      return Response.json(result, { status: result.status });
     }
     if (url.pathname === "/_test/publish") {
       const state = await request.json() as CatalogState;
