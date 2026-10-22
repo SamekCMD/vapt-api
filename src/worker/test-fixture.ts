@@ -141,7 +141,7 @@ const fakeMenu = createMenuService({
 const fixtureRestaurant:RestaurantDto={
   id:'10000000-0000-4000-8000-000000000001',name:'Restaurante fixture',slug:'restaurante-fixture',
   cnpj:null,whatsapp:null,address:null,phone:null,hours:null,description:null,primaryColor:'#5C8A72',
-  secondaryColor:'#111114',fontFamily:'modern',logoUrl:null,planType:'business',planStatus:'active',trialEndsAt:null,
+  secondaryColor:'#111114',fontFamily:'modern',logoUrl:null,
   totalTables:1,maxTables:20,paymentMode:'open_tab',maxPendingOrders:3,localEnabled:true,deliveryEnabled:false,
   onboardingCompleted:true,updatedAt:'2026-10-19T00:00:00Z',
 };
@@ -256,7 +256,7 @@ const processedMercadoPagoEvents = new Set<string>();
 const fakeMercadoPago = {
   oauth: {
     async beginConnection() { return { authorizationUrl: "https://auth.mercadopago.com/authorization?synthetic=1" }; },
-    async handleCallback() { return { status: "connected", returnOrigin: "https://app.vapt.test" }; },
+    async handleCallback() { return { restaurantId:"10000000-0000-4000-8000-000000000001",status: "connected", returnOrigin: "https://app.vapt.test" }; },
     async getStatus() { return { status: "active" }; },
     async disconnect() { return { status: "disconnected" }; },
   },

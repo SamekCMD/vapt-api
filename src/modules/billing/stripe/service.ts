@@ -46,7 +46,7 @@ export function createStripeBillingService(
   gateway: StripeGateway, repository: StripeBillingStore,
   config: Pick<AppConfig, "stripe" | "frontendUrl">,
 ) {
-  const pageUrl = () => new URL("/dashboard/subscription", config.frontendUrl);
+  const pageUrl = (organizationId:string) => { const url=new URL("/dashboard/subscription",config.frontendUrl);url.searchParams.set("billingOrganizationId",organizationId);return url; };
   const validateCustomer = (customer: StripeCustomer, scope: BillingMetadataScope, expectedId?: string) => {
     assertStripeMode(customer.livemode, config.stripe.environment);
     assertStripeMetadata(customer.metadata, scope,customer.id);
@@ -103,8 +103,8 @@ export function createStripeBillingService(
           if (session.status !== "expired") invalidStripeResponse();
           await lock.clearPendingCheckout();
         }
-        const successUrl = pageUrl(); successUrl.searchParams.set("checkout", "returned");
-        const cancelUrl = pageUrl(); cancelUrl.searchParams.set("checkout", "cancelled");
+        const successUrl = pageUrl(scope.organizationId); successUrl.searchParams.set("checkout", "returned");
+        const cancelUrl = pageUrl(scope.organizationId); cancelUrl.searchParams.set("checkout", "cancelled");
         const session = await provider(() => gateway.createCheckout({
           customerId: scope.stripeCustomerId!, priceId: config.stripe.prices[input.planType],
           metadata, clientReferenceId: scope.organizationId,
@@ -122,7 +122,7 @@ export function createStripeBillingService(
       if (!scope.stripeCustomerId) throw new AppError(409, "billing_conflict", "No billing Customer is associated");
       validateCustomer(await provider(() => gateway.getCustomer(scope.stripeCustomerId!)), scope, scope.stripeCustomerId);
       const session = await provider(() => gateway.createPortal({
-        customerId: scope.stripeCustomerId!, configurationId: config.stripe.portalConfigurationId, returnUrl: pageUrl().href,
+        customerId: scope.stripeCustomerId!, configurationId: config.stripe.portalConfigurationId, returnUrl: pageUrl(scope.organizationId).href,
       }));
       assertStripeMode(session.livemode, config.stripe.environment);
       if (session.customerId !== scope.stripeCustomerId) invalidStripeResponse();

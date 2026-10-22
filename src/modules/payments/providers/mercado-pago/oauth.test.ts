@@ -807,7 +807,7 @@ test("OAuth callback validates state and redirects without returning credentials
   assert.equal(connected.statusCode, 302);
   assert.equal(
     connected.headers.location,
-    "https://app.vapt.test/dashboard/settings?payment_provider=mercado_pago&connection=connected",
+    `https://app.vapt.test/dashboard/settings?payment_provider=mercado_pago&connection=connected&restaurantId=${RESTAURANT_ID}`,
   );
   assert.equal(connected.body.includes("token"), false);
   await app.close();
@@ -835,7 +835,7 @@ test("OAuth callback returns to the trusted preview that initiated the connectio
   assert.equal(response.statusCode, 302);
   assert.equal(
     response.headers.location,
-    `${previewOrigin}/dashboard/settings?payment_provider=mercado_pago&connection=connected`,
+    `${previewOrigin}/dashboard/settings?payment_provider=mercado_pago&connection=connected&restaurantId=${RESTAURANT_ID}`,
   );
   await app.close();
 });

@@ -69,8 +69,8 @@ test("free local trial creates trusted hosted Checkout under lock without activa
   assert.deepEqual(f.calls.map(c => c.name), ["search", "createCustomer", "associate", "checkout", "save"]);
   assert.deepEqual(f.calls[1], { name: "createCustomer", input: { email: input.email, metadata }, key: "vapt:customer:"+owned.organizationId });
   assert.deepEqual(f.calls[3], { name: "checkout", input: { customerId: "cus_vapt", priceId: "price_pro", metadata,
-    clientReferenceId: owned.organizationId, successUrl: "https://app.vapt.test/dashboard/subscription?checkout=returned",
-    cancelUrl: "https://app.vapt.test/dashboard/subscription?checkout=cancelled" }, key: "vapt:checkout:"+owned.organizationId+":pro:" + input.idempotencyKey });
+    clientReferenceId: owned.organizationId, successUrl: "https://app.vapt.test/dashboard/subscription?billingOrganizationId="+owned.organizationId+"&checkout=returned",
+    cancelUrl: "https://app.vapt.test/dashboard/subscription?billingOrganizationId="+owned.organizationId+"&checkout=cancelled" }, key: "vapt:checkout:"+owned.organizationId+":pro:" + input.idempotencyKey });
   assert.equal(f.scope.planType, "starter"); assert.equal(f.scope.planStatus, "trialing"); assert.equal(f.scope.stripeSubscriptionId, null);
 });
 test("existing Customer is validated/reused and interrupted association is recovered", async () => {
@@ -127,7 +127,7 @@ test("Checkout requires a bounded request idempotency key", async () => {
 });
 test("Portal uses server-owned Customer, configuration and return URL", async () => {
   const f = fixture({ stripeCustomerId: "cus_vapt" }); assert.deepEqual(await f.service().createPortal(writer), { url: "https://billing.stripe.com/p/session/vapt" });
-  assert.deepEqual(f.calls.at(-1), { name: "portal", input: { customerId: "cus_vapt", configurationId: "bpc_vapt", returnUrl: "https://app.vapt.test/dashboard/subscription" } });
+  assert.deepEqual(f.calls.at(-1), { name: "portal", input: { customerId: "cus_vapt", configurationId: "bpc_vapt", returnUrl: "https://app.vapt.test/dashboard/subscription?billingOrganizationId="+owned.organizationId } });
   await assert.rejects(fixture().service().createPortal(writer), code("billing_conflict"));
   await assert.rejects(fixture({}, false).service().createPortal(writer), code("forbidden"));
 });

@@ -11,7 +11,32 @@ import {createMenuItemBodySchema} from '../menu/schemas.js';
 import {createStripeWebhookRepository} from '../billing/stripe/webhook-repository.js';
 import {createApiServices} from '../../composition/api-services.js';
 import {createManualPaymentProvider} from '../payments/providers/manual.js';
+import {createRestaurantRepository} from '../restaurants/repository.js';
+import Fastify from 'fastify';
+import {registerRestaurantRoutes} from '../restaurants/routes.js';
+import {registerAuthDecorator} from '../../plugins/auth.js';
+import {registerErrorHandler} from '../../plugins/error-handler.js';
 import type {AppConfig} from '../../lib/config.js';
+
+test('operational restaurant DTOs never disclose subscription state through explicit or legacy reads',async()=>{
+  await withTenantFixture(async f=>{
+    await f.pool.query('delete from public.restaurants where id=$1',[f.restB]);
+    await f.pool.query("update public.organization_subscriptions set plan_status='past_due',trial_ends_at=now()+interval '2 days' where organization_id=$1",[f.orgA]);
+    const app=Fastify();let currentUser=f.staff;
+    registerErrorHandler(app);registerAuthDecorator(app,async()=>({userId:currentUser,role:'authenticated',email:'synthetic@example.test'}));
+    await registerRestaurantRoutes(app,createRestaurantRepository(f.pool));
+    try{
+      for(const userId of [f.owner,f.adminActor.userId,f.manager,f.staff]){
+        currentUser=userId;
+        for(const url of ['/restaurants/'+f.restA,'/restaurants/me']){
+          const response=await app.inject({url});assert.equal(response.statusCode,200);
+          const value=response.json();assert.equal(value.id,f.restA);
+          assert.deepEqual(Object.keys(value).filter(key=>/plan|trial|billing|stripe/i.test(key)),[]);
+        }
+      }
+    }finally{await app.close();}
+  });
+});
 
 test('paired tenant product flow keeps SaaS effects unique and public DTOs private-field-free',async()=>{
   await withTenantFixture(async f=>{

@@ -2,7 +2,7 @@ import type { PoolClient } from "pg";
 import type { Database } from "../../lib/database.js";
 import { AppError } from "../../lib/errors.js";
 import type { RestaurantDto } from "../business/contracts.js";
-import type { BillingPlanStatus, RestaurantScope, RestaurantWriteScope, TenantActor } from '../tenancy/contracts.js';
+import type { RestaurantScope, RestaurantWriteScope, TenantActor } from '../tenancy/contracts.js';
 import { authorizeRestaurant, legacyWriteActor, resolveLegacyRestaurant, withRestaurantWrite } from '../tenancy/authorization.js';
 import { lockSlugs } from '../tenancy/locks.js';
 import type {
@@ -24,9 +24,6 @@ type RestaurantRow = {
   secondary_color: string;
   font_family: string;
   logo_url: string | null;
-  plan_type: "starter" | "pro" | "business";
-  plan_status: BillingPlanStatus;
-  trial_ends_at: string | Date | null;
   total_tables: number;
   max_tables: number;
   payment_mode: "open_tab" | "prepaid";
@@ -65,9 +62,6 @@ const RESTAURANT_COLUMNS = `
   secondary_color,
   font_family,
   logo_url,
-  plan_type,
-  plan_status,
-  trial_ends_at,
   total_tables,
   max_tables,
   payment_mode,
@@ -100,7 +94,7 @@ const PATCH_COLUMNS: Record<keyof UpdateOwnedRestaurantBody, string> = {
 };
 
 const SCOPED_COLUMNS = RESTAURANT_COLUMNS.split(',').map(c=>c.trim()).filter(Boolean)
-  .map(c=>`${['plan_type','plan_status','trial_ends_at'].includes(c)?'subscription':'restaurant'}.${c}`).join(',');
+  .map(c=>`restaurant.${c}`).join(',');
 
 function isoString(value: string | Date): string {
   return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
@@ -121,9 +115,6 @@ function mapRestaurant(row: RestaurantRow): RestaurantDto {
     secondaryColor: row.secondary_color,
     fontFamily: row.font_family,
     logoUrl: row.logo_url,
-    planType: row.plan_type,
-    planStatus: row.plan_status,
-    trialEndsAt: row.trial_ends_at === null ? null : isoString(row.trial_ends_at),
     totalTables: row.total_tables,
     maxTables: row.max_tables,
     paymentMode: row.payment_mode,
@@ -168,7 +159,6 @@ export function createRestaurantRepository(
       try {
         await authorizeRestaurant(queryable,scope,'restaurant.read');
         const result = await queryable.query<RestaurantRow>(`select ${SCOPED_COLUMNS} from public.restaurants restaurant
-          join public.organization_subscriptions subscription on subscription.organization_id=restaurant.organization_id
           join public.organization_members member on member.organization_id=restaurant.organization_id
           where restaurant.id=$1::uuid and member.user_id=$2::uuid and member.status='active'`,[scope.restaurantId,scope.userId]);
         return result.rows[0] ? mapRestaurant(result.rows[0]) : null;
@@ -185,8 +175,7 @@ export function createRestaurantRepository(
           const n = entries.length;
           const result = await client.query<RestaurantRow>(`update public.restaurants restaurant
             set ${entries.map(([key],i)=>`${PATCH_COLUMNS[key]}=$${i+1}`).join(',')}
-            from public.organization_subscriptions subscription
-            where restaurant.id=$${n+1}::uuid and subscription.organization_id=restaurant.organization_id
+            where restaurant.id=$${n+1}::uuid
               and exists(select 1 from public.organization_members member where member.organization_id=restaurant.organization_id
                 and member.user_id=$${n+2}::uuid and member.status='active') returning ${SCOPED_COLUMNS}`,values);
           return result.rows[0] ? mapRestaurant(result.rows[0]) : null;

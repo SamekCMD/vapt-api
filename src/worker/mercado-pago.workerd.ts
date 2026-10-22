@@ -88,6 +88,7 @@ test("enabled Mercado Pago preserves redirects, checkout, and both signed webhoo
     });
     assert.equal(callback.status, 302);
     assert.match(callback.headers.get("location") ?? "", /connection=connected/);
+    assert.equal(new URL(callback.headers.get('location')!).searchParams.get('restaurantId'),restaurantId);
     const browserReturn = await fixture.fetch(`${base}/payments/mercado-pago/return?result=success&payment_id=12345&external_reference=${transactionId}&return_origin=https%3A%2F%2Fapp.vapt.test`, {
       redirect: "manual",
     });

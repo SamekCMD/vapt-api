@@ -67,7 +67,7 @@ export async function registerMercadoPagoOAuthRoutes(
         error: query.error,
         errorDescription: query.error_description,
       });
-      const redirect = createMercadoPagoOAuthRedirect(config, result.status, result.returnOrigin);
+      const redirect = createMercadoPagoOAuthRedirect(config, result.status, result.restaurantId, result.returnOrigin);
       return reply.redirect(redirect.toString());
     },
   );

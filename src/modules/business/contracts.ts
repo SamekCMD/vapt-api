@@ -1,5 +1,3 @@
-import type { BillingPlanStatus } from '../tenancy/contracts.js';
-
 export type RestaurantDto = {
   id: string;
   name: string;
@@ -14,9 +12,6 @@ export type RestaurantDto = {
   secondaryColor: string;
   fontFamily: string;
   logoUrl: string | null;
-  planType: "starter" | "pro" | "business";
-  planStatus: BillingPlanStatus;
-  trialEndsAt: string | null;
   totalTables: number;
   maxTables: number;
   paymentMode: "open_tab" | "prepaid";

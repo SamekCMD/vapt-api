@@ -35,9 +35,10 @@ export function resolveReturnOrigin(value: string | undefined, config: AppConfig
   return origin;
 }
 
-export function createMercadoPagoOAuthRedirect(config: AppConfig, status: string, returnOrigin?: string): URL {
+export function createMercadoPagoOAuthRedirect(config: AppConfig, status: string, restaurantId:string, returnOrigin?: string): URL {
   const redirect = new URL("/dashboard/settings", returnOrigin ?? config.frontendUrl);
   redirect.searchParams.set("payment_provider", "mercado_pago");
   redirect.searchParams.set("connection", status);
+  redirect.searchParams.set("restaurantId",z.string().uuid().parse(restaurantId).toLowerCase());
   return redirect;
 }

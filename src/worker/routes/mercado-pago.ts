@@ -154,7 +154,7 @@ export function registerWorkerMercadoPagoRoutes(
       state: query.state, code: query.code, error: query.error,
       errorDescription: query.error_description,
     });
-    return context.redirect(createMercadoPagoOAuthRedirect(config, result.status, result.returnOrigin).toString());
+    return context.redirect(createMercadoPagoOAuthRedirect(config, result.status, result.restaurantId, result.returnOrigin).toString());
   });
 
   app.get("/restaurants/:restaurantId/payments/mercado-pago/status", enabled, rate, authenticated, async (context) => {

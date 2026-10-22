@@ -20,11 +20,11 @@ test('updating restaurantA never changes restaurantB of the same owner', async (
     await restaurants.updateRestaurant({ ...f.ownerActor,restaurantId:f.restA }, { name:'A novo' });
     assert.equal((await restaurants.getRestaurant({ userId:f.owner,restaurantId:f.restB })).name, 'Restaurante B');
     const a = await restaurants.getRestaurant({ userId:f.owner,restaurantId:f.restA });
-    assert.equal(a.name, 'A novo'); assert.equal(a.planType,'business'); assert.equal(a.planStatus,'active');
+    assert.equal(a.name, 'A novo'); assert.equal(Object.hasOwn(a,'planStatus'),false);
     assert.equal(Object.hasOwn(a,'stripe_customer_id'),false);
     assert.equal(Object.hasOwn(a,'billing_contact_user_id'),false);
     await f.pool.query(`update public.organization_subscriptions set plan_status='past_due' where organization_id=$1`, [f.orgA]);
-    assert.equal((await restaurants.getRestaurant({ userId:f.owner,restaurantId:f.restB })).planStatus,'past_due');
+    assert.equal(Object.hasOwn(await restaurants.getRestaurant({ userId:f.owner,restaurantId:f.restB }),'planStatus'),false);
   });
 });
 test('slug availability is manage-scoped and a concurrent rename still fails at the unique constraint',async()=>{
