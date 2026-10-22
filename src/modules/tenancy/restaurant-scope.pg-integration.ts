@@ -1,3 +1,4 @@
+import {AppError} from '../../lib/errors.js';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
@@ -26,6 +27,21 @@ test('updating restaurantA never changes restaurantB of the same owner', async (
     assert.equal((await restaurants.getRestaurant({ userId:f.owner,restaurantId:f.restB })).planStatus,'past_due');
   });
 });
+test('slug availability is manage-scoped and a concurrent rename still fails at the unique constraint',async()=>{
+  await withTenantFixture(async f=>{
+    const repository=createRestaurantRepository(f.pool),scope={userId:f.adminActor.userId,restaurantId:f.restA};
+    const own=(await f.pool.query('select slug from public.restaurants where id=$1',[f.restA])).rows[0].slug;
+    assert.equal(await repository.checkSlugAvailability(scope,own),true);
+    assert.equal(await repository.checkSlugAvailability(scope,'slug-livre'),true);
+    await assert.rejects(repository.checkSlugAvailability({userId:f.staffActor.userId,restaurantId:f.restA},own),error=>error instanceof AppError&&error.statusCode===403);
+    await assert.rejects(repository.checkSlugAvailability({userId:f.other,restaurantId:f.restA},own),error=>error instanceof AppError&&error.statusCode===403);
+    await repository.updateRestaurant({...f.adminActor,restaurantId:f.restB},{slug:'slug-livre'});
+    assert.equal(await repository.checkSlugAvailability(scope,'slug-livre'),false);
+    await assert.rejects(repository.updateRestaurant({...f.adminActor,restaurantId:f.restA},{slug:'slug-livre'}),error=>error instanceof AppError&&error.code==='slug_conflict'&&error.statusCode===409);
+    assert.equal((await f.pool.query('select slug from public.restaurants where id=$1',[f.restA])).rows[0].slug,own);
+  });
+});
+
 
 test('menu children, chef suggestions and variations stay within the explicit restaurant', async () => {
   await withTenantFixture(async (f) => {

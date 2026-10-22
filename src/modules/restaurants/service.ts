@@ -1,3 +1,5 @@
+import {validateWithSchema} from "../../lib/validation.js";
+import {slugAvailabilityQuerySchema} from "./schemas.js";
 import { AppError } from "../../lib/errors.js";
 import type { RestaurantScope, RestaurantWriteScope, TenantActor } from '../tenancy/contracts.js';
 import type { RestaurantRepository } from "./repository.js";
@@ -12,6 +14,10 @@ function notFound(): AppError {
 
 export function createRestaurantService(repository: RestaurantRepository) {
   return {
+    async checkSlugAvailability(scope:RestaurantScope,slug:string){
+      const input=validateWithSchema(slugAvailabilityQuerySchema,{slug});
+      return {available:await repository.checkSlugAvailability(scope,input.slug)};
+    },
     resolveLegacyRestaurant(userId:string) { return repository.resolveLegacyRestaurant(userId); },
     async getRestaurant(scope:RestaurantScope) {
       const restaurant=await repository.getRestaurant(scope); if (!restaurant) throw notFound(); return restaurant;

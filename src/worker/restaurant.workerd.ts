@@ -12,6 +12,7 @@ test("private Worker route inventory requires a session and scopes owner operati
     const fixture = server.getWorker("vapt-api-worker-test");
     const routes = [
       ['GET','/restaurants/10000000-0000-4000-8000-000000000001'],
+      ['GET','/restaurants/10000000-0000-4000-8000-000000000001/slug-availability?slug=novo-slug'],
       ['PATCH','/restaurants/10000000-0000-4000-8000-000000000001'],
       ['GET','/restaurants/10000000-0000-4000-8000-000000000001/menu-items'],
       ['POST','/restaurants/10000000-0000-4000-8000-000000000001/menu-items'],
@@ -53,6 +54,10 @@ test("private Worker route inventory requires a session and scopes owner operati
 
     const explicit='/restaurants/10000000-0000-4000-8000-000000000001';
     const headers={ cookie:'session=owner','content-type':'application/json' };
+    const availability=await fixture.fetch(base+explicit+'/slug-availability?slug=novo-slug',{headers});
+    assert.equal(availability.status,200);assert.equal(availability.headers.get('Cache-Control'),'no-store');assert.deepEqual(await availability.json(),{available:true});
+    assert.equal((await fixture.fetch(base+explicit+'/slug-availability?slug=-invalido',{headers})).status,400);
+    assert.equal((await fixture.fetch(base+'/restaurants/10000000-0000-4000-8000-000000000002/slug-availability?slug=novo-slug',{headers})).status,403);
     const scopedRead=await fixture.fetch(base+explicit,{ headers });
     assert.equal(scopedRead.status,200);
     assert.equal((await scopedRead.json() as { id:string }).id,'10000000-0000-4000-8000-000000000001');

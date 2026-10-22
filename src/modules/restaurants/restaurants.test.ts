@@ -92,7 +92,7 @@ test('retired owner-only onboarding cannot execute legacy SQL or bypass canonica
 
 function testRestaurantRepository(overrides:Partial<RestaurantRepository>):RestaurantRepository {
   const unexpected=async()=>{ throw new Error('Unexpected repository operation in this unit fixture'); };
-  return { resolveLegacyRestaurant:unexpected,getRestaurant:unexpected,updateRestaurant:unexpected,
+  return { resolveLegacyRestaurant:unexpected,getRestaurant:unexpected,checkSlugAvailability:unexpected,updateRestaurant:unexpected,
     createOwnedRestaurant:unexpected,findOwnedRestaurant:unexpected,updateOwnedRestaurant:unexpected,...overrides };
 }
 

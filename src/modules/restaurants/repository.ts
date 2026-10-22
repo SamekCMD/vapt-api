@@ -40,6 +40,7 @@ type RestaurantRow = {
 export interface RestaurantRepository {
   resolveLegacyRestaurant(userId:string):Promise<RestaurantScope>;
   getRestaurant(scope:RestaurantScope):Promise<RestaurantDto|null>;
+  checkSlugAvailability(scope:RestaurantScope,slug:string):Promise<boolean>;
   updateRestaurant(scope:RestaurantWriteScope,patch:UpdateOwnedRestaurantBody):Promise<RestaurantDto|null>;
   createOwnedRestaurant(userId: string, input: OnboardingBody): Promise<RestaurantDto>;
   findOwnedRestaurant(userId: string): Promise<RestaurantDto | null>;
@@ -134,13 +135,14 @@ function mapRestaurant(row: RestaurantRow): RestaurantDto {
   };
 }
 
-function isUniqueViolation(error: unknown): boolean {
+function isUniqueViolation(error: unknown): error is {code:string;constraint?:unknown} {
   return typeof error === "object" && error !== null && "code" in error && error.code === "23505";
 }
 
 function mapStorageError(error: unknown): never {
   if (error instanceof AppError) throw error;
   if (isUniqueViolation(error)) {
+    if("constraint" in error&&error.constraint==="restaurants_slug_key")throw new AppError(409,"slug_conflict","Slug already in use");
     throw new AppError(409, "restaurant_conflict", "Restaurant already exists");
   }
   throw new AppError(500, "internal_error", "Failed to persist restaurant");
@@ -153,6 +155,15 @@ export function createRestaurantRepository(
   const queryable = options.transaction ?? database;
   const repository:RestaurantRepository = {
     resolveLegacyRestaurant(userId) { return resolveLegacyRestaurant(queryable,userId); },
+    async checkSlugAvailability(scope,slug){
+      try{
+        await authorizeRestaurant(queryable,scope,'restaurant.manage');
+        const result=await queryable.query<{available:boolean}>(`select not exists(select 1 from public.restaurants candidate where candidate.slug=$3::text and candidate.id<>target.id) as available
+          from public.restaurants target join public.organization_members member on member.organization_id=target.organization_id
+          where target.id=$1::uuid and member.user_id=$2::uuid and member.status='active' and member.role in ('owner','admin','manager')`,[scope.restaurantId,scope.userId,slug]);
+        if(!result.rows[0])throw new AppError(403,'forbidden','Forbidden');return result.rows[0].available;
+      }catch(error){mapStorageError(error);}
+    },
     async getRestaurant(scope) {
       try {
         await authorizeRestaurant(queryable,scope,'restaurant.read');

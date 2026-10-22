@@ -9,7 +9,7 @@ import { validateWithSchema } from "../../lib/validation.js";
 import { kitchenOrderParamsSchema, scopedKitchenOrderParamsSchema, updateKitchenOrderStatusBodySchema } from "../../modules/kitchen/schemas.js";
 import { createMenuItemBodySchema, menuItemParamsSchema, restaurantMenuParamsSchema, restaurantMenuItemParamsSchema, updateMenuItemBodySchema } from "../../modules/menu/schemas.js";
 import { overviewQuerySchema } from "../../modules/overview/schemas.js";
-import { onboardingBodySchema, restaurantParamsSchema, updateOwnedRestaurantBodySchema } from "../../modules/restaurants/schemas.js";
+import { onboardingBodySchema, slugAvailabilityQuerySchema,restaurantParamsSchema, updateOwnedRestaurantBodySchema } from "../../modules/restaurants/schemas.js";
 import { tableSessionParamsSchema, scopedTableSessionParamsSchema, transferTableSessionBodySchema } from "../../modules/table-sessions/schemas.js";
 import type { WorkerHonoEnv } from "../app.js";
 import { parseWorkerJson, requireWorkerAuth, workerRateLimit } from "../http.js";
@@ -75,6 +75,11 @@ export function registerWorkerRestaurantRoutes(
     return context.body(null, 204);
   });
 
+  app.get('/restaurants/:restaurantId/slug-availability',rate,authenticated,async context=>{
+    const {restaurantId}=validateWithSchema(restaurantParamsSchema,context.req.param());
+    const {slug}=validateWithSchema(slugAvailabilityQuerySchema,context.req.query());const services=await context.get('getServices')();
+    context.header('Cache-Control','no-store');return context.json(await services.restaurants.checkSlugAvailability({userId:context.get('auth').userId,restaurantId},slug));
+  });
   app.get('/restaurants/:restaurantId',rate,authenticated,async context=>{
     const { restaurantId }=validateWithSchema(restaurantParamsSchema,context.req.param());
     const services=await context.get('getServices')();

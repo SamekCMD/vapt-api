@@ -6,6 +6,8 @@ const slugSchema = z.string()
   .max(60)
   .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
 
+export const slugAvailabilityQuerySchema=z.object({slug:slugSchema}).strict();
+
 const nullableText = (max: number) => z.string().trim().max(max).nullable();
 
 export const restaurantParamsSchema=z.object({ restaurantId:z.string().uuid().transform(id=>id.toLowerCase()) }).strict();

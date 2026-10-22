@@ -6,6 +6,7 @@ import { actorFromAuth, requireAuth } from "../../plugins/auth.js";
 import type { RestaurantRepository } from "./repository.js";
 import {
   onboardingBodySchema,
+  slugAvailabilityQuerySchema,
   restaurantParamsSchema,
   updateOwnedRestaurantBodySchema,
 } from "./schemas.js";
@@ -43,6 +44,11 @@ export async function registerRestaurantRoutes(
     },
   );
 
+  app.get('/restaurants/:restaurantId/slug-availability',{config:{rateLimitGroup:'auth'},preHandler:authenticated},async(request,reply)=>{
+    const {restaurantId}=validateWithSchema(restaurantParamsSchema,request.params);
+    const {slug}=validateWithSchema(slugAvailabilityQuerySchema,request.query);reply.header('Cache-Control','no-store');
+    return service.checkSlugAvailability({userId:request.auth!.userId,restaurantId},slug);
+  });
   app.get('/restaurants/:restaurantId',{ config:{ rateLimitGroup:'auth' },preHandler:authenticated },async request=>{
     const { restaurantId }=validateWithSchema(restaurantParamsSchema,request.params);
     return service.getRestaurant({ userId:request.auth!.userId,restaurantId });

@@ -151,6 +151,7 @@ function assertFixtureScope(scope:{ userId:string;restaurantId:string }) {
   }
 }
 const fakeRestaurants=createRestaurantService({
+  async checkSlugAvailability(scope,_slug){assertFixtureScope(scope);return true;},
   async resolveLegacyRestaurant(userId) { assertFixtureScope({ userId,restaurantId:fixtureRestaurant.id }); return { userId,restaurantId:fixtureRestaurant.id }; },
   async getRestaurant(scope) { assertFixtureScope(scope); return fixtureRestaurant; },
   async updateRestaurant(scope,patch) { assertFixtureScope(scope); return { ...fixtureRestaurant,...patch }; },
