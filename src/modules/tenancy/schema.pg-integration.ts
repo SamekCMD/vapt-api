@@ -13,6 +13,26 @@ test('tenant foundation is absent before010 and preserves existing identities af
 
 // --through009 deliberately runs only the real missing-schema probe above (RED).
 if (selectedTenantStage() !== '009') {
+  // The restored Neon baseline has no optional004 owner index.010 must install
+  // the organization guard without recreating a legacy blocker just to drop it.
+  test('migration accepts an absent legacy owner index and retains organization capacity enforcement', async () => {
+    await withBaselineDatabase(async (pool) => {
+      await pool.query('drop index public.restaurants_owner_id_unique');
+      const owner = await seedUser(pool);
+      const legacy = randomUUID();
+      await pool.query(`insert into public.restaurants (id,owner_id,name,slug,plan_type,plan_status)
+        values ($1,$2,'Legado sem índice','legacy-no-owner-index','starter','active')`, [legacy, owner]);
+      await applyTenantMigration(pool);
+      const restaurant = (await pool.query('select owner_id,organization_id from public.restaurants where id=$1', [legacy])).rows[0];
+      assert.equal(restaurant.owner_id, owner);
+      assert.equal((await pool.query("select to_regclass('public.restaurants_owner_id_unique') is null as absent")).rows[0].absent, true);
+      await pool.query(await sqlFile('verify-tenant-foundation.sql'));
+      await assert.rejects(seedRestaurant(pool, restaurant.organization_id, owner),
+        { code: '23514', constraint: 'organization_restaurant_limit' });
+      assert.equal((await pool.query('select count(*)::int as n from public.restaurants')).rows[0].n, 1);
+    });
+  });
+
   test('backfill preserves restaurant, auth, billing and completed onboarding without invented activation', async () => {
     await withBaselineDatabase(async (pool) => {
       const user = await seedUser(pool), rest = randomUUID(), item = randomUUID();
