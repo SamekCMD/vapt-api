@@ -164,6 +164,21 @@ test('canonical onboarding finalization is atomic with its public catalog journa
     assert.equal(one.state.catalog.restaurant.id,draft.id);assert.equal(one.state.catalog.items.length,0);
     assert.doesNotMatch(JSON.stringify(one.state),/billingContact|organizationId|stripeCustomer/);
     assert.equal((await f.pool.query("select count(*)::int n from public.onboarding_intents where operation_id=$1 and kind='finalize'",[input.operationId])).rows[0].n,1);
+    const sequence=(await f.pool.query('select last_value::text value from public.catalog_publication_version_seq')).rows[0].value;
+    const retry=await applyCatalogCommand(f.pool,{...input,operationId:randomUUID()});
+    assert.equal(retry.receipt.version,one.receipt.version,'a new browser must not publish the already completed onboarding again');
+    assert.deepEqual(retry.state,one.state);
+    assert.equal((await f.pool.query('select last_value::text value from public.catalog_publication_version_seq')).rows[0].value,sequence);
+    assert.equal((await f.pool.query("select count(*)::int n from public.onboarding_intents where restaurant_id=$1 and kind='finalize'",[draft.id])).rows[0].n,2,'each operation keeps its audit identity without another trial or revision');
+  });
+});
+test('a restaurant completed before catalog activation still receives its first snapshot once',async()=>{
+  await withTenantFixture(async f=>{
+    const repository=createOnboardingRepository(f.pool),draft=await repository.createOrganizationDraft(f.adminActor,f.orgA,randomUUID(),{name:'Previously Complete',slug:'previously-complete'});
+    await repository.saveDraft(f.adminActor,draft.id,{onboardingStep:2});await repository.finalizeDraft(f.adminActor,draft.id,randomUUID());
+    const input={operationId:randomUUID(),restaurantId:draft.id,actor:f.adminActor,mutation:{type:'onboarding.finalize',input:{restaurantId:draft.id}}} as CatalogCommand;
+    const first=await applyCatalogCommand(f.pool,input);assert.ok(first.receipt.version);assert.equal(first.state.catalog.restaurant.id,draft.id);
+    assert.equal((await applyCatalogCommand(f.pool,{...input,operationId:randomUUID()})).receipt.version,first.receipt.version);
   });
 });
 test('integrity diagnostics do not turn the stable billing contact into a membership authorization requirement',async()=>{

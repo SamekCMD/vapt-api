@@ -76,8 +76,16 @@ export async function applyCatalogCommand(
     await client.query(`delete from public.catalog_publication_operations where operation_id in
       (select operation_id from public.catalog_publication_operations where expires_at <= clock_timestamp()
       order by expires_at limit 100)`);
+    // A different browser may finalize an already completed restaurant with a
+    // new operation key. Keep its receipt, but do not create another revision.
+    // Completion predating catalog activation still needs its first snapshot.
+    const completedRevision = mutation.type === 'onboarding.finalize'
+      ? await client.query<{version:string}>(`select p.version::text as version
+          from public.catalog_publication_revisions p join public.restaurants r on r.id=p.restaurant_id
+          where r.id=$1::uuid and r.onboarding_status='complete'`, [command.restaurantId])
+      : null;
     const result = await mutate(database, client, command, options.publicBaseUrl ?? null);
-    const allocated = await client.query<{ version: string }>(
+    const allocated = completedRevision?.rows[0] ? completedRevision : await client.query<{ version: string }>(
       "select nextval('public.catalog_publication_version_seq')::text as version",
     );
     const version = allocated.rows[0]!.version;
