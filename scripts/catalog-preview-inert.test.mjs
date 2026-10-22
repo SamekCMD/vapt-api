@@ -112,3 +112,135 @@ test('a second apply only inspects a verified already prepared preview',async()=
   const again=await runCatalogInertPreview(['apply'],value.ports);
   assert.equal(again.status,0);assert.equal(again.report.prepared,true);assert.equal(value.commands.length,3);
 });
+
+const existingCatalogRoom = 'eeda94fea90349be8b62b82067c79b27';
+const compatibleBaseline = '7b51fca2-207e-4e29-948e-159761b362ea';
+function compatibleFixture(mutate = () => {}) {
+  const value = fixture(({meta,deployment}) => {
+    deployment.id=compatibleBaseline; deployment.number=27;
+    deployment.migration_tag='catalog-publication-preview-sqlite-v1'; deployment.limits={cpu_ms:1000};
+    for(const [name,text] of Object.entries(config.previews.vars)) deployment.env[name]={type:'plain_text',text};
+    deployment.env.PUBLIC_CATALOG_BUCKET={type:'r2_bucket',bucket_name:'vapt-catalog-preview'};
+    deployment.env.PUBLIC_CATALOG_COORDINATOR={type:'durable_object_namespace',namespace_id:existingCatalogRoom,class_name:'PublicCatalogCoordinator'};
+    mutate({meta,deployment});
+  });
+  const execute=value.ports.execute;
+  value.ports.execute=(exe,args,options)=>{
+    const result=execute(exe,args,options);
+    if(args[1]!=='preview') return result;
+    value.deployment.number=28;
+    value.deployment.env.PUBLIC_CATALOG_COORDINATOR.namespace_id=existingCatalogRoom;
+    return {...result,stdout:JSON.stringify({preview:value.meta,deployment:value.deployment})};
+  };
+  value.accessBlocked=true;
+  value.bucketManaged={enabled:false}; value.bucketDomains={domains:[]};
+  value.hyperdrive={id:'0c05fec2924b4f3b9225f3d689ba7ea9',origin:{database:'vapt',user:'vapt_api_preview',
+    host:'ep-hidden-bird-b673zocn.c-2.us-east-1.aws.neon.tech',port:5432,scheme:'postgres'},caching:{disabled:true}};
+  const transport=value.ports.fetch;
+  value.ports.fetch=async(url,options)=>{
+    if(url==='https://stage11-inert-vapt-api-parallel.autoistloko.workers.dev') {
+      assert.equal(options.method,'GET'); assert.equal(options.redirect,'manual'); assert.equal(options.headers,undefined);
+      return value.accessBlocked?new Response(null,{status:302,headers:{location:'https://synthetic.cloudflareaccess.com/cdn-cgi/access/login/preview'}}):Response.json({public:true});
+    }
+    if(url===base+'/hyperdrive/configs/0c05fec2924b4f3b9225f3d689ba7ea9') return Response.json({success:true,result:value.hyperdrive});
+    if(url===base+'/r2/buckets/vapt-catalog-preview/domains/managed') return Response.json({success:true,result:value.bucketManaged});
+    if(url===base+'/r2/buckets/vapt-catalog-preview/domains/custom') return Response.json({success:true,result:value.bucketDomains});
+    return transport(url,options);
+  };
+  return value;
+}
+
+test('compatible publication replaces only the pinned inert deployment and retains both namespaces',async()=>{
+  const {runCatalogInertPreview}=await feature(); const value=compatibleFixture();
+  const result=await runCatalogInertPreview(['publish-compatible'],value.ports);
+  assert.equal(result.status,0); assert.equal(value.applied(),true);
+  assert.equal(result.report.compatiblePublished,true);
+  assert.equal(result.report.previousDeploymentId,compatibleBaseline);
+  assert.equal(result.report.catalogNamespaceId,existingCatalogRoom);
+  assert.equal(result.report.realtimeNamespaceId,oldRoom);
+  assert.equal(result.report.reader,false); assert.equal(result.report.writer,false);
+  assert.equal(result.report.activationReady,false); assert.equal(value.commands.length,2);
+  assert.doesNotMatch(JSON.stringify(result),/synthetic-secret|Bearer/);
+});
+
+test('compatible publication is one-shot; inspect and old apply retain read-only prepared behavior',async()=>{
+  const {runCatalogInertPreview}=await feature(); const value=compatibleFixture();
+  for(const action of ['inspect','apply']) assert.equal((await runCatalogInertPreview([action],value.ports)).status,0);
+  assert.equal(value.applied(),false);
+  assert.equal((await runCatalogInertPreview(['publish-compatible'],value.ports)).status,0);
+  const again=await runCatalogInertPreview(['publish-compatible'],value.ports);
+  assert.equal(again.status,1); assert.equal(value.commands.filter(c=>c.args[1]==='preview').length,1);
+});
+
+for(const [label,change] of [
+  ['another deployment',({deployment})=>{deployment.id='11111111-1111-4111-8111-111111111111';}],
+  ['another generation',({deployment})=>{deployment.number=28;}],
+  ['unprepared preview',({deployment})=>{deployment.migration_tag='stage12-realtime-sqlite-v1';}],
+  ['different catalog namespace',({deployment})=>{deployment.env.PUBLIC_CATALOG_COORDINATOR.namespace_id=newRoom;}],
+  ['writer already enabled',({deployment})=>{deployment.env.PUBLIC_CATALOG_WRITER_ENABLED.text='true';}],
+]) test(`compatible publication rejects ${label} before the write`,async()=>{
+  const {runCatalogInertPreview}=await feature(); const value=compatibleFixture(change);
+  const result=await runCatalogInertPreview(['publish-compatible'],value.ports);
+  assert.equal(result.status,1); assert.equal(value.applied(),false);
+});
+
+for(const [label,change] of [
+  ['recreated catalog namespace',v=>{v.deployment.env.PUBLIC_CATALOG_COORDINATOR.namespace_id=newRoom;}],
+  ['unexpected generation',v=>{v.deployment.number=29;}],
+  ['reader enabled',v=>{v.deployment.env.PUBLIC_CATALOG_READER_ENABLED.text='true';}],
+  ['lost secret',v=>{delete v.deployment.env.BETTER_AUTH_SECRET;}],
+  ['larger CPU',v=>{v.deployment.limits.cpu_ms=30000;}],
+]) test(`compatible publication reports uncertain ${label} without retry`,async()=>{
+  const {runCatalogInertPreview}=await feature(); const value=compatibleFixture(); const execute=value.ports.execute;
+  value.ports.execute=(exe,args,options)=>{const result=execute(exe,args,options);if(args[1]==='preview') change(value);return result;};
+  const result=await runCatalogInertPreview(['publish-compatible'],value.ports);
+  assert.equal(value.applied(),true); assert.equal(result.status,1);
+  assert.equal(result.report.code,'catalog_preview_deployment_uncertain');
+  assert.equal(value.commands.filter(c=>c.args[1]==='preview').length,1);
+});
+
+test('compatible publication rejects target overrides before auth and hides uncertain CLI failures',async()=>{
+  const {runCatalogInertPreview}=await feature();
+  for(const args of [['publish-compatible','production'],['publish-compatible','--force']]) {
+    assert.equal((await runCatalogInertPreview(args,{execute(){throw Error('Must not start');}})).status,1);
+  }
+  const value=compatibleFixture(); const execute=value.ports.execute;
+  value.ports.execute=(exe,args,options)=>args[1]==='auth'?execute(exe,args,options):{status:1,stdout:'synthetic-secret',stderr:'synthetic-secret'};
+  const result=await runCatalogInertPreview(['publish-compatible'],value.ports);
+  assert.equal(result.status,1); assert.equal(result.report.code,'catalog_preview_deployment_uncertain');
+  assert.equal(result.report.activationReady,false); assert.doesNotMatch(JSON.stringify(result),/synthetic-secret/);
+});
+
+for(const worker of ['vapt-api-production','vapt-web','vapt-api-parallel']) {
+  test(`compatible publication detects drift in ${worker} without repairing it`,async()=>{
+    const {runCatalogInertPreview}=await feature(); const value=compatibleFixture(); const transport=value.ports.fetch;
+    value.ports.fetch=async(url,options)=>value.applied()&&url.endsWith(`/workers/scripts/${worker}/deployments`)
+      ?Response.json({success:true,result:{deployments:[{id:'unexpected',versions:[]}]}}):transport(url,options);
+    const result=await runCatalogInertPreview(['publish-compatible'],value.ports);
+    assert.equal(value.applied(),true); assert.equal(result.status,1);
+    assert.equal(result.report.code,'catalog_preview_deployment_uncertain');
+    assert.equal(value.commands.filter(c=>c.args[1]==='preview').length,1);
+  });
+}
+
+for(const [label,change] of [
+  ['Access removed',v=>{v.accessBlocked=false;}],
+  ['public R2',v=>{v.bucketManaged.enabled=true;}],
+  ['R2 custom domain',v=>{v.bucketDomains.domains=[{domain:'public.invalid'}];}],
+  ['wrong database host',v=>{v.hyperdrive.origin.host='ep-holy-wildflower-b6vtv1dd-pooler.c-2.us-east-1.aws.neon.tech';}],
+  ['wrong database role',v=>{v.hyperdrive.origin.user='neondb_owner';}],
+  ['database query cache',v=>{v.hyperdrive.caching.disabled=false;}],
+]) test(`compatible publication rejects ${label} at resource readback`,async()=>{
+  const {runCatalogInertPreview}=await feature(); const value=compatibleFixture(); change(value);
+  const result=await runCatalogInertPreview(['publish-compatible'],value.ports);
+  assert.equal(result.status,1); assert.equal(value.applied(),false);
+});
+
+test('compatible publication treats lost Access after write as uncertain without another write',async()=>{
+  const {runCatalogInertPreview}=await feature(); const value=compatibleFixture(); const execute=value.ports.execute;
+  value.ports.execute=(exe,args,options)=>{const result=execute(exe,args,options);if(args[1]==='preview')value.accessBlocked=false;return result;};
+  const result=await runCatalogInertPreview(['publish-compatible'],value.ports);
+  assert.equal(value.applied(),true); assert.equal(result.status,1);
+  assert.equal(result.report.code,'catalog_preview_deployment_uncertain');
+  assert.equal(value.commands.filter(c=>c.args[1]==='preview').length,1);
+});

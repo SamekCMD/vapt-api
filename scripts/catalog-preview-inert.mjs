@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 import { checkCatalogConfig } from './verify-catalog-config.mjs';
+import { assertCacheDisabledResource } from './verify-hyperdrive-preview.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const account = '3ce69408aa5112617a282957aba71932';
@@ -13,6 +14,9 @@ const previewId = '56efdbf131174b8fba43387369c6f1e3';
 const realtimeId = '69fbe1f54ad64a93b7cb761910da094a';
 const configuration = 'wrangler.worker-catalog-preview.jsonc';
 const migration = 'catalog-publication-preview-sqlite-v1';
+// One specifically authorized code refresh, not a general deploy or retry path.
+const compatibleBaseline = '7b51fca2-207e-4e29-948e-159761b362ea';
+const compatibleCatalogNamespace = 'eeda94fea90349be8b62b82067c79b27';
 const secretNames = ['BETTER_AUTH_SECRET','PARALLEL_PREVIEW_TOKEN','PUBLIC_ORDER_TOKEN_SECRET','R2_ACCESS_KEY_ID','R2_SECRET_ACCESS_KEY','RESEND_API_KEY','STRIPE_SECRET_KEY','STRIPE_WEBHOOK_SECRET','TURNSTILE_SECRET_KEY'];
 const controlPaths = ['vapt-api-production','vapt-web','vapt-api-parallel'].map(name=>`/workers/scripts/${name}/deployments`);
 const ensure = (condition,code) => { if(!condition) throw Object.assign(new Error('Catalog preview guard failed'),{safeCode:code}); };
@@ -54,7 +58,8 @@ function checkPreview(meta,deployment,config,prepared) {
 // This narrow, separately authorized operation never opens the general deploy
 // operator. No supplied worker/account/config/flags/secrets or automatic retry.
 export async function runCatalogInertPreview(args,ports={}) {
-  if(!Array.isArray(args)||args.length!==1||!['inspect','apply'].includes(args[0])) return failed('catalog_preview_arguments_invalid');
+  if(!Array.isArray(args)||args.length!==1||!['inspect','apply','publish-compatible'].includes(args[0])) return failed('catalog_preview_arguments_invalid');
+  const compatible=args[0]==='publish-compatible';
   const execute=ports.execute??spawnSync; const transport=ports.fetch??fetch;
   let attempted=false; let credential;
   const options={cwd:root,shell:false,windowsHide:true,encoding:'utf8',stdio:'pipe',maxBuffer:2_097_152,timeout:120_000,
@@ -75,6 +80,23 @@ export async function runCatalogInertPreview(args,ports={}) {
     }
     return snapshots;
   }
+  async function checkCompatibleResources() {
+    const access=await transport('https://stage11-inert-vapt-api-parallel.autoistloko.workers.dev',
+      {method:'GET',redirect:'manual',signal:AbortSignal.timeout(15000)});
+    const location=new URL(access.headers.get('location')??'');
+    await access.body?.cancel();
+    ensure(access.status===302 && location.protocol==='https:' && location.hostname.endsWith('.cloudflareaccess.com')
+      && location.pathname.startsWith('/cdn-cgi/access/login/'),'catalog_preview_access_invalid');
+    const managed=await read('/r2/buckets/vapt-catalog-preview/domains/managed');
+    const custom=await read('/r2/buckets/vapt-catalog-preview/domains/custom');
+    ensure(managed.enabled===false && Array.isArray(custom.domains) && custom.domains.length===0,'catalog_preview_bucket_not_private');
+    const database=await read('/hyperdrive/configs/0c05fec2924b4f3b9225f3d689ba7ea9');
+    const host=database.origin?.host;
+    ensure(database.id==='0c05fec2924b4f3b9225f3d689ba7ea9' && typeof host==='string'
+      && host.startsWith('ep-hidden-bird-b673zocn.') && host.endsWith('.neon.tech')
+      && database.origin.scheme==='postgres','catalog_preview_database_origin_invalid');
+    assertCacheDisabledResource(database,host);
+  }
   try {
     const config=JSON.parse(readFileSync(resolve(root,configuration),'utf8'));
     ensure(checkCatalogConfig(config).ok,'catalog_preview_configuration_invalid');
@@ -86,21 +108,30 @@ export async function runCatalogInertPreview(args,ports={}) {
     const meta=await read(previewPath); const before=await read(previewPath+'/deployments/latest');
     const alreadyPrepared=before.migration_tag===migration;
     checkPreview(meta,before,config,alreadyPrepared);
-    if(args[0]==='inspect'||alreadyPrepared) return {status:0,report:{ok:true,prepared:alreadyPrepared,previewId,deploymentId:before.id,deploymentNumber:before.number,
+    if(compatible) ensure(alreadyPrepared && before.id===compatibleBaseline && before.number===27
+      && before.env.PUBLIC_CATALOG_COORDINATOR.namespace_id===compatibleCatalogNamespace,'catalog_preview_compatible_baseline_changed');
+    if(args[0]==='inspect'||(!compatible&&alreadyPrepared)) return {status:0,report:{ok:true,prepared:alreadyPrepared,previewId,deploymentId:before.id,deploymentNumber:before.number,
       ...(alreadyPrepared?{cpuLimitMs:1000,cpuLimitVerified:true,cpuWorkloadVerified:false}:{}),activationReady:false}};
     // The provider evicts oldest deployments at its 100-deployment limit. A
     // cumulative number below 100 is conservative proof this apply cannot do so.
     ensure(Number.isInteger(before.number)&&before.number>=1&&before.number<100,'catalog_preview_history_requires_check');
+    if(compatible) await checkCompatibleResources();
     const controlBefore=await controls();
     attempted=true;
     const deployed=execute(process.execPath,[cli,'preview','--name','stage11-inert','--worker-name','vapt-api-parallel','--config',configuration,'--json'],options);
     ensure(deployed.status===0&&!deployed.error&&!deployed.signal,'catalog_preview_deployment_uncertain');
     const upload=JSON.parse(deployed.stdout); checkPreview(upload.preview,upload.deployment,config,true);
+    if(compatible) ensure(upload.deployment.number===28
+      && upload.deployment.env.PUBLIC_CATALOG_COORDINATOR.namespace_id===compatibleCatalogNamespace,'catalog_preview_compatible_resource_changed');
     const afterMeta=await read(previewPath); const after=await read(previewPath+'/deployments/latest');
     checkPreview(afterMeta,after,config,true);
+    if(compatible) ensure(after.number===28
+      && after.env.PUBLIC_CATALOG_COORDINATOR.namespace_id===compatibleCatalogNamespace,'catalog_preview_compatible_resource_changed');
     ensure(after.id===upload.deployment.id && after.id!==before.id,'catalog_preview_readback_mismatch');
     ensure(isDeepStrictEqual(await controls(),controlBefore),'catalog_preview_control_changed');
-    return {status:0,report:{ok:true,prepared:true,previewId,deploymentId:after.id,previousDeploymentId:before.id,
+    if(compatible) await checkCompatibleResources();
+    return {status:0,report:{ok:true,prepared:true,previewId,deploymentId:after.id,deploymentNumber:after.number,previousDeploymentId:before.id,
+      ...(compatible?{compatiblePublished:true}:{}),
       catalogNamespaceId:after.env.PUBLIC_CATALOG_COORDINATOR.namespace_id,realtimeNamespaceId:realtimeId,
       reader:false,writer:false,controlDeploymentsUnchanged:true,cpuLimitMs:1000,cpuLimitVerified:true,cpuWorkloadVerified:false,activationReady:false}};
   } catch(error) { return failed(attempted?'catalog_preview_deployment_uncertain':error?.safeCode??'catalog_preview_preflight_failed'); }
