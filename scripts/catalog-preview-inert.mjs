@@ -22,6 +22,24 @@ const controlPaths = ['vapt-api-production','vapt-web','vapt-api-parallel'].map(
 const ensure = (condition,code) => { if(!condition) throw Object.assign(new Error('Catalog preview guard failed'),{safeCode:code}); };
 const failed = code => ({status:1,report:{ok:false,code,activationReady:false}});
 
+async function checkCompatibleResources(read,transport) {
+  const access=await transport('https://stage11-inert-vapt-api-parallel.autoistloko.workers.dev',
+    {method:'GET',redirect:'manual',signal:AbortSignal.timeout(15000)});
+  const location=new URL(access.headers.get('location')??'');
+  await access.body?.cancel();
+  ensure(access.status===302 && location.protocol==='https:' && location.hostname.endsWith('.cloudflareaccess.com')
+    && location.pathname.startsWith('/cdn-cgi/access/login/'),'catalog_preview_access_invalid');
+  const managed=await read('/r2/buckets/vapt-catalog-preview/domains/managed');
+  const custom=await read('/r2/buckets/vapt-catalog-preview/domains/custom');
+  ensure(managed.enabled===false && Array.isArray(custom.domains) && custom.domains.length===0,'catalog_preview_bucket_not_private');
+  const database=await read('/hyperdrive/configs/0c05fec2924b4f3b9225f3d689ba7ea9');
+  const host=database.origin?.host;
+  ensure(database.id==='0c05fec2924b4f3b9225f3d689ba7ea9' && typeof host==='string'
+    && host.startsWith('ep-hidden-bird-b673zocn.') && host.endsWith('.neon.tech')
+    && database.origin.scheme==='postgres','catalog_preview_database_origin_invalid');
+  assertCacheDisabledResource(database,host);
+}
+
 function checkPreview(meta,deployment,config,prepared) {
   ensure(meta?.id===previewId && meta.name==='stage11-inert' && meta.slug==='stage11-inert'
     && isDeepStrictEqual(meta.urls,['https://stage11-inert-vapt-api-parallel.autoistloko.workers.dev']), 'catalog_preview_identity_invalid');
@@ -80,23 +98,6 @@ export async function runCatalogInertPreview(args,ports={}) {
     }
     return snapshots;
   }
-  async function checkCompatibleResources() {
-    const access=await transport('https://stage11-inert-vapt-api-parallel.autoistloko.workers.dev',
-      {method:'GET',redirect:'manual',signal:AbortSignal.timeout(15000)});
-    const location=new URL(access.headers.get('location')??'');
-    await access.body?.cancel();
-    ensure(access.status===302 && location.protocol==='https:' && location.hostname.endsWith('.cloudflareaccess.com')
-      && location.pathname.startsWith('/cdn-cgi/access/login/'),'catalog_preview_access_invalid');
-    const managed=await read('/r2/buckets/vapt-catalog-preview/domains/managed');
-    const custom=await read('/r2/buckets/vapt-catalog-preview/domains/custom');
-    ensure(managed.enabled===false && Array.isArray(custom.domains) && custom.domains.length===0,'catalog_preview_bucket_not_private');
-    const database=await read('/hyperdrive/configs/0c05fec2924b4f3b9225f3d689ba7ea9');
-    const host=database.origin?.host;
-    ensure(database.id==='0c05fec2924b4f3b9225f3d689ba7ea9' && typeof host==='string'
-      && host.startsWith('ep-hidden-bird-b673zocn.') && host.endsWith('.neon.tech')
-      && database.origin.scheme==='postgres','catalog_preview_database_origin_invalid');
-    assertCacheDisabledResource(database,host);
-  }
   try {
     const config=JSON.parse(readFileSync(resolve(root,configuration),'utf8'));
     ensure(checkCatalogConfig(config).ok,'catalog_preview_configuration_invalid');
@@ -115,7 +116,7 @@ export async function runCatalogInertPreview(args,ports={}) {
     // The provider evicts oldest deployments at its 100-deployment limit. A
     // cumulative number below 100 is conservative proof this apply cannot do so.
     ensure(Number.isInteger(before.number)&&before.number>=1&&before.number<100,'catalog_preview_history_requires_check');
-    if(compatible) await checkCompatibleResources();
+    if(compatible) await checkCompatibleResources(read,transport);
     const controlBefore=await controls();
     attempted=true;
     const deployed=execute(process.execPath,[cli,'preview','--name','stage11-inert','--worker-name','vapt-api-parallel','--config',configuration,'--json'],options);
@@ -129,13 +130,55 @@ export async function runCatalogInertPreview(args,ports={}) {
       && after.env.PUBLIC_CATALOG_COORDINATOR.namespace_id===compatibleCatalogNamespace,'catalog_preview_compatible_resource_changed');
     ensure(after.id===upload.deployment.id && after.id!==before.id,'catalog_preview_readback_mismatch');
     ensure(isDeepStrictEqual(await controls(),controlBefore),'catalog_preview_control_changed');
-    if(compatible) await checkCompatibleResources();
+    if(compatible) await checkCompatibleResources(read,transport);
     return {status:0,report:{ok:true,prepared:true,previewId,deploymentId:after.id,deploymentNumber:after.number,previousDeploymentId:before.id,
       ...(compatible?{compatiblePublished:true}:{}),
       catalogNamespaceId:after.env.PUBLIC_CATALOG_COORDINATOR.namespace_id,realtimeNamespaceId:realtimeId,
       reader:false,writer:false,controlDeploymentsUnchanged:true,cpuLimitMs:1000,cpuLimitVerified:true,cpuWorkloadVerified:false,activationReady:false}};
   } catch(error) { return failed(attempted?'catalog_preview_deployment_uncertain':error?.safeCode??'catalog_preview_preflight_failed'); }
   finally { credential=undefined; }
+}
+
+// Separately approved one-shot credential renewal. PATCH clones the explicitly
+// pinned deployment; no source/bundle upload, flags, routes or base-config edit.
+// Caller retains its generated bearer in memory for the smoke; never return it.
+export async function rotateTenantPreviewBearer(bearer,ports={}) {
+  if(typeof bearer!=='string'||!/^[A-Za-z0-9_-]{32,256}$/.test(bearer))return failed('catalog_preview_rotation_input_invalid');
+  const execute=ports.execute??spawnSync,transport=ports.fetch??fetch;let credential,attempted=false;
+  try{
+    const inspected=await runCatalogInertPreview(['inspect'],{...ports,execute(exe,args,options){
+      ensure(args[1]==='auth','catalog_preview_rotation_command_invalid');
+      const result=execute(exe,args,options);
+      if(result.status===0)credential=JSON.parse(result.stdout).token;
+      return result;
+    }});
+    ensure(inspected.status===0&&credential,'catalog_preview_rotation_preflight_failed');
+    const read=async path=>{
+      const response=await transport(base+path,{method:'GET',headers:{Authorization:`Bearer ${credential}`},redirect:'error',signal:AbortSignal.timeout(15000)});
+      ensure(response.ok,'catalog_preview_rotation_read_failed');const text=await response.text();ensure(text.length<=262144,'catalog_preview_rotation_read_failed');
+      const json=JSON.parse(text);ensure(json.success===true&&json.result,'catalog_preview_rotation_read_failed');return json.result;
+    };
+    const config=JSON.parse(readFileSync(resolve(root,configuration),'utf8'));
+    const before=await read(previewPath+'/deployments/latest');checkPreview(await read(previewPath),before,config,true);
+    ensure(before.id==='fca1102f-05b4-488e-bc6a-11d1f82e0bd9'&&before.number===28
+      &&before.env.PUBLIC_CATALOG_COORDINATOR.namespace_id===compatibleCatalogNamespace,'catalog_preview_rotation_baseline_changed');
+    await checkCompatibleResources(read,transport);
+    const controls=async()=>Promise.all(controlPaths.map(async path=>{const v=await read(path);ensure(Array.isArray(v.deployments)&&v.deployments.length>0,'catalog_preview_control_invalid');return v.deployments.map(d=>({id:d.id,versions:d.versions}));}));
+    const controlBefore=await controls();
+    const stable=value=>Object.fromEntries(['startup_time_ms','limits','compatibility_date','compatibility_flags','main_module','usage_model','migration_tag','urls','env'].map(key=>[key,value[key]]));
+    const stableBefore=structuredClone(stable(before));
+    attempted=true;
+    const response=await transport(base+previewPath+'/deployments/'+before.id,{method:'PATCH',headers:{Authorization:`Bearer ${credential}`,'Content-Type':'application/merge-patch+json'},
+      body:JSON.stringify({env:{PARALLEL_PREVIEW_TOKEN:{type:'secret_text',text:bearer}},annotations:{'workers/message':'Approved tenant preview smoke bearer renewal'}}),redirect:'error',signal:AbortSignal.timeout(30000)});
+    ensure(response.ok,'catalog_preview_rotation_uncertain');const text=await response.text();ensure(text.length<=262144,'catalog_preview_rotation_uncertain');
+    const body=JSON.parse(text);ensure(body.success===true&&body.result,'catalog_preview_rotation_uncertain');const uploaded=body.result;
+    const after=await read(previewPath+'/deployments/latest');checkPreview(await read(previewPath),after,config,true);
+    ensure(after.number===29&&after.id===uploaded.id&&after.id!==before.id&&isDeepStrictEqual(stable(after),stableBefore),'catalog_preview_rotation_uncertain');
+    ensure(isDeepStrictEqual(await controls(),controlBefore),'catalog_preview_control_changed');await checkCompatibleResources(read,transport);
+    return{status:0,report:{ok:true,bearerRenewed:true,deploymentId:after.id,deploymentNumber:29,previousDeploymentId:before.id,
+      reader:false,writer:false,cpuLimitMs:1000,controlDeploymentsUnchanged:true,activationReady:false}};
+  }catch(error){return failed(attempted?'catalog_preview_rotation_uncertain':error?.safeCode??'catalog_preview_rotation_preflight_failed');}
+  finally{credential=undefined;bearer=undefined;}
 }
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)) {
   const result=await runCatalogInertPreview(process.argv.slice(2));console.log(JSON.stringify(result.report));process.exitCode=result.status;

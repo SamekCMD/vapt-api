@@ -244,3 +244,47 @@ test('compatible publication treats lost Access after write as uncertain without
   assert.equal(result.report.code,'catalog_preview_deployment_uncertain');
   assert.equal(value.commands.filter(c=>c.args[1]==='preview').length,1);
 });
+
+function rotationFixture(){
+  const value=compatibleFixture(({deployment})=>{deployment.id='fca1102f-05b4-488e-bc6a-11d1f82e0bd9';deployment.number=28;deployment.main_module='parallel-preview-entry.js';});
+  const transport=value.ports.fetch;value.patches=[];
+  value.ports.fetch=async(url,options)=>{
+    if(options.method==='PATCH'){
+      value.patches.push({url,options});
+      assert.equal(url,base+previewPath+'/deployments/fca1102f-05b4-488e-bc6a-11d1f82e0bd9');
+      assert.equal(options.headers['Content-Type'],'application/merge-patch+json');
+      const body=JSON.parse(options.body);assert.deepEqual(Object.keys(body.env),['PARALLEL_PREVIEW_TOKEN']);
+      assert.deepEqual(body.env.PARALLEL_PREVIEW_TOKEN,{type:'secret_text',text:'synthetic-new-bearer-32-characters-long'});
+      value.deployment.id='22222222-2222-4222-8222-222222222222';value.deployment.number=29;
+      return Response.json({success:true,result:value.deployment});
+    }
+    return transport(url,options);
+  };return value;
+}
+test('bearer rotation patches only the pinned preview secret without a source upload and verifies deployment29',async()=>{
+  const {rotateTenantPreviewBearer}=await feature();assert.equal(typeof rotateTenantPreviewBearer,'function','scoped bearer rotation not implemented');
+  const value=rotationFixture(),result=await rotateTenantPreviewBearer('synthetic-new-bearer-32-characters-long',value.ports);
+  assert.equal(result.status,0);assert.equal(result.report.deploymentNumber,29);assert.equal(result.report.reader,false);assert.equal(result.report.writer,false);
+  assert.equal(value.patches.length,1);assert.equal(value.commands.length,1);assert.equal(value.applied(),false);
+  assert.doesNotMatch(JSON.stringify(result),/synthetic-new-bearer|synthetic-secret|author_email/);
+  assert.equal((await rotateTenantPreviewBearer('synthetic-new-bearer-32-characters-long',value.ports)).status,1);assert.equal(value.patches.length,1);
+});
+for(const [label,change]of [
+  ['changed baseline',v=>{v.deployment.number=29;}],['enabled writer',v=>{v.deployment.env.PUBLIC_CATALOG_WRITER_ENABLED.text='true';}],
+  ['public bucket',v=>{v.bucketManaged.enabled=true;}],['Access removed',v=>{v.accessBlocked=false;}],
+])test(`bearer rotation rejects ${label} before PATCH`,async()=>{
+  const {rotateTenantPreviewBearer}=await feature();assert.equal(typeof rotateTenantPreviewBearer,'function');const value=rotationFixture();change(value);
+  assert.equal((await rotateTenantPreviewBearer('synthetic-new-bearer-32-characters-long',value.ports)).status,1);assert.equal(value.patches.length,0);
+});
+test('bearer rotation rejects malformed secret before auth and never retries uncertain PATCH',async()=>{
+  const {rotateTenantPreviewBearer}=await feature();assert.equal(typeof rotateTenantPreviewBearer,'function');
+  assert.equal((await rotateTenantPreviewBearer('short',{execute(){throw Error('Must not auth');}})).status,1);
+  const value=rotationFixture(),transport=value.ports.fetch;let writes=0;
+  value.ports.fetch=async(url,options)=>{if(options.method==='PATCH'){writes++;throw Error('synthetic-secret');}return transport(url,options);};
+  const result=await rotateTenantPreviewBearer('synthetic-new-bearer-32-characters-long',value.ports);assert.equal(writes,1);assert.equal(result.status,1);assert.equal(result.report.code,'catalog_preview_rotation_uncertain');assert.doesNotMatch(JSON.stringify(result),/synthetic-secret/);
+});
+test('bearer rotation detects metadata drift after PATCH without repairing or rolling back',async()=>{
+  const {rotateTenantPreviewBearer}=await feature();assert.equal(typeof rotateTenantPreviewBearer,'function');const value=rotationFixture(),transport=value.ports.fetch;
+  value.ports.fetch=async(url,options)=>{const response=await transport(url,options);if(options.method==='PATCH')value.deployment.main_module='another.js';return response;};
+  const result=await rotateTenantPreviewBearer('synthetic-new-bearer-32-characters-long',value.ports);assert.equal(result.status,1);assert.equal(value.patches.length,1);
+});
