@@ -1,5 +1,7 @@
 # Catálogo — Preview inerte implantado
 
+Atualização SQL22/10: autorização específica permitiu backup/restore local e aplicação009–012/quatro grants somente na branch preview`br-rough-dew-b6ydeygb`. F383/A701/PG93/buildA0, readback de integridade/ACL e conexão real limitada com dez negações aprovados. Report no repositório produto:`docs/infra-migration-preview-schema-gate-2026-10-22.md`. Preview30tabelas/0linhas; produção apenas READ ONLY, hash antes/depois igual. **Código publicado permanece a mesma implantação27**, flagsfalse/activationReadyfalse; SQL não publicou a API tenant. Não repetir migrations nem inferir autorização de deploy/flags/bootstrap/production. O registro18/10 abaixo permanece histórico. Checkpoints anteriores à escrita:F058a359/A60799eb, sem push/main/deploy neste gate.
+
 18/10/2026. Autorização humana específica: preparação inerte **somente no Preview existente** `stage11-inert`, com registro append-only da classe SQLite e binding do bucket privado já criado. Nenhum SQL/schema, bootstrap, frontend/produção, segredo, DNS ou plano novo incluído. Esta preparação não ativa o catálogo nem encerra a tarefa9.
 
 ## Implantação e readback
