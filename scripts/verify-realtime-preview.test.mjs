@@ -39,8 +39,8 @@ test('fixture driver seeds exactly two verified accounts and deletes only its pr
   const result=await fixtures.cleanup(created);
   assert.deepEqual(result,{rows:0});
   const deletes=queries.filter(v=>v.sql.startsWith('DELETE'));
-  assert.equal(deletes.length,4);
-  assert.equal(deletes.every(v=>v.sql.includes('where id = $1') && v.params.length>=2),true);
+  assert.equal(deletes.length,6);
+  assert.equal(deletes.every(v=>/where\s+id\s*=\s*\$1/i.test(v.sql) && v.params.length>=3),true);
   assert.equal(JSON.stringify(deletes).includes('99999999-9999-4999-8999-999999999999'),false);
   assert.equal(queries.at(-1).sql,'COMMIT');
   await fixtures.close();

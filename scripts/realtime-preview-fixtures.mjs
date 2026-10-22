@@ -43,8 +43,13 @@ export async function createFixtureDriver({ownerUrl, createPool=options=>new Poo
         for (const owner of owners) {
           await client.query('INSERT INTO better_auth."user" (id,name,email,"emailVerified") VALUES ($1,$2,$3,true)',[owner.userId,tag,owner.email]);
           await client.query('INSERT INTO better_auth.account (id,"accountId","providerId","userId",password,"createdAt","updatedAt") VALUES ($1,$2::text,\'credential\',$2::uuid,$3,now(),now())',[randomUUID(),owner.userId,await hash(owner.password)]);
-          await client.query(`INSERT INTO public.restaurants (id,owner_id,name,slug,plan_type,plan_status,onboarding_completed,total_tables,max_tables,max_pending_orders,payment_mode)
-            VALUES ($1,$2,$3,$4,'pro','active',true,2,2,10,'open_tab')`,[owner.restaurantId,owner.userId,tag,owner.slug]);
+          // Deterministic organization identity is already in the immutable
+          // fixture manifest; no broader cleanup authority is introduced.
+          await client.query('INSERT INTO public.organizations (id,name,created_by) VALUES ($1,$2,$3)',[owner.restaurantId,owner.tag??tag,owner.userId]);
+          await client.query("INSERT INTO public.organization_members (organization_id,user_id,role,status) VALUES ($1,$2,'owner','active')",[owner.restaurantId,owner.userId]);
+          await client.query("INSERT INTO public.organization_subscriptions (organization_id,plan_type,plan_status,billing_contact_user_id) VALUES ($1,'pro','active',$2)",[owner.restaurantId,owner.userId]);
+          await client.query(`INSERT INTO public.restaurants (id,organization_id,owner_id,name,slug,plan_type,plan_status,onboarding_completed,onboarding_status,onboarding_step,total_tables,max_tables,max_pending_orders,payment_mode)
+            VALUES ($1,$1,$2,$3,$4,'pro','active',true,'complete',2,2,2,10,'open_tab')`,[owner.restaurantId,owner.userId,tag,owner.slug]);
           await client.query(`INSERT INTO public.menu_items (id,restaurant_id,name,price,category,available) VALUES ($1,$2,'Item Teste',12.00,'Teste',true)`,[owner.itemId,owner.restaurantId]);
         }
         await client.query('COMMIT');return owners;
@@ -57,9 +62,13 @@ export async function createFixtureDriver({ownerUrl, createPool=options=>new Poo
         await client.query('BEGIN');
         for (const owner of manifest) {
           await client.query('DELETE FROM public.restaurants where id = $1 AND owner_id = $2 AND slug = $3',[owner.restaurantId,owner.userId,owner.slug]);
+          await client.query("DELETE FROM public.organizations WHERE id=$1 AND created_by=$2 AND name=$3 AND NOT EXISTS(select 1 from public.restaurants where organization_id=$1) AND NOT EXISTS(select 1 from public.organization_members where organization_id=$1 and user_id<>$2)",[owner.restaurantId,owner.userId,owner.tag]);
           await client.query('DELETE FROM better_auth."user" where id = $1 AND name = $2 AND email = $3',[owner.userId,owner.tag,owner.email]);
         }
         const result=await client.query(`select (
+          (select count(*) from public.organizations where id=ANY($1::uuid[])) +
+          (select count(*) from public.organization_members where organization_id=ANY($1::uuid[])) +
+          (select count(*) from public.organization_subscriptions where organization_id=ANY($1::uuid[])) +
           (select count(*) from public.restaurants where id=ANY($1::uuid[])) +
           (select count(*) from public.orders where restaurant_id=ANY($1::uuid[])) +
           (select count(*) from public.menu_items where restaurant_id=ANY($1::uuid[])) +

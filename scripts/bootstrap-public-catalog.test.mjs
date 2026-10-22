@@ -34,6 +34,14 @@ test('dryRunDoesNotWrite: default mode does not even read credentials or query a
   assert.deepEqual(await bootstrapPublicCatalog(dry, f.ports), { ok: true, environment: 'preview', targets: 1, writes: 0, mode: 'dry-run' });
   assert.equal(f.calls.length, 0); assert.equal(f.credentials(), 0);
 });
+test('multi-restaurant bootstrap never resolves or writes through a legacy me selection',async()=>{
+  const {bootstrapPublicCatalog}=await feature();const f=fixture(),request=f.ports.request;
+  f.ports.request=(url,init)=>url.includes('/restaurants/me')?Promise.resolve(Response.json({error:{code:'restaurant_selection_required'}},{status:409})):request(url,init);
+  const result=await bootstrapPublicCatalog(apply,f.ports);assert.equal(result.ok,true);
+  assert.equal(f.calls[0].url,'https://stage11-inert-vapt-api-parallel.autoistloko.workers.dev/restaurants/11111111-1111-4111-8111-111111111111');
+  assert.equal(f.calls[1].url,'https://stage11-inert-vapt-api-parallel.autoistloko.workers.dev/restaurants/11111111-1111-4111-8111-111111111111/catalog/rebuild');
+});
+
 for (const flag of ['--confirm-writer-coverage', '--confirm-readiness']) test(`readerRequiresWriterCoverage: apply refuses missing ${flag}`, async () => {
   const { bootstrapPublicCatalog } = await feature(); const f = fixture();
   assert.equal((await bootstrapPublicCatalog(apply.filter(value => value !== flag), f.ports)).ok, false);
@@ -43,8 +51,8 @@ test('apply verifies owner and uses only the fixed preview origin and protected 
   const { bootstrapPublicCatalog } = await feature(); const f = fixture(); const result = await bootstrapPublicCatalog(apply, f.ports);
   assert.equal(result.ok, true); assert.deepEqual(result.receipt, receipt());
   assert.deepEqual(f.calls.map(call => [call.url, call.init.method]), [
-    ['https://stage11-inert-vapt-api-parallel.autoistloko.workers.dev/restaurants/me', 'GET'],
-    ['https://stage11-inert-vapt-api-parallel.autoistloko.workers.dev/restaurants/me/catalog/rebuild', 'POST'],
+    ['https://stage11-inert-vapt-api-parallel.autoistloko.workers.dev/restaurants/11111111-1111-4111-8111-111111111111', 'GET'],
+    ['https://stage11-inert-vapt-api-parallel.autoistloko.workers.dev/restaurants/11111111-1111-4111-8111-111111111111/catalog/rebuild', 'POST'],
   ]);
   const post = f.calls[1].init; assert.equal(post.redirect, 'error'); assert.equal(post.headers.Cookie, cookie);
   assert.equal(post.headers['Idempotency-Key'], operationId); assert.equal(post.headers['X-Vapt-Catalog-Protocol'], '1');
@@ -56,7 +64,7 @@ test('production requires its own branch confirmation, never preview fallthrough
   const args = apply.map(value => value === 'preview' ? 'production' : value);
   assert.equal((await bootstrapPublicCatalog(args, f.ports)).ok, false); assert.equal(f.calls.length, 0);
   const valid = args.map(value => value === 'br-rough-dew-b6ydeygb' ? 'br-odd-term-b6j2n9ms' : value);
-  assert.equal((await bootstrapPublicCatalog(valid, f.ports)).ok, true); assert.equal(f.calls[0].url, 'https://api.vapt.app.br/restaurants/me');
+  assert.equal((await bootstrapPublicCatalog(valid, f.ports)).ok, true); assert.equal(f.calls[0].url, 'https://api.vapt.app.br/restaurants/11111111-1111-4111-8111-111111111111');
 });
 test('another owner or unknown restaurant never starts a rebuild', async () => {
   const { bootstrapPublicCatalog } = await feature(); const f = fixture({ ownerId: operationId });

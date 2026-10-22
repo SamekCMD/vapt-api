@@ -10,7 +10,7 @@ const restaurantId='22222222-2222-4222-8222-222222222222';
 const itemId='33333333-3333-4333-8333-333333333333';
 const orderId='44444444-4444-4444-8444-444444444444';
 const objectKey=`${restaurantId}/${itemId}`;
-function fixture({failPath,negativeAccepted=false,wrongSigner=false,virtualHosted=false}={}){
+function fixture({failPath,negativeAccepted=false,wrongSigner=false,virtualHosted=false,canonicalOnly=false}={}){
   const signer=virtualHosted?'https://vapt-assets-preview.3ce69408aa5112617a282957aba71932.r2.cloudflarestorage.com':r2Host;
   const signedPath=virtualHosted?`/${objectKey}`:`/vapt-assets-preview/${objectKey}`;
   const calls=[];let loggedIn=false,revoked=false,createdOrder=false,object=false,now=1000;
@@ -18,6 +18,7 @@ function fixture({failPath,negativeAccepted=false,wrongSigner=false,virtualHoste
   const fetcher=async(url,options={})=>{
     calls.push({url,options});
     const u=new URL(url),path=u.pathname,body=typeof options.body==='string'?JSON.parse(options.body):options.body;
+    if(canonicalOnly&&(path==='/onboarding'||path.startsWith('/restaurants/me')))return Response.json({error:{code:'legacy_onboarding_retired'}},{status:410});
     if(path===failPath)throw new Error('private database credential');
     if(u.origin===signer){
       const mismatch=path!==signedPath||options.headers['Content-Type']!=='image/png'||Number(options.headers['Content-Length'])!==68||now>61000;
@@ -31,20 +32,23 @@ function fixture({failPath,negativeAccepted=false,wrongSigner=false,virtualHoste
     if(path==='/api/auth/verify-email')return Response.json({status:true});
     if(path==='/api/auth/sign-in/email'){loggedIn=true;return Response.json({user:{id:userId}},{headers:{'set-cookie':'__Secure-better-auth.session_token=private-cookie; Path=/; Secure; HttpOnly'}});}
     if(path==='/auth/me')return loggedIn&&!revoked?Response.json({userId,email:'delivered@resend.dev'}):Response.json({error:{code:'unauthorized'}},{status:401});
+    if(path==='/account/onboarding-draft')return Response.json({id:restaurantId,organizationId:restaurantId,name:body.name,slug:body.slug},{status:201});
+    if(path===`/restaurants/${restaurantId}/onboarding`)return Response.json({id:restaurantId,onboardingStep:options.method==='PATCH'?2:0});
+    if(path===`/restaurants/${restaurantId}/onboarding/finalize`)return Response.json({id:restaurantId,onboardingCompleted:true});
     if(path==='/onboarding')return Response.json({id:restaurantId,name:body.restaurantName,slug:body.slug},{status:201});
-    if(path==='/restaurants/me')return Response.json({id:restaurantId,name:'updated',slug:'stage11-test-abc123'});
-    if(path==='/restaurants/me/menu-items'&&options.method==='POST')return Response.json({id:itemId,...body},{status:201});
-    if(path==='/restaurants/me/menu-items')return Response.json([{id:itemId}]);
+    if(path===`/restaurants/${restaurantId}`)return Response.json({id:restaurantId,name:'updated',slug:'stage11-test-abc123'});
+    if(path===`/restaurants/${restaurantId}/menu-items`&&options.method==='POST')return Response.json({id:itemId,...body},{status:201});
+    if(path===`/restaurants/${restaurantId}/menu-items`)return Response.json([{id:itemId}]);
     if(path.includes('/menu-items/')&&path.endsWith('/image/upload'))return Response.json({method:'PUT',objectKey,uploadUrl:(wrongSigner?'https://production.example':signer)+signedPath+'?X-Amz-Signature=private-signature',publicUrl:publicBase+'/'+objectKey,headers:{'Content-Type':'image/png'},expiresInSeconds:60});
     if(path.endsWith('/image')&&options.method==='DELETE'){object=false;return new Response(null,{status:204});}
-    if(path.startsWith('/restaurants/me/menu-items/'))return options.method==='DELETE'?new Response(null,{status:204}):Response.json({id:itemId,price:'13.00'});
+    if(path.startsWith(`/restaurants/${restaurantId}/menu-items/`))return options.method==='DELETE'?new Response(null,{status:204}):Response.json({id:itemId,price:'13.00'});
     if(path==='/public/orders'&&options.method==='POST'){
       const replay=createdOrder;createdOrder=true;
       return Response.json({orderId,restaurantId,publicToken:'private-order-token',idempotentReplay:replay},{status:replay?200:201});
     }
     if(path===`/public/orders/${orderId}`)return Response.json({id:orderId});
-    if(path==='/restaurants/me/kitchen/orders')return Response.json([{id:orderId}]);
-    if(path===`/restaurants/me/kitchen/orders/${orderId}/status`)return Response.json({id:orderId,status:body.status});
+    if(path===`/restaurants/${restaurantId}/kitchen/orders`)return Response.json([{id:orderId}]);
+    if(path===`/restaurants/${restaurantId}/kitchen/orders/${orderId}/status`)return Response.json({id:orderId,status:body.status});
     if(path.startsWith('/auth/restaurants/'))return Response.json({error:{code:'forbidden'}},{status:403});
     if(path==='/api/auth/sign-out'){revoked=true;return Response.json({success:true});}
     throw new Error('Unhandled fixture route: '+path);
@@ -66,9 +70,16 @@ test('proves auth persistence/revocation, API writes, order idempotency and boun
   for(const call of r2){assert.equal(new Headers(call.options.headers).has('authorization'),false);assert.equal(new Headers(call.options.headers).has('cf-access-token'),false);}
   for(const secret of ['private-access-token','private-preview-bearer-value','private-cookie','private-signature','private-verification-token','private-order-token'])assert.equal(JSON.stringify(result).includes(secret),false);
 });
+test('preview product fixture uses canonical draft resume and finalization rather than retired onboarding',async()=>{
+  const f=fixture({canonicalOnly:true});const result=await runPreviewFlows(f.options);
+  assert.equal(result.ok,true,JSON.stringify(result));
+  assert.equal(f.calls.some(call=>new URL(call.url).pathname==='/account/onboarding-draft'),true);
+  assert.equal(f.calls.some(call=>new URL(call.url).pathname.endsWith('/onboarding/finalize')),true);
+});
+
 
 test('always cleans tagged fixtures on API failure without returning raw errors',async()=>{
-  const f=fixture({failPath:'/restaurants/me'});const result=await runPreviewFlows(f.options);
+  const f=fixture({failPath:`/restaurants/${restaurantId}`});const result=await runPreviewFlows(f.options);
   assert.equal(result.ok,false);assert.equal(result.cleaned,true);assert.equal(f.cleanupCalls.length,1);
   assert.equal(JSON.stringify(result).includes('private database credential'),false);
 });

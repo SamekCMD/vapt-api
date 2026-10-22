@@ -40,7 +40,7 @@ export async function createProductionFixtureDriver({ ownerUrl, manifest, create
   let attempted = false;
   const readIdentity = async (client, owner) => ({
     users: (await client.query('SELECT id,name,email FROM better_auth."user" WHERE id=$1 OR email=$2', [owner.userId, owner.email])).rows,
-    restaurants: (await client.query('SELECT id,owner_id,name,slug FROM public.restaurants WHERE id=$1 OR slug=$2', [owner.restaurantId, owner.slug])).rows,
+    restaurants: (await client.query('SELECT id,owner_id,name,slug,organization_id FROM public.restaurants WHERE id=$1 OR slug=$2', [owner.restaurantId, owner.slug])).rows,
   });
   return {
     identifiers() { return owned.map(v => ({ ...v })); },
@@ -54,8 +54,13 @@ export async function createProductionFixtureDriver({ ownerUrl, manifest, create
         for (const owner of owners) {
           await client.query('INSERT INTO better_auth."user" (id,name,email,"emailVerified") VALUES ($1,$2,$3,true)', [owner.userId, owner.tag, owner.email]);
           await client.query('INSERT INTO better_auth.account (id,"accountId","providerId","userId",password,"createdAt","updatedAt") VALUES (gen_random_uuid(),$1::text,\'credential\',$1::uuid,$2,now(),now())', [owner.userId, await hash(owner.password)]);
-          await client.query(`INSERT INTO public.restaurants (id,owner_id,name,slug,plan_type,plan_status,onboarding_completed,total_tables,max_tables,max_pending_orders,payment_mode)
-            VALUES ($1,$2,$3,$4,'pro','active',true,2,2,10,'open_tab')`, [owner.restaurantId, owner.userId, owner.tag, owner.slug]);
+          // Deterministic organization identity is already in the immutable
+          // fixture manifest; no broader cleanup authority is introduced.
+          await client.query('INSERT INTO public.organizations (id,name,created_by) VALUES ($1,$2,$3)',[owner.restaurantId,owner.tag,owner.userId]);
+          await client.query("INSERT INTO public.organization_members (organization_id,user_id,role,status) VALUES ($1,$2,'owner','active')",[owner.restaurantId,owner.userId]);
+          await client.query("INSERT INTO public.organization_subscriptions (organization_id,plan_type,plan_status,billing_contact_user_id) VALUES ($1,'pro','active',$2)",[owner.restaurantId,owner.userId]);
+          await client.query(`INSERT INTO public.restaurants (id,organization_id,owner_id,name,slug,plan_type,plan_status,onboarding_completed,onboarding_status,onboarding_step,total_tables,max_tables,max_pending_orders,payment_mode)
+            VALUES ($1,$1,$2,$3,$4,'pro','active',true,'complete',2,2,2,10,'open_tab')`, [owner.restaurantId, owner.userId, owner.tag, owner.slug]);
           await client.query(`INSERT INTO public.menu_items (id,restaurant_id,name,price,category,available) VALUES ($1,$2,'Item Teste Realtime',12.00,'Teste',true)`, [owner.itemId, owner.restaurantId]);
         }
         await client.query('COMMIT'); return owners;
@@ -70,16 +75,20 @@ export async function createProductionFixtureDriver({ ownerUrl, manifest, create
           const identity = await readIdentity(client, owner);
           require(identity.users.length <= 1 && identity.restaurants.length <= 1 &&
             identity.users.every(v => v.id === owner.userId && v.name === owner.tag && v.email === owner.email) &&
-            identity.restaurants.every(v => v.id === owner.restaurantId && v.owner_id === owner.userId && v.name === owner.tag && v.slug === owner.slug));
+            identity.restaurants.every(v => v.id === owner.restaurantId && v.organization_id===owner.restaurantId && v.owner_id === owner.userId && v.name === owner.tag && v.slug === owner.slug));
         }
         const restaurantIds = owned.map(v => v.restaurantId), userIds = owned.map(v => v.userId);
         const orderIds = (await client.query('SELECT id FROM public.orders WHERE restaurant_id=ANY($1::uuid[])', [restaurantIds])).rows.map(v => v.id);
         const itemIds = (await client.query('SELECT id FROM public.menu_items WHERE restaurant_id=ANY($1::uuid[])', [restaurantIds])).rows.map(v => v.id);
         for (const owner of owned) {
           await client.query('DELETE FROM public.restaurants WHERE id=$1 AND owner_id=$2 AND name=$3 AND slug=$4', [owner.restaurantId, owner.userId, owner.tag, owner.slug]);
+          await client.query("DELETE FROM public.organizations WHERE id=$1 AND created_by=$2 AND name=$3 AND NOT EXISTS(select 1 from public.restaurants where organization_id=$1) AND NOT EXISTS(select 1 from public.organization_members where organization_id=$1 and user_id<>$2)",[owner.restaurantId,owner.userId,owner.tag]);
           await client.query('DELETE FROM better_auth."user" WHERE id=$1 AND name=$2 AND email=$3', [owner.userId, owner.tag, owner.email]);
         }
         const residue = (await client.query(`SELECT (
+          (select count(*) from public.organizations where id=ANY($1::uuid[])) +
+          (select count(*) from public.organization_members where organization_id=ANY($1::uuid[])) +
+          (select count(*) from public.organization_subscriptions where organization_id=ANY($1::uuid[])) +
           (select count(*) from public.restaurants where id=ANY($1::uuid[])) +
           (select count(*) from public.orders where restaurant_id=ANY($1::uuid[])) +
           (select count(*) from public.order_items where order_id=ANY($3::uuid[])) +
@@ -93,7 +102,7 @@ export async function createProductionFixtureDriver({ ownerUrl, manifest, create
           (select count(*) from better_auth.session where "userId"=ANY($2::uuid[])) +
           (select count(*) from better_auth.account where "userId"=ANY($2::uuid[]))
         )::integer AS rows`, [restaurantIds, userIds, orderIds, itemIds])).rows[0];
-        require(residue.rows === 0); await client.query('COMMIT'); return { rows: 0, tablesChecked: 12 };
+        require(residue.rows === 0); await client.query('COMMIT'); return { rows: 0, tablesChecked: 15 };
       } catch { await client.query('ROLLBACK'); throw Error('Production fixture cleanup failed'); }
       finally { client.release(); }
     },

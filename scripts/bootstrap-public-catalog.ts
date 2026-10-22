@@ -85,13 +85,13 @@ export async function bootstrapPublicCatalog(args: string[], ports: Ports = {}):
   const request = ports.request ?? fetch;
   const base = { redirect: "error" as const, credentials: "omit" as const, cache: "no-store" as const };
   try {
-    const response = await request(`${target.api}/restaurants/me`, { ...base, method: "GET", headers: { Cookie: cookie, Origin: target.origin }, signal: AbortSignal.timeout(15_000) });
+    const response = await request(`${target.api}/restaurants/${restaurantId}`, { ...base, method: "GET", headers: { Cookie: cookie, Origin: target.origin }, signal: AbortSignal.timeout(15_000) });
     if (response.status !== 200) return failure("bootstrap_preflight_failed");
     const owned = await boundedJson(response);
     if (!owned || typeof owned !== "object" || Array.isArray(owned) || (owned as { id?: unknown }).id !== restaurantId) return failure("bootstrap_target_mismatch");
   } catch { return failure("bootstrap_preflight_failed"); }
   try {
-    const response = await request(`${target.api}/restaurants/me/catalog/rebuild`, { ...base, method: "POST", headers: {
+    const response = await request(`${target.api}/restaurants/${restaurantId}/catalog/rebuild`, { ...base, method: "POST", headers: {
       Cookie: cookie, Origin: target.origin, "Content-Type": "application/json", "X-Vapt-Catalog-Protocol": "1", "Idempotency-Key": operationId!,
     }, body: "{}", signal: AbortSignal.timeout(15_000) });
     if (response.status !== 200 && response.status !== 202) return failure(response.status >= 500 ? "bootstrap_confirmation_pending" : "bootstrap_rejected", operationId);

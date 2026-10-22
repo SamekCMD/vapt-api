@@ -11,13 +11,13 @@ async function feature() {
   assert.equal(typeof module?.createProductionFixtureDriver, 'function', 'production fixture guard not implemented');
   return module.createProductionFixtureDriver;
 }
-function database({ collision = false, mismatch = false, residue = 0, seedFailure = false } = {}) {
+function database({ collision = false, mismatch = false, organizationMismatch=false, residue = 0, seedFailure = false } = {}) {
   const queries = []; let seeded = false, ended = false;
   const query = async (sql, params = []) => {
     queries.push({ sql, params });
     if (sql.includes('current_database')) return { rows: [{ database: 'vapt', role: 'neondb_owner' }] };
     if (sql.startsWith('SELECT id,name,email')) return { rows: seeded ? manifest().filter(v => v.userId === params[0]).map(v => ({ id: v.userId, name: mismatch ? 'another-account' : v.tag, email: v.email })) : collision ? [{ id: id(1), name: 'another-account', email: 'another@example.invalid' }] : [] };
-    if (sql.startsWith('SELECT id,owner_id,name,slug')) return { rows: seeded ? manifest().filter(v => v.restaurantId === params[0]).map(v => ({ id: v.restaurantId, owner_id: v.userId, name: v.tag, slug: v.slug })) : [] };
+    if (sql.startsWith('SELECT id,owner_id,name,slug')) return { rows: seeded ? manifest().filter(v => v.restaurantId === params[0]).map(v => ({ id: v.restaurantId, owner_id: v.userId, organization_id:organizationMismatch?id(999):v.restaurantId,name: v.tag, slug: v.slug })) : [] };
     if (sql.startsWith('INSERT INTO better_auth.account')) {
       assert.equal(params[1], 'synthetic-password-hash');
       if (seedFailure) throw Error('synthetic-secret');
@@ -52,10 +52,13 @@ test('production fixtures check absence, seed two accounts and delete only immut
   assert.equal(owners.length, 2); assert.equal(owners[0].userId, id(1));
   assert.equal(owners.every(v => typeof v.password === 'string' && v.password.length === 43), true);
   assert.equal(db.queries.filter(v => v.sql.startsWith('INSERT INTO better_auth."user"')).length, 2);
+  assert.equal(db.queries.filter(v=>v.sql.startsWith('INSERT INTO public.organizations')).length,2);
+  assert.equal(db.queries.filter(v=>v.sql.startsWith('INSERT INTO public.organization_members')).length,2);
+  assert.equal(db.queries.filter(v=>v.sql.startsWith('INSERT INTO public.organization_subscriptions')).length,2);
   await assert.rejects(driver.seed());
-  assert.deepEqual(await driver.cleanup(), { rows: 0, tablesChecked: 12 });
+  assert.deepEqual(await driver.cleanup(), { rows: 0, tablesChecked: 15 });
   const deletes = db.queries.filter(v => v.sql.startsWith('DELETE'));
-  assert.equal(deletes.length, 4);
+  assert.equal(deletes.length, 6);
   assert.equal(deletes.every(v => v.sql.includes('WHERE id=$1') && v.params.length >= 3), true);
   assert.doesNotMatch(JSON.stringify(deletes), /000000000999|synthetic-secret/);
   assert.equal(db.queries.at(-1).sql, 'COMMIT');
@@ -75,11 +78,11 @@ test('seed collision or partial SQL failure rolls back and never deletes a colli
 
 test('cleanup refuses mismatched ownership and rolls back nonzero residue instead of reporting success', async () => {
   const create = await feature();
-  for (const options of [{ mismatch: true }, { residue: 1 }]) {
+  for (const options of [{ mismatch: true },{organizationMismatch:true}, { residue: 1 }]) {
     const db = database(options), driver = await create({ ownerUrl, manifest: manifest(), createPool: () => db.pool, hash: async () => 'synthetic-password-hash' });
     await driver.seed(); await assert.rejects(driver.cleanup());
     assert.equal(db.queries.at(-1).sql, 'ROLLBACK');
-    if (options.mismatch) assert.equal(db.queries.some(v => v.sql.startsWith('DELETE')), false);
+    if (options.mismatch||options.organizationMismatch) assert.equal(db.queries.some(v => v.sql.startsWith('DELETE')), false);
     await driver.close();
   }
 });

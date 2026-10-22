@@ -17,7 +17,7 @@ export async function runPreviewFlows({ baseUrl, accessHeaders, bearer, fetcher 
     typeof cleanup !== 'function' || typeof verificationUrl !== 'function') {
     throw new Error('Invalid Preview flow input');
   }
-  const created = { userId: null, restaurantId: null, menuItemIds: [], orderIds: [], objectKeys: [] };
+  const created = { userId: null, restaurantId: null, organizationId:null, menuItemIds: [], orderIds: [], objectKeys: [] };
   const summary = { ok: false, cleaned: false, checks: { auth: false, restaurant: false, menu: false, orders: false, storage: false }, failure: null };
   let step = 'signup', cookie = '';
   function require(condition) { if (!condition) throw new Error('Preview assertion failed'); }
@@ -56,24 +56,29 @@ export async function runPreviewFlows({ baseUrl, accessHeaders, bearer, fetcher 
     for (let i = 0; i < 2; i++) require((await api('/auth/me', { authenticated: true })).json?.userId === created.userId);
 
     step = 'restaurant';
-    const onboarding = await api('/onboarding', { method: 'POST', authenticated: true,
-      body: { restaurantName: tag, slug: tag, dishName: 'Prato Teste', dishPrice: '12.00' } }, [201]);
-    created.restaurantId = checkedId(onboarding.json?.id);
-    require((await api('/restaurants/me', { authenticated: true })).json?.id === created.restaurantId);
-    await api('/restaurants/me', { method: 'PATCH', authenticated: true, body: { description: tag } });
+    const onboarding = await api('/account/onboarding-draft', { method: 'POST', authenticated: true,
+      headers:{'Idempotency-Key':randomUUID()},body: { name: tag, slug: tag } }, [201]);
+    created.restaurantId = checkedId(onboarding.json?.id);created.organizationId=checkedId(onboarding.json?.organizationId);
+    const draftPath='/restaurants/'+created.restaurantId+'/onboarding';
+    require((await api(draftPath,{authenticated:true})).json?.id===created.restaurantId);
+    await api(draftPath,{method:'PATCH',authenticated:true,body:{localEnabled:true,deliveryEnabled:false,totalTables:2,onboardingStep:2}});
+    const finalized=await api(draftPath+'/finalize',{method:'POST',authenticated:true,headers:{'Idempotency-Key':randomUUID()},body:{}});
+    require(finalized.json?.id===created.restaurantId&&finalized.json?.onboardingCompleted===true);
+    require((await api('/restaurants/'+created.restaurantId+'', { authenticated: true })).json?.id === created.restaurantId);
+    await api('/restaurants/'+created.restaurantId+'', { method: 'PATCH', authenticated: true, body: { description: tag } });
     const foreign = await api(`/auth/restaurants/${randomUUID()}/access`, { authenticated: true }, [403]);
     require(foreign.json?.error?.code === 'forbidden');
     summary.checks.restaurant = true;
 
     step = 'menu';
-    const item = await api('/restaurants/me/menu-items', { method: 'POST', authenticated: true, body: {
+    const item = await api('/restaurants/'+created.restaurantId+'/menu-items', { method: 'POST', authenticated: true, body: {
       name: 'Prato Sintetico', price: '12.00', description: tag, category: 'Teste', available: true,
       imageUrl: null, availableFrom: null, availableUntil: null, badge: null, isChefSuggestion: false,
       prepTimeMinutes: 1, variations: [],
     } }, [201]);
     const itemId = checkedId(item.json?.id); created.menuItemIds.push(itemId);
-    require((await api('/restaurants/me/menu-items', { authenticated: true })).json?.some(value => value.id === itemId));
-    await api('/restaurants/me/menu-items/' + itemId, { method: 'PATCH', authenticated: true, body: { price: '13.00' } });
+    require((await api('/restaurants/'+created.restaurantId+'/menu-items', { authenticated: true })).json?.some(value => value.id === itemId));
+    await api('/restaurants/'+created.restaurantId+'/menu-items/' + itemId, { method: 'PATCH', authenticated: true, body: { price: '13.00' } });
 
     step = 'storage';
     const imagePath = `/restaurants/${created.restaurantId}/menu-items/${itemId}/image`;
@@ -117,11 +122,11 @@ export async function runPreviewFlows({ baseUrl, accessHeaders, bearer, fetcher 
     require(concurrent.map(value => value.response.status).sort().join(',') === '200,201');
     const orderToken = concurrent[0].json.publicToken;
     await api('/public/orders/' + orderId, { headers: { 'X-Vapt-Order-Token': orderToken } });
-    require((await api('/restaurants/me/kitchen/orders', { authenticated: true })).json?.some(value => value.id === orderId));
-    require((await api(`/restaurants/me/kitchen/orders/${orderId}/status`, { method: 'PATCH', authenticated: true, body: { status: 'preparing' } })).json?.status === 'preparing');
+    require((await api('/restaurants/'+created.restaurantId+'/kitchen/orders', { authenticated: true })).json?.some(value => value.id === orderId));
+    require((await api(`/restaurants/${created.restaurantId}/kitchen/orders/${orderId}/status`, { method: 'PATCH', authenticated: true, body: { status: 'preparing' } })).json?.status === 'preparing');
     summary.checks.orders = true;
     step = 'menu';
-    await api('/restaurants/me/menu-items/' + itemId, { method: 'DELETE', authenticated: true }, [204]);
+    await api('/restaurants/'+created.restaurantId+'/menu-items/' + itemId, { method: 'DELETE', authenticated: true }, [204]);
     summary.checks.menu = true;
 
     step = 'storage_constraints';
