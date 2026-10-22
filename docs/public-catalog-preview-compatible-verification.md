@@ -1,5 +1,15 @@
 # Atualização compatível do Preview — 22/10/2026
 
+## Resultado final: atualização aprovada concluída
+
+Uma única chamada de publicação, a partir do commitAPI`7689ec5d3bcef1e6e3d7ad6ff47872927f4e4b73`, atualizou o Preview existente para **implantação28**, ID`fca1102f-05b4-488e-bc6a-11d1f82e0bd9`; anterior27`7b51fca2-207e-4e29-948e-159761b362ea`. Upload e GET independente do provedor coincidiram; um `inspect` adicional somente-leitura confirmou a28 depois. Não executar `publish-compatible` novamente: o guard one-shot rejeita esse novo baseline; `inspect` continua disponível.
+
+Preservados namespace catálogo`eeda94fea90349be8b62b82067c79b27`, realtime`69fbe1f54ad64a93b7cb761910da094a`, nove secrets por nome/tipo, seis rates, CPU1000, mesmos Hyperdrive/buckets/vars e URL. Reader/writerfalse/activationReadyfalse; workload/CPU não certificado. Antes/depois passaram GET anônimo302→login Access, r2.devfalse/zero domínios no bucket de catálogo e origem Hyperdrive direta do endpointpreview/databasevapt/rolevapt_api_preview/cache desativado. Não significa verificar identidade SQL através do Worker, fluxos autenticados ou ACL de imagens.
+
+Os controles de deployments da APIproduction, frontendweb e paralelo top-level permaneceram idênticos. Não houve novo namespace/bucket/secret/token/plano, SQL, fixture, email/pagamento, alteração de DNS/main, publicação de frontend/consumidor ou produção. A autorização foi só essa atualização inerte; a28 contém a API tenant candidata, mas não equivale a smoke remoto aprovado. Próximo gate: validar o fluxo autenticado e compatibilidade dos clientes/consumidor, mantendo catálogo desligado; CPU/workload/writers/bootstrap e produção continuam separados. Catálogo7/10/MainEtapa13 ainda abertos.
+
+Testes frescos antes da publicação: operador41/41, todos os scripts202/202, API701/701 e buildTypeScript0. Não se atribui CI novo aos commits locais; não houve push/merge neste gate. Os relatos seguintes preservam o desenho e a preparação anteriores à publicação, não indicam uma chamada ainda pendente.
+
 ## Escopo aprovado e preparação
 
 O usuário respondeu “continuar” à proposta explícita de ajustar o publicador e, após testes, publicar uma única vez somente no Preview existente`stage11-inert`. Não autoriza produção/frontend/main/DNS, flags, bootstrap, SQL adicional, credenciais novas, namespace/bucket/plano novo ou observabilidade persistida.
@@ -18,6 +28,6 @@ São feitas somente consultas GET de controle e uma chamada Wrangler preview fix
 - Suíte completa de scripts202/202, API701/701 e buildTypeScript exit0. Testes de provedor usam respostas sintéticas; não são deploy real nem smoke autenticado.
 - Código de runtime/config/schema não foi alterado por este ajuste de operador. F383/PG93/workerd30 continuam evidências anteriores, não novas execuções desta alteração.
 
-## Situação antes da publicação
+## Checkpoint anterior à publicação — histórico
 
 Operador/testes preparados e verificados; publicação ainda não executada neste checkpoint. Revalidar o baseline e salvar commit antes da única chamada autorizada. Mesmo após sucesso de control plane, smoke autenticado/CPU-workload/writers/bootstrap/produção continuam gates próprios; `activationReady=false` e ambas as flags devem permanecerfalse.
