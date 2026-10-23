@@ -1,5 +1,7 @@
 # Atualização compatível do Preview — 22/10/2026
 
+Atualização23/10,18:56UTC: [gate de navegador via adaptador local encerrado](tenant-preview-browser-2026-10-23.md), uma renovação autorizada31→**32**`35fd7ac3-2601-46bb-adec-39ef46813131`, sem upload de código. Mesmo bundle de7689ec5/recursos/flagsfalse/CPU1000; limpeza própria e readback independentezero, servidor fechado. Não é publicação de frontend nem prova de cookies/CORS diretos/CPU8MiB. Não repetir gate/renovação/smoke68/SQL/publish-compatible; referências31 abaixo são checkpoints anteriores.
+
 Último estado23/10,17:26UTC: Preview31 `6110a9fe-0ee6-4faa-920e-23f73f7a504d`, renovação única aprovada30→31 sem upload de bundle; flagsfalse/CPU1000/recursos/controles preservados. Smoke remoto **aprovado na primeira tentativa:68 checks,5 contas,2 organizações,3 restaurantes,cleanedtrue**. Limpeza do manifesto e nova conexão TLS READ ONLY confirmaramzero nas oito relações conferidas. Controlador encerrou exit0/referências descartadas, sem retry/novo recurso/produção/frontend/main. Operadores231/231 e API701/701; CPUworkload/activation continuamfalse. [Relatório atual](tenant-preview-smoke-2026-10-22.md). Gate encerrado: não repetir publicação/SQL/rotação/smoke; próximos clientes/consumidor e demais gates antes do writer/CPU/bootstrap/produção. Catálogo7/10 e Etapa13 abertos; checkpoints seguintes são históricos.
 
 ## Atualização de credencial23/10

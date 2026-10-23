@@ -1,5 +1,7 @@
 # Gate autenticado tenant — preview, 22/10/2026
 
+Atualização23/10,18:56UTC: smoke68 abaixo permanece fechado e não foi repetido. [Gate separado do frontend candidato via adaptador local](tenant-preview-browser-2026-10-23.md) passou com limpeza independentezero, criando somente preview32`35fd7ac3` por renovação autorizada31→32; sem upload de código/flags/produção. Cobriu UIowner/staff com HTTP real, não login/cookies/CORS diretos do navegador. Driver/fixtures removidos, nenhuma sessão própria restante; não repetir renovação por causa das referências31 históricas abaixo.
+
 ## Resultado atual23/10, 17:26UTC — smoke remoto aprovado e limpeza verificada
 
 Uma execução do controlador aprovado, sem retomada/retry, concluiu na primeira tentativa: **oktrue, cleanedtrue,68 checks,5 usuários,2 organizações,3 restaurantes**. Cobriu owner/admin/manager/staff, lista e escolha de unidades, leitura explícita, capacidades, Business2/25 e Pro1/1, acesso cross-org negado, preferência e override de rota, PATCH de staff403, logout e cookie revogado. Não certifica mutations de admin/manager, onboarding, navegador, preservação da preferência depois do override de rota ou CPU8MiB.

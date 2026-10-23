@@ -1,5 +1,15 @@
 # Gate privado do frontend candidato — 23/10/2026
 
+## Resultado final18:56UTC — aprovado e encerrado
+
+Uma execução do controlador5766, exit0, runId`800edee6-0aea-4113-8bfe-e7ea6417a488`. Renovação31→32/`35fd7ac3-2601-46bb-adec-39ef46813131` passou todos os guards; código/recursos/CPU1000/flagsfalse e controles preservados. Nenhum upload de código API ou publicação F. Owner: cozinhaA→B por1PATCH204, recarga e reabertura sem parâmetro preservaramB, Business2/25, logout→login e navegação nova permaneceu sem sessão. Staff: cozinha/Equipe, gestão oculta, criação bloqueada, cobrança com UUIDpróprio bloqueada sem consultar endpoint de assinatura. Primeira rota staff sem seleção foi corretamente ao seletor; teste específico de cobrança usou unidade explícita.
+
+Adaptador encerrou com `ok:true`, `cleaned:true`, `logoutVerified:true`,77chamadas/120máximo,73HTTP200/1HTTP204/3HTTP401, `sessionsRetained:0`, `retainsCredentials:false`. Revogação verificou ambas as sessões com cookie antigo401; driver conferiu cleanup de15relações/efeitos. Nova conexão TLS READ ONLY confirmou8contagensglobaiszero/ROLLBACK/close. Cinco contas/duas organizações/três unidades sintéticas próprias removidas e recriáveis; nenhum cliente ou dado preexistente apagado. HTTP e auxiliares estáticos fechados; zero listeners restantes nas portas deste gate.
+
+Primeiro ingresso da extensão chegou como cross-site e foi recusado antes do adaptador; navegação por âncora em página estática loopback sem credenciais admitiu same-site normalmente, sem relaxar guards/Access/CORS. As38leituras de cozinha no teste usaram o fallback com realtime localfalse, não são benchmark/custo de produção. Nenhum email/pagamento/R2/DO de produto/schema/grant/flag/produção/main/plano novo. Scratch F contém resultado/manifesto/capturas e teste local; relatório F`docs/infra-migration-frontend-preview-browser-2026-10-23.md` detalha as observações e limites. Não repetir esta renovação ou smoke68; baseline32 é rejeitado pelo operador. Catálogo7/10/Etapa13aberta, cpuWorkloadVerifiedfalse/activationReadyfalse.
+
+Código do adaptador qualificado no checkpoint`f049819`,244/244 operadores/701/701 API após última correção, zero skips. Seções de preparação abaixo descrevem o checkpoint anterior à execução. A prova mantém logins/cookies server-side e **não** certifica login/cookies/CORS diretos do navegador na futura publicação.
+
 ## Autorização e desenho limitado
 
 Usuário respondeu “continuar” à proposta explícita de uma renovação única de `PARALLEL_PREVIEW_TOKEN` somente em `stage11-inert`, uso das fixtures sintéticas próprias e limpeza verificada, após preparar/testar adaptador local. Não autoriza frontend remoto, publicação de código API, mudanças em produção, schema/grants/flags, ServiceToken, email/pagamento, recursos/plano, main/push ou replay do smoke de68checks.
@@ -21,6 +31,6 @@ Servidor/harness frontend permanece no scratch ignorado do plano catálogo em D:
 
 ## Execução remota
 
-Ainda não iniciada neste checkpoint. Controlador do scratch deve primeiro concluir build, conferir preview31, autenticação Access transitória e quota216000/endpoint0,25CU, obter credenciais somente em memória e confirmar banco inicial sem resíduos. Grava marcador público exclusivo antes de uma única renovação, manifesto UUID próprio e depois seed com o driver já qualificado. Não recriar/aplicar migrations ou investigar infraestrutura legada.
+Procedimento do checkpoint anterior, agora executado conforme resultado final acima: build, preview31, autenticação Access transitória e quota216000/endpoint0,25CU, credenciais somente em memória e banco inicial sem resíduos. Marcador público exclusivo precedeu uma única renovação; manifesto UUID próprio e seed com o driver já qualificado. Não recriar/aplicar migrations ou investigar infraestrutura legada.
 
 Servidor só admite o navegador após logins server-side. Operador confere unidadeA→B/preferência/reabertura, Business2/25, logout→login e restrições de staff; comando `finish` exige contadores mínimos e zero leitura de cobrança por staff. Ao terminar, fechar HTTP, revogar/verificar sessões, executar cleanup UUID/marcador com guards do driver e readback independente, fechar pool e limpar referências. SeedCOMMIT incerto proíbe cleanup/retry cego; cleanup incerto proíbe retomada. Resultado e readback têm de ser registrados sem tokens. Não iniciar outro controlador se o resultado da renovação for incerto.
