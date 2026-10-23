@@ -1,4 +1,5 @@
 import {isDeepStrictEqual} from 'node:util';
+import {setTimeout as delay} from 'node:timers/promises';
 const target='https://stage11-inert-vapt-api-parallel.autoistloko.workers.dev';
 const origin='https://infra-foundation-vapt-web.autoistloko.workers.dev';
 const capabilities={owner:['restaurant.read','restaurant.operate','restaurant.manage','restaurant.create','billing.read','billing.manage'],admin:['restaurant.read','restaurant.operate','restaurant.manage','restaurant.create','billing.read','billing.manage'],manager:['restaurant.read','restaurant.operate','restaurant.manage','billing.read'],staff:['restaurant.read','restaurant.operate']};
@@ -12,7 +13,7 @@ function noBillingFields(value){
 }
 // Inputs remain in the calling controller's memory. No CLI/env secret fallback.
 export async function runTenantPreviewSmoke({baseUrl,accessJwt,bearer,driver,fetcher=fetch,
-  pace=()=>new Promise(resolve=>setTimeout(resolve,3300)),onProgress=()=>{}}={}){
+  signal,pace=()=>delay(3300,undefined,{signal}),onProgress=()=>{}}={}){
   const report={ok:false,cleaned:false,stage:'input',users:0,organizations:0,restaurants:0,checks:0};
   const cookies=new Map();let seeded=false,credentials=[],step='input';
   try{
@@ -20,15 +21,19 @@ export async function runTenantPreviewSmoke({baseUrl,accessJwt,bearer,driver,fet
       &&typeof bearer==='string'&&/^[A-Za-z0-9_-]{32,256}$/.test(bearer)
       &&['identifiers','seed','cleanup','close'].every(key=>typeof driver?.[key]==='function'));
   }catch{return report;}
+  const clearCredentials=()=>{credentials.forEach(v=>{v.password='';});credentials=[];cookies.clear();accessJwt=undefined;bearer=undefined;};
+  signal?.addEventListener('abort',clearCredentials,{once:true});
   async function request(path,{method='GET',body,cookie,expected=200,perimeter='both'}={}){
-    await pace();
+    signal?.throwIfAborted();await pace();signal?.throwIfAborted();
     const headers={Origin:origin};
     if(perimeter!=='none')headers['CF-Access-Token']=accessJwt;
     if(perimeter==='both')headers.Authorization=`Bearer ${bearer}`;
     if(cookie)headers.Cookie=cookie;
     if(body!==undefined)headers['Content-Type']='application/json';
     if(path==='/api/auth/sign-in/email')headers['X-Captcha-Response']='XXXX.DUMMY.TOKEN.XXXX';
-    const response=await fetcher(target+path,{method,headers,...(body===undefined?{}:{body:JSON.stringify(body)}),redirect:'manual',signal:AbortSignal.timeout(30000)});
+    const requestSignal=signal?AbortSignal.any([signal,AbortSignal.timeout(30000)]):AbortSignal.timeout(30000);
+    const response=await fetcher(target+path,{method,headers,...(body===undefined?{}:{body:JSON.stringify(body)}),redirect:'manual',signal:requestSignal});
+    signal?.throwIfAborted();
     if(response.status!==expected){report.actualStatus=response.status;report.expectedStatus=expected;await response.body?.cancel();throw Error('Tenant smoke HTTP assertion failed');}
     report.checks++;
     if(expected===302){const location=new URL(response.headers.get('location')??'');ensure(location.protocol==='https:'&&location.hostname.endsWith('.cloudflareaccess.com')&&location.pathname.startsWith('/cdn-cgi/access/login/'));await response.body?.cancel();return{};}
@@ -47,7 +52,8 @@ export async function runTenantPreviewSmoke({baseUrl,accessJwt,bearer,driver,fet
     await request('/health');
     const manifest=driver.identifiers();
     ensure(manifest.users.length===5&&manifest.organizations.length===2&&manifest.restaurants.length===3);
-    report.stage='seed';step='seed';onProgress(report.stage);credentials=await driver.seed();seeded=true;
+    report.stage='seed';step='seed';onProgress(report.stage);signal?.throwIfAborted();credentials=await driver.seed();seeded=true;
+    if(signal?.aborted){clearCredentials();signal.throwIfAborted();}
     ensure(credentials.length===5&&sameSet(credentials.map(v=>v.id),manifest.users.map(v=>v.id)));
     for(const [index,user]of credentials.entries()){
       report.stage=`role_${index}_${user.role}`;onProgress(report.stage);
@@ -82,10 +88,10 @@ export async function runTenantPreviewSmoke({baseUrl,accessJwt,bearer,driver,fet
       step='logout';await logout(user.id,cookie);
     }
     report.users=5;report.organizations=2;report.restaurants=3;report.stage='verified';report.ok=true;
-  }catch(error){report.ok=false;report.failedStep=step;if(step==='seed'&&error?.safeCode==='tenant_seed_uncertain')report.failureCode='seed_uncertain';}
+  }catch(error){report.ok=false;report.failedStep=step;if(step==='seed'&&error?.safeCode==='tenant_seed_uncertain')report.failureCode='seed_uncertain';else if(signal?.aborted)report.failureCode='session_expired';}
   finally{
     for(const [id,cookie]of cookies){try{await logout(id,cookie);}catch{report.ok=false;}}
-    credentials.forEach(v=>{v.password='';});credentials=[];cookies.clear();accessJwt=undefined;bearer=undefined;
+    clearCredentials();signal?.removeEventListener('abort',clearCredentials);
     if(seeded){try{report.cleaned=(await driver.cleanup()).rows===0;}catch{report.cleaned=false;}if(!report.cleaned){report.stage='cleanup';report.ok=false;}}
     try{await driver.close();}catch{report.ok=false;}
   }

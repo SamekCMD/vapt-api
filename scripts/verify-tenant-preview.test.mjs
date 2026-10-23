@@ -86,3 +86,16 @@ test('uncertain seed commit preserves a fixed diagnostic and never retries seed 
   assert.equal(result.ok,false);assert.equal(result.failureCode,'seed_uncertain');assert.equal(result.failedStep,'seed');assert.equal(result.cleaned,false);
   assert.deepEqual(s.state(),{seeded:1,cleaned:0,closed:1});assert.doesNotMatch(JSON.stringify(result),/synthetic-secret|synthetic-password/);
 });
+test('session deadline cancels HTTP, clears credentials and still cleans confirmed fixtures',async()=>{
+  const run=await feature(),s=scenario(),controller=new AbortController();
+  const transport=s.fetcher;let sawCombinedAbort=false;
+  const fetcher=async(url,options)=>{
+    if(url.endsWith('/account/bootstrap')){
+      controller.abort();sawCombinedAbort=options.signal.aborted;options.signal.throwIfAborted();
+    }
+    return transport(url,options);
+  };
+  const result=await run({...input,...s,fetcher,signal:controller.signal,pace:async()=>{}});
+  assert.equal(sawCombinedAbort,true);assert.equal(result.ok,false);assert.equal(result.failureCode,'session_expired');
+  assert.equal(result.cleaned,true);assert.deepEqual(s.state(),{seeded:1,cleaned:1,closed:1});
+});

@@ -246,7 +246,7 @@ test('compatible publication treats lost Access after write as uncertain without
 });
 
 function rotationFixture(){
-  const value=compatibleFixture(({deployment})=>{deployment.id='0adb3258-57f0-4ef6-a155-1259780d17b4';deployment.number=29;deployment.main_module='parallel-preview-entry.js';deployment.startup_time_ms=194;deployment.urls=['https://0adb3258-vapt-api-parallel.autoistloko.workers.dev'];});
+  const value=compatibleFixture(({deployment})=>{deployment.id='e14728f8-0b1e-4e14-bb36-ae64cbe33321';deployment.number=30;deployment.main_module='parallel-preview-entry.js';deployment.startup_time_ms=194;deployment.urls=['https://e14728f8-vapt-api-parallel.autoistloko.workers.dev'];});
   const transport=value.ports.fetch;value.patches=[];
   value.ports.fetch=async(url,options)=>{
     if(options.method==='PATCH'){
@@ -257,23 +257,23 @@ function rotationFixture(){
       assert.equal(options.headers['Content-Type'],'application/merge-patch+json');
       const body=JSON.parse(options.body);assert.deepEqual(Object.keys(body.env),['PARALLEL_PREVIEW_TOKEN']);
       assert.deepEqual(body.env.PARALLEL_PREVIEW_TOKEN,{type:'secret_text',text:'synthetic-new-bearer-32-characters-long'});
-      value.deployment.id='22222222-2222-4222-8222-222222222222';value.deployment.number=30;
+      value.deployment.id='22222222-2222-4222-8222-222222222222';value.deployment.number=31;
       value.deployment.startup_time_ms=194;value.deployment.urls=['https://22222222-vapt-api-parallel.autoistloko.workers.dev'];
       return Response.json({success:true,result:value.deployment});
     }
     return transport(url,options);
   };return value;
 }
-test('bearer rotation patches only the newly approved baseline29 secret without a source upload and verifies deployment30',async()=>{
+test('bearer rotation patches only the newly approved baseline30 secret without a source upload and verifies deployment31',async()=>{
   const {rotateTenantPreviewBearer}=await feature();assert.equal(typeof rotateTenantPreviewBearer,'function','scoped bearer rotation not implemented');
   const value=rotationFixture(),result=await rotateTenantPreviewBearer('synthetic-new-bearer-32-characters-long',value.ports);
-  assert.equal(result.status,0);assert.equal(result.report.deploymentNumber,30);assert.equal(result.report.reader,false);assert.equal(result.report.writer,false);
+  assert.equal(result.status,0);assert.equal(result.report.deploymentNumber,31);assert.equal(result.report.reader,false);assert.equal(result.report.writer,false);
   assert.equal(value.patches.length,1);assert.equal(value.commands.length,1);assert.equal(value.applied(),false);
   assert.doesNotMatch(JSON.stringify(result),/synthetic-new-bearer|synthetic-secret|author_email/);
   assert.equal((await rotateTenantPreviewBearer('synthetic-new-bearer-32-characters-long',value.ports)).status,1);assert.equal(value.patches.length,1);
 });
 for(const [label,change]of [
-  ['changed baseline',v=>{v.deployment.number=30;}],['enabled writer',v=>{v.deployment.env.PUBLIC_CATALOG_WRITER_ENABLED.text='true';}],
+  ['changed baseline',v=>{v.deployment.number=31;}],['enabled writer',v=>{v.deployment.env.PUBLIC_CATALOG_WRITER_ENABLED.text='true';}],
   ['public bucket',v=>{v.bucketManaged.enabled=true;}],['Access removed',v=>{v.accessBlocked=false;}],
 ])test(`bearer rotation rejects ${label} before PATCH`,async()=>{
   const {rotateTenantPreviewBearer}=await feature();assert.equal(typeof rotateTenantPreviewBearer,'function');const value=rotationFixture();change(value);
@@ -294,7 +294,7 @@ test('bearer rotation detects metadata drift after PATCH without repairing or ro
 test('bearer rotation rechecks pinned latest immediately before PATCH and refuses concurrent deployment drift',async()=>{
   const {rotateTenantPreviewBearer}=await feature();const value=rotationFixture(),transport=value.ports.fetch;let latestReads=0;
   value.ports.fetch=async(url,options)=>{
-    if(options.method==='GET'&&url.endsWith('/deployments/latest')&&++latestReads===3){value.deployment.id='33333333-3333-4333-8333-333333333333';value.deployment.number=30;}
+    if(options.method==='GET'&&url.endsWith('/deployments/latest')&&++latestReads===3){value.deployment.id='33333333-3333-4333-8333-333333333333';value.deployment.number=31;}
     return transport(url,options);
   };
   assert.equal((await rotateTenantPreviewBearer('synthetic-new-bearer-32-characters-long',value.ports)).status,1);

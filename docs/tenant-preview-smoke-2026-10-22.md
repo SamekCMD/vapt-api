@@ -1,5 +1,13 @@
 # Gate autenticado tenant — preview, 22/10/2026
 
+## Continuação aprovada23/10 — controlador temporário, antes da execução
+
+O `continuar` do usuário aprovou a proposta limitada abaixo: renovar uma vez somente o bearer de preview e permitir retomada manual na mesma sessão, exclusivamente após limpeza confirmada. Implementado `tenant-preview-session.mjs`: uma rotação, nenhuma tentativa automática; referências controladas de Access/bearer apenas em RAM por até30min ou até a expiração do Access, o que ocorrer primeiro. Sucesso, abort, erro incerto, limpeza não confirmada e timeout encerram a sessão. Não é promessa de apagamento forense de strings pelo runtime JavaScript; nenhum segredo é serializado.
+
+O smoke recebe cancelamento da sessão, interrompe HTTP/espera ao expirar, descarta referências de credenciais e ainda executa a limpeza SQL de fixtures confirmadas. Seed incerto continua bloqueando DELETE/retry cego. Controller existente usa manifests públicos e relatórios com nomes únicos, sem sobrescrever a evidência anterior; só aceita `resume`/`abort` explícitos e nunca gira outra chave na retomada. Sem novo servidor local, Service Token, recurso, flags ou produção.
+
+Pin de renovação agora30 `e14728f8-0b1e-4e14-bb36-ae64cbe33321` →31; rejects baseline alterado. TDD RED confirmado antes da implementação; operadores231/231 e API701/701, zero fails/skips, exit0. Nesta atualização ainda não houve execução externa; checkpoints30 abaixo são históricos até novo resultado. Etapa13 e catálogo7/10 continuam abertos.
+
 ## Último checkpoint23/10 — implantação30; smoke incompleto e limpeza confirmada
 
 A renovação adicional autorizada passou todos os guards: implantação30 `e14728f8-0b1e-4e14-bb36-ae64cbe33321`, anterior29 `0adb3258-57f0-4ef6-a155-1259780d17b4`, mesmo runtime/bindings/limites e controles production/web/top-level. Access e recursos aprovados; catálogo reader/writerfalse, CPU1000. Nenhum bundle novo publicado. Inspect independente exit0 confirmou30.
