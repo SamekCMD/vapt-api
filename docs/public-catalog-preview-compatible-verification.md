@@ -1,5 +1,7 @@
 # Atualização compatível do Preview — 22/10/2026
 
+Último estado23/10: Preview30 `e14728f8-0b1e-4e14-bb36-ae64cbe33321`, após renovação adicional de bearer aprovada e verificada. Sem upload de bundle; flagsfalse/CPU1000/recursos/controles preservados. Smoke começou, mas parou no primeiro owner por assert do operador sobre campo ausente no DTO operacional; cleanup e conexão READ ONLY independente confirmaramzero. Corrigido localmente, diagnóstico pontual Astra medium e regressões225operadores/701API passaram; matriz remota permanece incompleta. Relatório atual: `tenant-preview-smoke-2026-10-22.md`. Não repetir publicação/SQL/rotação por inferência; implantação29 e28 abaixo são histórico.
+
 ## Atualização de credencial23/10
 
 Após a publicação compatível28, a renovação aprovada do bearer de teste criou somente o Preview29 `0adb3258-57f0-4ef6-a155-1259780d17b4`, por PATCH de secret, sem upload de bundle. Campos de runtime/bindings/limites preservados; Access/R2privado/HDpreviewcacheoff e inspect conferidos independentemente. Reader/writerfalse, CPU1000; produção/web/top-level sem novas implantações. O smoke autenticado não começou porque o operador confundiu amostra de startup e URL por implantação com configuração estável. Correção local RED→GREEN/221operadores/701API; credencial em memória descartada na parada. Nova renovação para o smoke precisa de aprovação própria, sem replay de SQL ou deploy. Registro atual: `tenant-preview-smoke-2026-10-22.md`. As referências a28 abaixo descrevem a publicação de código anterior.

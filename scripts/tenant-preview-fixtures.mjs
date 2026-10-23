@@ -62,7 +62,7 @@ export async function createTenantFixtureDriver({ownerUrl,tag,createPool=options
         for(const r of restaurants)await client.query(`INSERT INTO public.restaurants(id,organization_id,owner_id,name,slug,plan_type,plan_status,onboarding_completed,onboarding_status,onboarding_step,total_tables,max_tables,max_pending_orders,payment_mode)
           VALUES($1,$2,$3,$4,$5,$6,'active',true,'complete',2,2,2,10,'open_tab')`,[r.id,r.organization_id,r.owner_id,r.name,r.slug,r.organization_id===orgIds[0]?'business':'pro']);
         committing=true;await client.query('COMMIT');seeded=true;return credentials;
-      }catch{await client.query('ROLLBACK').catch(()=>{});throw Error(committing?'Tenant preview fixture seed uncertain':'Tenant preview fixture seed failed');}
+      }catch{await client.query('ROLLBACK').catch(()=>{});const error=Error(committing?'Tenant preview fixture seed uncertain':'Tenant preview fixture seed failed');if(committing)error.safeCode='tenant_seed_uncertain';throw error;}
       finally{hashes.fill('');client.release();}
     },
     async cleanup(){

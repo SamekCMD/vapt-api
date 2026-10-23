@@ -3,10 +3,11 @@ import test from 'node:test';
 const ownerUrl='postgresql://neondb_owner:synthetic-secret@ep-hidden-bird-b673zocn.c-2.sa-east-1.aws.neon.tech/vapt?sslmode=verify-full';
 const tag='tenant-smoke-11111111-1111-4111-8111-111111111111';
 async function feature(){const m=await import('./tenant-preview-fixtures.mjs').catch(()=>null);assert.equal(typeof m?.createTenantFixtureDriver,'function','tenant fixture not implemented');return m.createTenantFixtureDriver;}
-function database({collision=false,mismatch=false,residue=0,seedFailure=false,enforceSingleConnection=false}={}){
+function database({collision=false,mismatch=false,residue=0,seedFailure=false,enforceSingleConnection=false,commitUncertain=false}={}){
   const users=[],organizations=[],restaurants=[],members=[],queries=[];let ended=false,held=false;
   const query=async(sql,p=[])=>{
     queries.push({sql,p});
+    if(sql==='COMMIT'&&commitUncertain)throw Error('synthetic-secret');
     if(sql.includes('current_database()'))return{rows:[{database:'vapt',role:'neondb_owner'}]};
     if(sql.includes('AS collision'))return{rows:[{collision:collision?1:0}]};
     if(sql.startsWith('INSERT INTO better_auth."user"'))users.push({id:p[0],name:p[1],email:p[2]});
@@ -53,4 +54,9 @@ test('cleanup refuses altered ownership before deletion and rejects nonzero inde
 test('cleanup releases its single pool connection before independent committed readback',async()=>{
   const create=await feature(),db=database({enforceSingleConnection:true}),driver=await create({ownerUrl,tag,createPool:()=>db.pool,hash:async()=> 'synthetic-hash'});
   await driver.seed();assert.deepEqual(await driver.cleanup(),{rows:0});await driver.close();
+});
+test('uncertain COMMIT carries a nonsecret code while refusing automatic fixture deletion',async()=>{
+  const create=await feature(),db=database({commitUncertain:true}),driver=await create({ownerUrl,tag,createPool:()=>db.pool,hash:async()=> 'synthetic-hash'});
+  await assert.rejects(driver.seed(),e=>e.safeCode==='tenant_seed_uncertain'&&!String(e).includes('synthetic-secret'));
+  assert.equal(driver.identifiers().users.length,5);await assert.rejects(driver.cleanup());assert.equal(db.queries.some(v=>v.sql.startsWith('DELETE')),false);await driver.close();
 });

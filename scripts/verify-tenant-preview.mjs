@@ -14,7 +14,7 @@ function noBillingFields(value){
 export async function runTenantPreviewSmoke({baseUrl,accessJwt,bearer,driver,fetcher=fetch,
   pace=()=>new Promise(resolve=>setTimeout(resolve,3300)),onProgress=()=>{}}={}){
   const report={ok:false,cleaned:false,stage:'input',users:0,organizations:0,restaurants:0,checks:0};
-  const cookies=new Map();let seeded=false,credentials=[];
+  const cookies=new Map();let seeded=false,credentials=[],step='input';
   try{
     ensure(baseUrl===target&&typeof accessJwt==='string'&&/^[A-Za-z0-9._-]{20,8192}$/.test(accessJwt)
       &&typeof bearer==='string'&&/^[A-Za-z0-9_-]{32,256}$/.test(bearer)
@@ -41,19 +41,19 @@ export async function runTenantPreviewSmoke({baseUrl,accessJwt,bearer,driver,fet
     await request('/auth/me',{cookie,expected:401});cookies.delete(userId);
   }
   try{
-    report.stage='perimeter';onProgress(report.stage);
+    report.stage='perimeter';step='perimeter';onProgress(report.stage);
     await request('/',{expected:302,perimeter:'none'});
     await request('/health',{expected:401,perimeter:'access'});
     await request('/health');
     const manifest=driver.identifiers();
     ensure(manifest.users.length===5&&manifest.organizations.length===2&&manifest.restaurants.length===3);
-    report.stage='seed';onProgress(report.stage);credentials=await driver.seed();seeded=true;
+    report.stage='seed';step='seed';onProgress(report.stage);credentials=await driver.seed();seeded=true;
     ensure(credentials.length===5&&sameSet(credentials.map(v=>v.id),manifest.users.map(v=>v.id)));
     for(const [index,user]of credentials.entries()){
       report.stage=`role_${index}_${user.role}`;onProgress(report.stage);
       const own=manifest.restaurants.filter(v=>v.organization_id===user.organizationId),foreign=manifest.restaurants.find(v=>v.organization_id!==user.organizationId);
       ensure(capabilities[user.role]&&own.length===(index===4?1:2)&&foreign);
-      const login=await request('/api/auth/sign-in/email',{method:'POST',body:{email:user.email,password:user.password}});
+      step='login';const login=await request('/api/auth/sign-in/email',{method:'POST',body:{email:user.email,password:user.password}});
       const cookie=login.headers.getSetCookie().map(v=>v.split(';')[0]).filter(v=>/^__Secure-better-auth\.session_token=/.test(v)).join('; ');
       ensure(cookie.length>40&&cookie.length<8192);cookies.set(user.id,cookie);user.password='';
       const bootstrap=async query=>{
@@ -63,24 +63,26 @@ export async function runTenantPreviewSmoke({baseUrl,accessJwt,bearer,driver,fet
           &&data.organizations[0].operationActive===true&&sameSet(data.restaurants.map(v=>v.id),own.map(v=>v.id))
           &&data.restaurants.every(v=>v.organizationId===user.organizationId));return data;
       };
-      const initial=await bootstrap();ensure(initial.destination===(own.length===1?'dashboard':'select-restaurant'));
-      for(const unit of own){const dto=(await request(`/restaurants/${unit.id}`,{cookie})).value;ensure(dto.id===unit.id&&dto.organizationId===user.organizationId);noBillingFields(dto);}
-      const entitled=(await request(`/organizations/${user.organizationId}/restaurant-entitlement`,{cookie})).value;
+      step='bootstrap';const initial=await bootstrap();ensure(initial.destination===(own.length===1?'dashboard':'select-restaurant'));
+      // Organization ownership is checked in the canonical bootstrap summaries
+      // above and foreign-route denials below, not an invented operational field.
+      step='restaurant_read';for(const unit of own){const dto=(await request(`/restaurants/${unit.id}`,{cookie})).value;ensure(dto.id===unit.id&&dto.slug===unit.slug);noBillingFields(dto);}
+      step='entitlement';const entitled=(await request(`/organizations/${user.organizationId}/restaurant-entitlement`,{cookie})).value;
       const permitted=['owner','admin'].includes(user.role),count=own.length,limit=index===4?1:25;
       ensure(isDeepStrictEqual(entitled,{canCreate:permitted&&count<limit,reason:!permitted?'permission':count>=limit?'limit':'allowed',count,limit}));
-      await request(`/restaurants/${foreign.id}`,{cookie,expected:403});
+      step='cross_org';await request(`/restaurants/${foreign.id}`,{cookie,expected:403});
       await request(`/account/bootstrap?restaurantId=${foreign.id}`,{cookie,expected:403});
       await request('/account/preference',{method:'PATCH',cookie,body:{organizationId:foreign.organization_id,restaurantId:foreign.id},expected:403});
       const chosen=own.at(-1);
-      await request('/account/preference',{method:'PATCH',cookie,body:{organizationId:user.organizationId,restaurantId:chosen.id},expected:204});
-      const selected=await bootstrap();ensure(selected.currentRestaurantId===chosen.id&&selected.currentOrganizationId===user.organizationId&&selected.destination==='dashboard');
-      const routed=await bootstrap(`?restaurantId=${own[0].id}`);ensure(routed.currentRestaurantId===own[0].id);
+      step='preference';await request('/account/preference',{method:'PATCH',cookie,body:{organizationId:user.organizationId,restaurantId:chosen.id},expected:204});
+      step='selected_bootstrap';const selected=await bootstrap();ensure(selected.currentRestaurantId===chosen.id&&selected.currentOrganizationId===user.organizationId&&selected.destination==='dashboard');
+      step='route_bootstrap';const routed=await bootstrap(`?restaurantId=${own[0].id}`);ensure(routed.currentRestaurantId===own[0].id);
       // Staff cannot mutate restaurant settings even with valid JSON/session.
-      if(user.role==='staff')await request(`/restaurants/${chosen.id}`,{method:'PATCH',cookie,body:{name:manifest.tag},expected:403});
-      await logout(user.id,cookie);
+      step='staff_write_denial';if(user.role==='staff')await request(`/restaurants/${chosen.id}`,{method:'PATCH',cookie,body:{name:manifest.tag},expected:403});
+      step='logout';await logout(user.id,cookie);
     }
     report.users=5;report.organizations=2;report.restaurants=3;report.stage='verified';report.ok=true;
-  }catch{report.ok=false;}
+  }catch(error){report.ok=false;report.failedStep=step;if(step==='seed'&&error?.safeCode==='tenant_seed_uncertain')report.failureCode='seed_uncertain';}
   finally{
     for(const [id,cookie]of cookies){try{await logout(id,cookie);}catch{report.ok=false;}}
     credentials.forEach(v=>{v.password='';});credentials=[];cookies.clear();accessJwt=undefined;bearer=undefined;
