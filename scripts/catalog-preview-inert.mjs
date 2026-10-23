@@ -161,7 +161,7 @@ export async function rotateTenantPreviewBearer(bearer,ports={}) {
     };
     const config=JSON.parse(readFileSync(resolve(root,configuration),'utf8'));
     const before=await read(previewPath+'/deployments/latest');checkPreview(await read(previewPath),before,config,true);
-    ensure(before.id==='e14728f8-0b1e-4e14-bb36-ae64cbe33321'&&before.number===30
+    ensure(before.id==='6110a9fe-0ee6-4faa-920e-23f73f7a504d'&&before.number===31
       &&before.env.PUBLIC_CATALOG_COORDINATOR.namespace_id===compatibleCatalogNamespace,'catalog_preview_rotation_baseline_changed');
     await checkCompatibleResources(read,transport);
     const controls=async()=>Promise.all(controlPaths.map(async path=>{const v=await read(path);ensure(Array.isArray(v.deployments)&&v.deployments.length>0,'catalog_preview_control_invalid');return v.deployments.map(d=>({id:d.id,versions:d.versions}));}));
@@ -173,20 +173,20 @@ export async function rotateTenantPreviewBearer(bearer,ports={}) {
     ensure(isDeepStrictEqual(before.urls,expectedUrls(before))&&Number.isFinite(before.startup_time_ms)&&before.startup_time_ms>=0,'catalog_preview_rotation_metadata_invalid');
     const stableBefore=structuredClone(stable(before));
     const immediatelyBefore=await read(previewPath+'/deployments/latest');
-    ensure(immediatelyBefore.id===before.id&&immediatelyBefore.number===30&&isDeepStrictEqual(stable(immediatelyBefore),stableBefore)
+    ensure(immediatelyBefore.id===before.id&&immediatelyBefore.number===31&&isDeepStrictEqual(stable(immediatelyBefore),stableBefore)
       &&isDeepStrictEqual(immediatelyBefore.urls,before.urls),'catalog_preview_rotation_baseline_changed');
     attempted=true;
     const response=await transport(base+previewPath+'/deployments/latest',{method:'PATCH',headers:{Authorization:`Bearer ${credential}`,'Content-Type':'application/merge-patch+json'},
-      body:JSON.stringify({env:{PARALLEL_PREVIEW_TOKEN:{type:'secret_text',text:bearer}},annotations:{'workers/message':'Approved tenant preview smoke bearer renewal'}}),redirect:'error',signal:AbortSignal.timeout(30000)});
+      body:JSON.stringify({env:{PARALLEL_PREVIEW_TOKEN:{type:'secret_text',text:bearer}},annotations:{'workers/message':'Approved tenant browser preview bearer renewal'}}),redirect:'error',signal:AbortSignal.timeout(30000)});
     const text=await response.text();ensure(text.length<=262144,'catalog_preview_rotation_uncertain');
     if(!response.ok){httpStatus=response.status;try{const errors=JSON.parse(text).errors;providerCodes=Array.isArray(errors)?errors.slice(0,5).map(v=>v?.code).filter(Number.isSafeInteger):[];}catch{providerCodes=[];}}
     ensure(response.ok,'catalog_preview_rotation_uncertain');
     const body=JSON.parse(text);ensure(body.success===true&&body.result,'catalog_preview_rotation_uncertain');const uploaded=body.result;
     const after=await read(previewPath+'/deployments/latest');checkPreview(await read(previewPath),after,config,true);
-    ensure(after.number===31&&after.id===uploaded.id&&after.id!==before.id&&isDeepStrictEqual(stable(after),stableBefore)
+    ensure(after.number===32&&after.id===uploaded.id&&after.id!==before.id&&isDeepStrictEqual(stable(after),stableBefore)
       &&isDeepStrictEqual(after.urls,expectedUrls(after))&&Number.isFinite(after.startup_time_ms)&&after.startup_time_ms>=0,'catalog_preview_rotation_uncertain');
     ensure(isDeepStrictEqual(await controls(),controlBefore),'catalog_preview_control_changed');await checkCompatibleResources(read,transport);
-    return{status:0,report:{ok:true,bearerRenewed:true,deploymentId:after.id,deploymentNumber:31,previousDeploymentId:before.id,
+    return{status:0,report:{ok:true,bearerRenewed:true,deploymentId:after.id,deploymentNumber:32,previousDeploymentId:before.id,
       reader:false,writer:false,cpuLimitMs:1000,controlDeploymentsUnchanged:true,activationReady:false}};
   }catch(error){const result=failed(attempted?'catalog_preview_rotation_uncertain':error?.safeCode??'catalog_preview_rotation_preflight_failed');if(httpStatus!==undefined)Object.assign(result.report,{httpStatus,providerCodes});return result;}
   finally{credential=undefined;bearer=undefined;}

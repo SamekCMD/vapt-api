@@ -32,6 +32,9 @@ jobs:
       - name: Test
         run: npm test
 
+      - name: Test private browser adapter without credentials or remote access
+        run: npm run test:tenant-browser
+
       - name: Test Worker in workerd
         run: npm run test:worker
 

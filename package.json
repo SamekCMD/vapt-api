@@ -25,6 +25,7 @@
     "start": "node dist/server.js",
     "test": "tsx --test \"src/**/*.test.ts\"",
     "test:tenant-pg": "node scripts/local-tenant-pg.mjs",
+    "test:tenant-browser": "node --test scripts/tenant-preview-browser-adapter.test.mjs",
     "test:worker": "tsx --test \"src/worker/*.workerd.ts\"",
     "test:catalog-config": "node --test scripts/verify-catalog-config.test.mjs scripts/catalog-operator.test.mjs scripts/catalog-preview-inert.test.mjs",
     "test:catalog-worker": "tsx --test src/worker/catalog.workerd.ts",
