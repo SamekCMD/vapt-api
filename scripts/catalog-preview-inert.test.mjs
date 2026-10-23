@@ -251,7 +251,9 @@ function rotationFixture(){
   value.ports.fetch=async(url,options)=>{
     if(options.method==='PATCH'){
       value.patches.push({url,options});
-      assert.equal(url,base+previewPath+'/deployments/fca1102f-05b4-488e-bc6a-11d1f82e0bd9');
+      // Wrangler's secret operator uses the supported latest PATCH endpoint;
+      // immutable deployment UUIDs remain valid GET targets, not clone targets.
+      assert.equal(url,base+previewPath+'/deployments/latest');
       assert.equal(options.headers['Content-Type'],'application/merge-patch+json');
       const body=JSON.parse(options.body);assert.deepEqual(Object.keys(body.env),['PARALLEL_PREVIEW_TOKEN']);
       assert.deepEqual(body.env.PARALLEL_PREVIEW_TOKEN,{type:'secret_text',text:'synthetic-new-bearer-32-characters-long'});
@@ -287,4 +289,20 @@ test('bearer rotation detects metadata drift after PATCH without repairing or ro
   const {rotateTenantPreviewBearer}=await feature();assert.equal(typeof rotateTenantPreviewBearer,'function');const value=rotationFixture(),transport=value.ports.fetch;
   value.ports.fetch=async(url,options)=>{const response=await transport(url,options);if(options.method==='PATCH')value.deployment.main_module='another.js';return response;};
   const result=await rotateTenantPreviewBearer('synthetic-new-bearer-32-characters-long',value.ports);assert.equal(result.status,1);assert.equal(value.patches.length,1);
+});
+test('bearer rotation rechecks pinned latest immediately before PATCH and refuses concurrent deployment drift',async()=>{
+  const {rotateTenantPreviewBearer}=await feature();const value=rotationFixture(),transport=value.ports.fetch;let latestReads=0;
+  value.ports.fetch=async(url,options)=>{
+    if(options.method==='GET'&&url.endsWith('/deployments/latest')&&++latestReads===3){value.deployment.id='33333333-3333-4333-8333-333333333333';value.deployment.number=29;}
+    return transport(url,options);
+  };
+  assert.equal((await rotateTenantPreviewBearer('synthetic-new-bearer-32-characters-long',value.ports)).status,1);
+  assert.equal(value.patches.length,0);
+});
+test('bearer rotation reports only allowlisted HTTP diagnostics for provider rejection, without echoing body or retry',async()=>{
+  const {rotateTenantPreviewBearer}=await feature();const value=rotationFixture(),transport=value.ports.fetch;let writes=0;
+  value.ports.fetch=async(url,options)=>{if(options.method==='PATCH'){writes++;return Response.json({success:false,errors:[{code:10032,message:'synthetic-secret',details:'synthetic-new-bearer'}]},{status:400});}return transport(url,options);};
+  const result=await rotateTenantPreviewBearer('synthetic-new-bearer-32-characters-long',value.ports);
+  assert.equal(result.status,1);assert.equal(result.report.httpStatus,400);assert.deepEqual(result.report.providerCodes,[10032]);assert.equal(writes,1);
+  assert.doesNotMatch(JSON.stringify(result),/synthetic-secret|synthetic-new-bearer/);
 });

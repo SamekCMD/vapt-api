@@ -140,11 +140,12 @@ export async function runCatalogInertPreview(args,ports={}) {
 }
 
 // Separately approved one-shot credential renewal. PATCH clones the explicitly
-// pinned deployment; no source/bundle upload, flags, routes or base-config edit.
+// latest deployment AFTER checking the pinned baseline; no bundle upload, flags,
+// routes or base-config edit. Provider has no documented atomic compare-and-swap.
 // Caller retains its generated bearer in memory for the smoke; never return it.
 export async function rotateTenantPreviewBearer(bearer,ports={}) {
   if(typeof bearer!=='string'||!/^[A-Za-z0-9_-]{32,256}$/.test(bearer))return failed('catalog_preview_rotation_input_invalid');
-  const execute=ports.execute??spawnSync,transport=ports.fetch??fetch;let credential,attempted=false;
+  const execute=ports.execute??spawnSync,transport=ports.fetch??fetch;let credential,attempted=false,httpStatus,providerCodes;
   try{
     const inspected=await runCatalogInertPreview(['inspect'],{...ports,execute(exe,args,options){
       ensure(args[1]==='auth','catalog_preview_rotation_command_invalid');
@@ -167,17 +168,21 @@ export async function rotateTenantPreviewBearer(bearer,ports={}) {
     const controlBefore=await controls();
     const stable=value=>Object.fromEntries(['startup_time_ms','limits','compatibility_date','compatibility_flags','main_module','usage_model','migration_tag','urls','env'].map(key=>[key,value[key]]));
     const stableBefore=structuredClone(stable(before));
+    const immediatelyBefore=await read(previewPath+'/deployments/latest');
+    ensure(immediatelyBefore.id===before.id&&immediatelyBefore.number===28&&isDeepStrictEqual(stable(immediatelyBefore),stableBefore),'catalog_preview_rotation_baseline_changed');
     attempted=true;
-    const response=await transport(base+previewPath+'/deployments/'+before.id,{method:'PATCH',headers:{Authorization:`Bearer ${credential}`,'Content-Type':'application/merge-patch+json'},
+    const response=await transport(base+previewPath+'/deployments/latest',{method:'PATCH',headers:{Authorization:`Bearer ${credential}`,'Content-Type':'application/merge-patch+json'},
       body:JSON.stringify({env:{PARALLEL_PREVIEW_TOKEN:{type:'secret_text',text:bearer}},annotations:{'workers/message':'Approved tenant preview smoke bearer renewal'}}),redirect:'error',signal:AbortSignal.timeout(30000)});
-    ensure(response.ok,'catalog_preview_rotation_uncertain');const text=await response.text();ensure(text.length<=262144,'catalog_preview_rotation_uncertain');
+    const text=await response.text();ensure(text.length<=262144,'catalog_preview_rotation_uncertain');
+    if(!response.ok){httpStatus=response.status;try{const errors=JSON.parse(text).errors;providerCodes=Array.isArray(errors)?errors.slice(0,5).map(v=>v?.code).filter(Number.isSafeInteger):[];}catch{providerCodes=[];}}
+    ensure(response.ok,'catalog_preview_rotation_uncertain');
     const body=JSON.parse(text);ensure(body.success===true&&body.result,'catalog_preview_rotation_uncertain');const uploaded=body.result;
     const after=await read(previewPath+'/deployments/latest');checkPreview(await read(previewPath),after,config,true);
     ensure(after.number===29&&after.id===uploaded.id&&after.id!==before.id&&isDeepStrictEqual(stable(after),stableBefore),'catalog_preview_rotation_uncertain');
     ensure(isDeepStrictEqual(await controls(),controlBefore),'catalog_preview_control_changed');await checkCompatibleResources(read,transport);
     return{status:0,report:{ok:true,bearerRenewed:true,deploymentId:after.id,deploymentNumber:29,previousDeploymentId:before.id,
       reader:false,writer:false,cpuLimitMs:1000,controlDeploymentsUnchanged:true,activationReady:false}};
-  }catch(error){return failed(attempted?'catalog_preview_rotation_uncertain':error?.safeCode??'catalog_preview_rotation_preflight_failed');}
+  }catch(error){const result=failed(attempted?'catalog_preview_rotation_uncertain':error?.safeCode??'catalog_preview_rotation_preflight_failed');if(httpStatus!==undefined)Object.assign(result.report,{httpStatus,providerCodes});return result;}
   finally{credential=undefined;bearer=undefined;}
 }
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)) {
