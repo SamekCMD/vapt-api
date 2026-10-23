@@ -1,6 +1,6 @@
 # Atualização compatível do Preview — 22/10/2026
 
-Último estado23/10: Preview30 `e14728f8-0b1e-4e14-bb36-ae64cbe33321`, após renovação adicional de bearer aprovada e verificada. Sem upload de bundle; flagsfalse/CPU1000/recursos/controles preservados. Smoke começou, mas parou no primeiro owner por assert do operador sobre campo ausente no DTO operacional; cleanup e conexão READ ONLY independente confirmaramzero. Corrigido localmente, diagnóstico pontual Astra medium e regressões225operadores/701API passaram; matriz remota permanece incompleta. Relatório atual: `tenant-preview-smoke-2026-10-22.md`. Não repetir publicação/SQL/rotação por inferência; implantação29 e28 abaixo são histórico.
+Último estado23/10,17:26UTC: Preview31 `6110a9fe-0ee6-4faa-920e-23f73f7a504d`, renovação única aprovada30→31 sem upload de bundle; flagsfalse/CPU1000/recursos/controles preservados. Smoke remoto **aprovado na primeira tentativa:68 checks,5 contas,2 organizações,3 restaurantes,cleanedtrue**. Limpeza do manifesto e nova conexão TLS READ ONLY confirmaramzero nas oito relações conferidas. Controlador encerrou exit0/referências descartadas, sem retry/novo recurso/produção/frontend/main. Operadores231/231 e API701/701; CPUworkload/activation continuamfalse. [Relatório atual](tenant-preview-smoke-2026-10-22.md). Gate encerrado: não repetir publicação/SQL/rotação/smoke; próximos clientes/consumidor e demais gates antes do writer/CPU/bootstrap/produção. Catálogo7/10 e Etapa13 abertos; checkpoints seguintes são históricos.
 
 ## Atualização de credencial23/10
 

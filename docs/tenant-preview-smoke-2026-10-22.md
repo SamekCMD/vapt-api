@@ -1,5 +1,17 @@
 # Gate autenticado tenant — preview, 22/10/2026
 
+## Resultado atual23/10, 17:26UTC — smoke remoto aprovado e limpeza verificada
+
+Uma execução do controlador aprovado, sem retomada/retry, concluiu na primeira tentativa: **oktrue, cleanedtrue,68 checks,5 usuários,2 organizações,3 restaurantes**. Cobriu owner/admin/manager/staff, lista e escolha de unidades, leitura explícita, capacidades, Business2/25 e Pro1/1, acesso cross-org negado, preferência e override de rota, PATCH de staff403, logout e cookie revogado. Não certifica mutations de admin/manager, onboarding, navegador, preservação da preferência depois do override de rota ou CPU8MiB.
+
+O login Access transitório foi concluído no aplicativo existente, sem Service Token. Renovação única30→31: **`6110a9fe-0ee6-4faa-920e-23f73f7a504d`**, mesmo bundle publicado28/API`7689ec5`, namespaces, bindings, nove secrets por nome/tipo, seis rates e CPU1000. Reader/writerfalse, recursos Access/R2privado/Hyperdrivepreviewcacheoff e controles de deployments production/web/top-level passaram antes/depois. Inspect independente exit0 confirmou31, cpuWorkloadVerifiedfalse e activationReadyfalse.
+
+Limpeza restrita do manifesto passou as15 relações/efeitos e readback commitado do driver. Em seguida uma **nova conexão TLS READ ONLY**, sem DELETE, confirmou contagens globais0 para organizações, memberships, subscriptions, restaurantes, preferências, users, sessions e accounts; ROLLBACK/close. Somente dados sintéticos criados por este smoke foram removidos. Nenhuma migration/grant/email/pagamento/R2/DO de produto ou publicação de código foi executada.
+
+Controlador encerrou exit0 e descartou referências de credenciais; nenhuma sessão temporária nossa permanece ativa. Isso não revoga o secret write-only remoto nem elimina o cache transitório nativo do Access, cuja duração1h não foi ampliada. Relatório sanitizado preservado no scratch ignorado `tenant-smoke-result-810bf12c-2beb-4f0c-8cfe-5106549af078-1.json`; manifesto público separado. Fonte dos operadores testada/commitada antes da execução em API`a77992b`; operadores231/231, API701/701, zero fails/skips.
+
+**Este gate está encerrado. Não repetir rotação, fixtures, publicação compatível ou migrations009–012 do preview.** Próximo gate é compatibilidade/cobertura de clientes e consumidor ativos, antes da janela writer com readerfalse; canário/CPU/bootstrap, promoção de produção e integração/main seguem separados. Formal catálogo7/10 e Etapa13 continuam abertos. Os checkpoints seguintes são históricos.
+
 ## Continuação aprovada23/10 — controlador temporário, antes da execução
 
 O `continuar` do usuário aprovou a proposta limitada abaixo: renovar uma vez somente o bearer de preview e permitir retomada manual na mesma sessão, exclusivamente após limpeza confirmada. Implementado `tenant-preview-session.mjs`: uma rotação, nenhuma tentativa automática; referências controladas de Access/bearer apenas em RAM por até30min ou até a expiração do Access, o que ocorrer primeiro. Sucesso, abort, erro incerto, limpeza não confirmada e timeout encerram a sessão. Não é promessa de apagamento forense de strings pelo runtime JavaScript; nenhum segredo é serializado.
@@ -8,7 +20,7 @@ O smoke recebe cancelamento da sessão, interrompe HTTP/espera ao expirar, desca
 
 Pin de renovação agora30 `e14728f8-0b1e-4e14-bb36-ae64cbe33321` →31; rejects baseline alterado. TDD RED confirmado antes da implementação; operadores231/231 e API701/701, zero fails/skips, exit0. Nesta atualização ainda não houve execução externa; checkpoints30 abaixo são históricos até novo resultado. Etapa13 e catálogo7/10 continuam abertos.
 
-## Último checkpoint23/10 — implantação30; smoke incompleto e limpeza confirmada
+## Histórico23/10 — implantação30; smoke incompleto e limpeza confirmada
 
 A renovação adicional autorizada passou todos os guards: implantação30 `e14728f8-0b1e-4e14-bb36-ae64cbe33321`, anterior29 `0adb3258-57f0-4ef6-a155-1259780d17b4`, mesmo runtime/bindings/limites e controles production/web/top-level. Access e recursos aprovados; catálogo reader/writerfalse, CPU1000. Nenhum bundle novo publicado. Inspect independente exit0 confirmou30.
 
@@ -20,7 +32,7 @@ Diagnóstico pontual Astra medium solicitado sob a autorização anterior do usu
 
 Verificação local final: operadores225/225, API701/701, exit0. Operador de renovação segue preso ao baseline29 e portanto rejeita a atual30 antes de escrever. Controller encerrou, descartando o bearer da memória; nenhum valor foi exposto/persistido localmente. Não há controlador ativo ou dados de teste remanescentes. Fonte versionada/config de produto e produção/frontend/main permanecem inalterados por esse teste. Catálogo7/10 formalmente e Etapa13 abertos.
 
-Proposta limitada para retomar, **ainda não aprovada/implementada**: após nova autorização de renovação somente de preview, ajustar pin30→31 e manter o controlador em RAM por no máximo30min, nunca além de Access; pause em falha recuperável somente se limpeza confirmada. Retomada explícita pelo operador, sem retries automáticos, nova rotação, Service Token, segredo em arquivo/log/argv/env, flags ou produção. Falha de limpeza/seed incerto bloqueia retry e exige readback controlado; término/timeout elimina referências. Essa mudança de ciclo de vida usa o gate bounded da skill brainstorming; não iniciar outra tentativa sem aprovação.
+Proposta daquele checkpoint: ajustar pin30→31 e manter o controlador em RAM por no máximo30min, nunca além de Access; pause em falha recuperável somente se limpeza confirmada. Foi posteriormente aprovada pelo `continuar` do usuário, implementada/testada e executada conforme resultado atual no início deste documento. Retomada explícita, sem retry/rotação automática; seed incerto ou limpeza falha bloqueiam repetição. Não é autorização para executar novamente o gate encerrado.
 
 As atualizações seguintes preservam a cronologia dos checkpoints anteriores.
 
