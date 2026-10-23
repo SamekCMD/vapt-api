@@ -166,10 +166,15 @@ export async function rotateTenantPreviewBearer(bearer,ports={}) {
     await checkCompatibleResources(read,transport);
     const controls=async()=>Promise.all(controlPaths.map(async path=>{const v=await read(path);ensure(Array.isArray(v.deployments)&&v.deployments.length>0,'catalog_preview_control_invalid');return v.deployments.map(d=>({id:d.id,versions:d.versions}));}));
     const controlBefore=await controls();
-    const stable=value=>Object.fromEntries(['startup_time_ms','limits','compatibility_date','compatibility_flags','main_module','usage_model','migration_tag','urls','env'].map(key=>[key,value[key]]));
+    // Startup is a new measured sample, not configuration. A per-deployment URL
+    // necessarily incorporates the new ID; validate its exact new shape below.
+    const stable=value=>Object.fromEntries(['limits','compatibility_date','compatibility_flags','main_module','usage_model','migration_tag','env'].map(key=>[key,value[key]]));
+    const expectedUrls=value=>[`https://${value.id.slice(0,8)}-vapt-api-parallel.autoistloko.workers.dev`];
+    ensure(isDeepStrictEqual(before.urls,expectedUrls(before))&&Number.isFinite(before.startup_time_ms)&&before.startup_time_ms>=0,'catalog_preview_rotation_metadata_invalid');
     const stableBefore=structuredClone(stable(before));
     const immediatelyBefore=await read(previewPath+'/deployments/latest');
-    ensure(immediatelyBefore.id===before.id&&immediatelyBefore.number===28&&isDeepStrictEqual(stable(immediatelyBefore),stableBefore),'catalog_preview_rotation_baseline_changed');
+    ensure(immediatelyBefore.id===before.id&&immediatelyBefore.number===28&&isDeepStrictEqual(stable(immediatelyBefore),stableBefore)
+      &&isDeepStrictEqual(immediatelyBefore.urls,before.urls),'catalog_preview_rotation_baseline_changed');
     attempted=true;
     const response=await transport(base+previewPath+'/deployments/latest',{method:'PATCH',headers:{Authorization:`Bearer ${credential}`,'Content-Type':'application/merge-patch+json'},
       body:JSON.stringify({env:{PARALLEL_PREVIEW_TOKEN:{type:'secret_text',text:bearer}},annotations:{'workers/message':'Approved tenant preview smoke bearer renewal'}}),redirect:'error',signal:AbortSignal.timeout(30000)});
@@ -178,7 +183,8 @@ export async function rotateTenantPreviewBearer(bearer,ports={}) {
     ensure(response.ok,'catalog_preview_rotation_uncertain');
     const body=JSON.parse(text);ensure(body.success===true&&body.result,'catalog_preview_rotation_uncertain');const uploaded=body.result;
     const after=await read(previewPath+'/deployments/latest');checkPreview(await read(previewPath),after,config,true);
-    ensure(after.number===29&&after.id===uploaded.id&&after.id!==before.id&&isDeepStrictEqual(stable(after),stableBefore),'catalog_preview_rotation_uncertain');
+    ensure(after.number===29&&after.id===uploaded.id&&after.id!==before.id&&isDeepStrictEqual(stable(after),stableBefore)
+      &&isDeepStrictEqual(after.urls,expectedUrls(after))&&Number.isFinite(after.startup_time_ms)&&after.startup_time_ms>=0,'catalog_preview_rotation_uncertain');
     ensure(isDeepStrictEqual(await controls(),controlBefore),'catalog_preview_control_changed');await checkCompatibleResources(read,transport);
     return{status:0,report:{ok:true,bearerRenewed:true,deploymentId:after.id,deploymentNumber:29,previousDeploymentId:before.id,
       reader:false,writer:false,cpuLimitMs:1000,controlDeploymentsUnchanged:true,activationReady:false}};

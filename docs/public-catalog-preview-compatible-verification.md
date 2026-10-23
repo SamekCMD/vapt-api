@@ -1,5 +1,9 @@
 # Atualização compatível do Preview — 22/10/2026
 
+## Atualização de credencial23/10
+
+Após a publicação compatível28, a renovação aprovada do bearer de teste criou somente o Preview29 `0adb3258-57f0-4ef6-a155-1259780d17b4`, por PATCH de secret, sem upload de bundle. Campos de runtime/bindings/limites preservados; Access/R2privado/HDpreviewcacheoff e inspect conferidos independentemente. Reader/writerfalse, CPU1000; produção/web/top-level sem novas implantações. O smoke autenticado não começou porque o operador confundiu amostra de startup e URL por implantação com configuração estável. Correção local RED→GREEN/221operadores/701API; credencial em memória descartada na parada. Nova renovação para o smoke precisa de aprovação própria, sem replay de SQL ou deploy. Registro atual: `tenant-preview-smoke-2026-10-22.md`. As referências a28 abaixo descrevem a publicação de código anterior.
+
 ## Resultado final: atualização aprovada concluída
 
 Uma única chamada de publicação, a partir do commitAPI`7689ec5d3bcef1e6e3d7ad6ff47872927f4e4b73`, atualizou o Preview existente para **implantação28**, ID`fca1102f-05b4-488e-bc6a-11d1f82e0bd9`; anterior27`7b51fca2-207e-4e29-948e-159761b362ea`. Upload e GET independente do provedor coincidiram; um `inspect` adicional somente-leitura confirmou a28 depois. Não executar `publish-compatible` novamente: o guard one-shot rejeita esse novo baseline; `inspect` continua disponível.

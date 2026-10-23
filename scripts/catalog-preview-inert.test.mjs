@@ -246,7 +246,7 @@ test('compatible publication treats lost Access after write as uncertain without
 });
 
 function rotationFixture(){
-  const value=compatibleFixture(({deployment})=>{deployment.id='fca1102f-05b4-488e-bc6a-11d1f82e0bd9';deployment.number=28;deployment.main_module='parallel-preview-entry.js';});
+  const value=compatibleFixture(({deployment})=>{deployment.id='fca1102f-05b4-488e-bc6a-11d1f82e0bd9';deployment.number=28;deployment.main_module='parallel-preview-entry.js';deployment.startup_time_ms=141;deployment.urls=['https://fca1102f-vapt-api-parallel.autoistloko.workers.dev'];});
   const transport=value.ports.fetch;value.patches=[];
   value.ports.fetch=async(url,options)=>{
     if(options.method==='PATCH'){
@@ -258,6 +258,7 @@ function rotationFixture(){
       const body=JSON.parse(options.body);assert.deepEqual(Object.keys(body.env),['PARALLEL_PREVIEW_TOKEN']);
       assert.deepEqual(body.env.PARALLEL_PREVIEW_TOKEN,{type:'secret_text',text:'synthetic-new-bearer-32-characters-long'});
       value.deployment.id='22222222-2222-4222-8222-222222222222';value.deployment.number=29;
+      value.deployment.startup_time_ms=194;value.deployment.urls=['https://22222222-vapt-api-parallel.autoistloko.workers.dev'];
       return Response.json({success:true,result:value.deployment});
     }
     return transport(url,options);
@@ -305,4 +306,9 @@ test('bearer rotation reports only allowlisted HTTP diagnostics for provider rej
   const result=await rotateTenantPreviewBearer('synthetic-new-bearer-32-characters-long',value.ports);
   assert.equal(result.status,1);assert.equal(result.report.httpStatus,400);assert.deepEqual(result.report.providerCodes,[10032]);assert.equal(writes,1);
   assert.doesNotMatch(JSON.stringify(result),/synthetic-secret|synthetic-new-bearer/);
+});
+test('bearer rotation refuses an unexpected per-deployment URL even when all bindings are unchanged',async()=>{
+  const {rotateTenantPreviewBearer}=await feature();const value=rotationFixture(),transport=value.ports.fetch;
+  value.ports.fetch=async(url,options)=>{const response=await transport(url,options);if(options.method==='PATCH')value.deployment.urls=['https://api.vapt.app.br'];return response;};
+  const result=await rotateTenantPreviewBearer('synthetic-new-bearer-32-characters-long',value.ports);assert.equal(result.status,1);assert.equal(value.patches.length,1);
 });
