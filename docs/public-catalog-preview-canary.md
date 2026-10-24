@@ -1,5 +1,13 @@
 # Canário limitado de catálogo — preparação23/10/2026
 
+## Resultado24/10 — janela encerrada, não repetir
+
+Controlador único818e361c-9c49-4b88-ad9e-b969047e213c exit0:32→33 `94e5ffe9-75a3-418d-87bc-82eb267614c2`, um rebuild real de8388608bytes chegou a ready/committed/não-retryable;33→34 `55463f0b-4582-46ea-b2c5-475864e3d001` fechou writer. Readerfalse/CPU1000/recursos/controles preservados. Logout/cookie antigo401, três fences privados270bytes confirmados, journal exato removido, strict tenantcleanup e nova conexão TLS READ ONLY11 contagenszero. Sem novo bundle, produção, DNS/main, plano, email ou pagamento. Fonte de preparação9d812a4; resultado/scope detalhados no frontend `docs/infra-migration-catalog-preview-canary-2026-10-24.md`.
+
+Telemetria posterior somente leitura atribuiu o objeto `bd452a8868486ef71a14fb70bc060916f6951b92ce79eddc95e157c858bea8e3`/nome `preview:8572dc6c-84b2-4b12-8099-934204cc21eb`/namespace e versão33 exatos:1jsrpc21,436ms e1alarm517,895ms; Worker2requests/max171,613ms. Todos sampleInterval1/zero erros. P99/P999 DO coincidem por haver uma chamada em cada grupo, não representam um benchmark de carga nem máximo futuro. A lista administrativa DO retornou0 apesar desses eventos: não é prova de ausência de armazenamento; ela impediu a coleta inicial, mas não repetimos o teste para conseguir CPU. Resultado original conservado; análise posterior `publicationCasePassed:true`, `fullCpuGatePassed:false`/`activationReady:false`.
+
+O ensaio cobre publicação da fronteira interna com uma descrição grande, não todas as formas de catálogo nem reader R2/frontend. Não repinar/reexecutar `openCatalogPreviewCanary`, não remover marcador exclusivo e não recuperar bearer write-only. Condições de preparação abaixo são históricas e já foram atendidas nessa janela; leitor/outros formatos/bootstrap/produção permanecem gates próprios. Metadados terminais DO e fences pequenos retidos por segurança, não apagar namespaces para fabricar “cleanupzero”.
+
 ## Checkpoint24/10 — limpeza específica pronta localmente
 
 `catalog-canary-fixtures.mjs` prepara um snapshot interno de exatamente8MiB com o DTO real, IDs/tag próprios e próxima versão prevista; não relaxa schema HTTP nem avança a sequência para adivinhar um ID. Segunda preparação, journal/revisão anterior ou identidade divergente são recusados. A chamada real deverá confirmar a versão; nenhuma colisão provoca outro comando automático.
