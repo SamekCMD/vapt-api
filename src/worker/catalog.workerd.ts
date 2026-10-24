@@ -3,6 +3,7 @@ import test from "node:test";
 import { createTestHarness } from "wrangler";
 import WebSocket from "ws";
 import type { CatalogState } from "../modules/catalog-publication/contracts.js";
+import { structuredCatalogState } from "./catalog-structured-test-support.js";
 
 const restaurantId = "11111111-1111-4111-8111-111111111111";
 const origin = "https://app.vapt.test";
@@ -133,6 +134,31 @@ test("maxPayloadBounded at 8MiB snapshot and 1MiB optimized image on actual work
     assert.equal((await retained.json() as CatalogState).version, "11", "oversize revision never replaces readable state");
   } finally { await server.close(); }
 });
+
+for (const shape of ["items", "variations"] as const) {
+  test(`structured 8MiB ${shape} snapshot publishes and reads on workerd without SQL`, { timeout: 90_000 }, async () => {
+    const server = createTestHarness({ workers: [{ configPath: "./wrangler.worker-catalog-test.jsonc" }] });
+    try {
+      await server.listen(); const worker = server.getWorker("vapt-catalog-test");
+      const value = structuredCatalogState(shape);
+      const body = JSON.stringify(value);
+      const published = await worker.fetch("https://api.test/_test/publish", { method: "POST", body });
+      assert.equal(published.status, 200, await published.clone().text());
+      const read = await worker.fetch("https://api.test/public/restaurants/bistro/catalog-state");
+      assert.equal(read.status, 200);
+      assert.equal(read.headers.get("Cache-Control"), "no-store");
+      const readBody = await read.text();
+      assert.equal(Buffer.byteLength(readBody), 8_388_608);
+      assert.deepEqual(JSON.parse(readBody), value, "nested fields, identities and options survive publication/validation; JSON key order is immaterial");
+      const catalog = await worker.fetch("https://api.test/public/restaurants/bistro/catalog");
+      assert.equal(catalog.status, 200);
+      assert.deepEqual(await catalog.json(), value.catalog);
+      assert.deepEqual(await (await worker.fetch("https://api.test/_test/services")).json(), { calls: 0, hyperdrivePresent: false });
+      const keys = await (await worker.fetch("https://api.test/_test/storage-audit")).json() as { imageKeys: string[] };
+      assert.deepEqual(keys.imageKeys, [], "structured snapshots stay out of the image bucket");
+    } finally { await server.close(); }
+  });
+}
 
 test("actual room caps 200 sockets across hibernation with no SQL/auth service", { timeout: 90_000 }, async () => {
   const server = createTestHarness({ workers: [{ configPath: "./wrangler.worker-catalog-test.jsonc" }] });
