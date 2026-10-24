@@ -1,5 +1,7 @@
 # Canário privado de leitura — escopo aprovado em 24/10/2026
 
+**Executado e encerrado24/10:** run07a61a7b-ce1b-4960-a720-bc3185886ed2, baseline34→janela35`64e88a89-7904-4568-a2f0-daa4f63f51c1`→fechado36`97af4604-7bc0-4dba-b867-a757d28d6ee0`, ambasflagsfalse/CPU1000. QuatroGETs200, doisformatos8MiB/conteúdointegral; Worker4requests/0errors/sampleInterval1/maxCPU245,860ms. Seisobjetosretiradospara530bytesdefences, readbackindependenteexit0 conferiuhashes/privacidade/36/trêscontroles. Controllerexit0, semNeon/APIwrites/novoPaid/prod/main/push. `readerCasePassed:true`, `fullCpuGatePassed:false`, `activationReady:false`. Relatório frontend `docs/infra-migration-catalog-reader-canary-2026-10-24.md`. **NÃO reexecutar este operador/controlador:** baseline34consumido/marcadorexiste. As instruções inferiores descrevem a execução histórica, não uma próxima autorização.
+
 O usuário aprovou explicitamente ambas as flags temporárias no preview privado, corrigindo a proposta anterior reader-only: a proteção existente exige writer=true quando reader=true. Não remover essa proteção.
 
 ## Operação limitada
