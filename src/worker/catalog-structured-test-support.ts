@@ -7,15 +7,15 @@ const restaurantId = "11111111-1111-4111-8111-111111111111";
 const timestamp = "2026-10-24T00:00:00Z";
 const uuid = (index: number) => `00000000-0000-4000-8000-${index.toString(16).padStart(12, "0")}`;
 
-export function structuredCatalogState(shape: "items" | "variations", version = "11"): CatalogState {
+export function structuredCatalogState(shape: "items" | "variations", version = "11", identity = { restaurantId, slug: "bistro" }): CatalogState {
   const state: CatalogState = { version, catalog: { restaurant: {
-    id: restaurantId, name: "Bistro", slug: "bistro", whatsapp: null, address: null, phone: null,
+    id: identity.restaurantId, name: "Bistro", slug: identity.slug, whatsapp: null, address: null, phone: null,
     hours: null, description: null, primaryColor: "#123456", secondaryColor: "#654321",
     fontFamily: "modern", logoUrl: null, totalTables: 1, maxTables: 1, paymentMode: "open_tab",
     maxPendingOrders: 3, localEnabled: true, deliveryEnabled: true, updatedAt: timestamp,
   }, items: [] } };
   const item = (index: number): MenuItemDto => ({
-    id: uuid(index * 21 + 1), restaurantId, name: "Item", price: "1.00", description: "",
+    id: uuid(index * 21 + 1), restaurantId: identity.restaurantId, name: "Item", price: "1.00", description: "",
     category: "Menu", available: true, imageUrl: null, availableFrom: null, availableUntil: null,
     badge: null, isChefSuggestion: false, prepTimeMinutes: null, createdAt: timestamp, updatedAt: timestamp,
     variations: shape === "items" ? [] : Array.from({ length: 20 }, (_, variation) => ({

@@ -25,3 +25,12 @@ for (const shape of ["items", "variations"] as const) {
     }
   });
 }
+
+test("structured fixture can use an isolated synthetic identity without changing the boundary", () => {
+  const identity = { restaurantId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", slug: "reader-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" };
+  const state = structuredCatalogState("items", "11", identity);
+  assert.equal(state.catalog.restaurant.id, identity.restaurantId);
+  assert.equal(state.catalog.restaurant.slug, identity.slug);
+  assert.ok(state.catalog.items.every(item => item.restaurantId === identity.restaurantId));
+  assert.equal(Buffer.byteLength(JSON.stringify(state)), 8_388_608);
+});
