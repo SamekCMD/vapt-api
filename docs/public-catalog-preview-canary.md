@@ -1,5 +1,17 @@
 # Canário limitado de catálogo — preparação23/10/2026
 
+## Checkpoint24/10 — limpeza específica pronta localmente
+
+`catalog-canary-fixtures.mjs` prepara um snapshot interno de exatamente8MiB com o DTO real, IDs/tag próprios e próxima versão prevista; não relaxa schema HTTP nem avança a sequência para adivinhar um ID. Segunda preparação, journal/revisão anterior ou identidade divergente são recusados. A chamada real deverá confirmar a versão; nenhuma colisão provoca outro comando automático.
+
+Após admissão fechada e receipt terminal/committed/não-retryable do único comando conhecido, o operador confere snapshot/manifesto/slug exatos. Substitui somente esses três objetos por fences pequenos, com leitura após cada PUT e nova conferência final; não usa DELETE e não apaga o namespace DO. Perda de resposta ou fence não confirmado interrompe antes de remover SQL. As marcas de retirada conservam a proteção create-once contra um PUT atrasado, sem reter o conteúdo8MiB nem tocar imagens.
+
+Só então remove o journal exato por operation/actor/restaurant/version/fingerprint, sob transação/locks/readback. Uma segunda operação mesmo no tenant sintético aborta antes de DELETE. A limpeza tenant anterior permanece intacta e continua recusando journals; após a remoção específica, ela retira as identidades/unidades conhecidas e a revisão cai pela FK. Uma resposta COMMIT perdida é classificada incerta, sem retry ou remoção automática de identidades.
+
+Prova local fresca:9/9 testes de retirement,8/8 novos testes PostgreSQL18.6 real (incluem COMMIT perdido, pendência, versão/receipt/fence incorretos, segunda preparação e comando extra),272/272 scripts,701/701 API, zero skips/falhas, compilação/checks exit0. O helper PG existente ganhou apenas `--only=catalog-canary`, que roda exclusivamente a nova suíte em cluster loopback no scratch deste plano; não repete93 testes antigos, não altera Neon nem instala serviço. Clusters foram parados; dados locais de diagnóstico conservados.
+
+Controlador one-shot privado preparado no scratch `catalog-canary-controller-2026-10-24.mjs`: marcador exclusivo,15min, até20 HTTP, um rebuild, até3 GETs de status sem resubmissão, closer em finally, logout, fences, cleanup e nova conexão TLS READ ONLY. Credenciais em RAM; sem conexão PG mantida enquanto aguarda Access. Fonte/limpeza local pronta não significa execução remota concluída: o relatório do controlador será a evidência da janela. Gate CPU ainda aberto e reader permanecefalse; a medição planejada cobre publicação, não leitura R2 via frontend.
+
 ## Autoridade e estado atual
 
 O usuário respondeu **continuar** ao pedido específico de preparar e executar um canário somente no preview, com writer temporário, reader desligado, dados sintéticos, limpeza verificada, CPU1000ms e nenhum novo serviço pago. Essa autorização foi registrada e não precisa ser pedida novamente para o mesmo escopo. Não autoriza produção, main/push, recurso pago, alteração de schema/grants ou publicação de fixture `/_test/*`.
