@@ -3,7 +3,7 @@ import test from 'node:test';
 const ownerUrl='postgresql://neondb_owner:synthetic-secret@ep-hidden-bird-b673zocn.c-2.sa-east-1.aws.neon.tech/vapt?sslmode=verify-full';
 const tag='tenant-smoke-11111111-1111-4111-8111-111111111111';
 async function feature(){const m=await import('./tenant-preview-fixtures.mjs').catch(()=>null);assert.equal(typeof m?.createTenantFixtureDriver,'function','tenant fixture not implemented');return m.createTenantFixtureDriver;}
-function database({collision=false,mismatch=false,residue=0,seedFailure=false,enforceSingleConnection=false,commitUncertain=false}={}){
+function database({collision=false,mismatch=false,residue=0,seedFailure=false,enforceSingleConnection=false,commitUncertain=false,catalogEffects=0}={}){
   const users=[],organizations=[],restaurants=[],members=[],queries=[];let ended=false,held=false;
   const query=async(sql,p=[])=>{
     queries.push({sql,p});
@@ -16,6 +16,7 @@ function database({collision=false,mismatch=false,residue=0,seedFailure=false,en
     if(sql.startsWith('INSERT INTO public.organization_members'))members.push({organization_id:p[0],user_id:p[1],role:p[2],status:'active'});
     if(sql.startsWith('INSERT INTO public.restaurants'))restaurants.push({id:p[0],organization_id:p[1],owner_id:p[2],name:p[3],slug:p[4]});
     if(sql.includes('AS owned_snapshot'))return{rows:[{owned_snapshot:{users,organizations,restaurants:restaurants.map(v=>({...v,owner_id:mismatch?'foreign':v.owner_id})),members}}]};
+    if(sql.includes('AS catalog_fixture_effects'))return{rows:[{catalog_fixture_effects:catalogEffects}]};
     if(sql.includes('AS residue'))return{rows:[{residue}]};
     return{rows:[]};
   };
@@ -75,4 +76,20 @@ test('production fixtures refuse preview, weak TLS, foreign role and unmarked ta
   const productionUrl=ownerUrl.replace('ep-hidden-bird-b673zocn','ep-holy-wildflower-b6vtv1dd'),productionTag=tag.replace('tenant-smoke-','tenant-production-smoke-');let calls=0;
   for(const changes of [{ownerUrl},{ownerUrl:productionUrl.replace('verify-full','disable')},{ownerUrl:productionUrl.replace('neondb_owner','vapt_api_production')},{tag},{ownerUrl:productionUrl+'&options=unsafe'}])await assert.rejects(m.createProductionTenantFixtureDriver({ownerUrl:productionUrl,tag:productionTag,createPool:()=>{calls++;},...changes}));
   assert.equal(calls,0);
+});
+
+async function catalogFeature(){const m=await import('./tenant-preview-fixtures.mjs');assert.equal(typeof m.createProductionCatalogWriterFixtureDriver,'function','single-owner writer fixture missing');return m.createProductionCatalogWriterFixtureDriver;}
+const catalogUrl=ownerUrl.replace('ep-hidden-bird-b673zocn','ep-holy-wildflower-b6vtv1dd'),catalogTag='catalog-writer-11111111-1111-4111-8111-111111111111';
+test('writer fixture seeds exactly one verified owner, one Business organization and one explicitly marked restaurant',async()=>{
+  const create=await catalogFeature(),db=database(),driver=await create({ownerUrl:catalogUrl,tag:catalogTag,createPool:()=>db.pool,hash:async()=> 'synthetic-hash'});
+  const manifest=driver.identifiers();assert.equal(manifest.users.length,1);assert.equal(manifest.organizations.length,1);assert.equal(manifest.restaurants.length,1);assert.equal(manifest.members.length,1);assert.equal(manifest.restaurants[0].slug,catalogTag);assert.equal(manifest.members[0].role,'owner');
+  assert.equal((await driver.seed()).length,1);await assert.rejects(driver.seed());assert.deepEqual(await driver.cleanup(),{rows:0});
+  assert.equal(db.queries.filter(q=>q.sql.startsWith('INSERT INTO better_auth."user"')).length,1);assert.equal(db.queries.filter(q=>q.sql.startsWith('INSERT INTO public.restaurants')).length,1);assert.equal(db.queries.find(q=>q.sql.startsWith('INSERT INTO public.organization_subscriptions')).p[1],'business');
+  assert.equal(db.queries.filter(q=>q.sql.startsWith('DELETE')).length,3);await driver.close();
+});
+test('writer fixture rejects wrong production target and tenant-smoke tags before constructing a pool',async()=>{
+  const create=await catalogFeature();let count=0;for(const change of [{ownerUrl},{tag},{ownerUrl:catalogUrl.replace('verify-full','disable')}])await assert.rejects(create({ownerUrl:catalogUrl,tag:catalogTag,createPool:()=>{count++;},...change}));assert.equal(count,0);
+});
+test('writer fixture refuses cleanup while catalog work, sessions or domain children remain',async()=>{
+  const create=await catalogFeature(),db=database({catalogEffects:1}),driver=await create({ownerUrl:catalogUrl,tag:catalogTag,createPool:()=>db.pool,hash:async()=> 'synthetic-hash'});await driver.seed();await assert.rejects(driver.cleanup());assert.equal(db.queries.filter(q=>q.sql.startsWith('DELETE')).length,0);assert.equal(db.queries.at(-1).sql,'ROLLBACK');await driver.close();
 });

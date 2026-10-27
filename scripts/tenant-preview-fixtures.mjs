@@ -11,7 +11,10 @@ export function createTenantFixtureDriver(options={}){
 export function createProductionTenantFixtureDriver(options={}){
   return createTenantFixtureDriverAt(options,'ep-holy-wildflower-b6vtv1dd.c-2.sa-east-1.aws.neon.tech',/^tenant-production-smoke-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
 }
-async function createTenantFixtureDriverAt({ownerUrl,tag,createPool=options=>new Pool(options),hash=hashPassword},host,tagPattern){
+export function createProductionCatalogWriterFixtureDriver(options={}){
+  return createTenantFixtureDriverAt(options,'ep-holy-wildflower-b6vtv1dd.c-2.sa-east-1.aws.neon.tech',/^catalog-writer-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,true);
+}
+async function createTenantFixtureDriverAt({ownerUrl,tag,createPool=options=>new Pool(options),hash=hashPassword},host,tagPattern,catalogWriter=false){
   let url;try{url=new URL(ownerUrl);}catch{throw Error('Tenant preview fixture target failed');}
   ensure(['postgres:','postgresql:'].includes(url.protocol)&&url.hostname===host
     &&url.pathname==='/vapt'&&url.username==='neondb_owner'&&url.password&&['','5432'].includes(url.port)&&!url.hash
@@ -22,10 +25,10 @@ async function createTenantFixtureDriverAt({ownerUrl,tag,createPool=options=>new
   ownerUrl=undefined;url=undefined;
   try{const row=(await pool.query('select current_database() as database,current_user as role')).rows[0];ensure(row?.database==='vapt'&&row.role==='neondb_owner');}
   catch{await pool.end();throw Error('Tenant preview fixture identity failed');}
-  const users=['owner','admin','manager','staff','owner'].map((role,index)=>({id:randomUUID(),name:tag,email:`${tag}-${index}@example.invalid`,role}));
-  const organizations=[{id:randomUUID(),name:tag,created_by:users[0].id},{id:randomUUID(),name:tag,created_by:users[4].id}];
+  const users=(catalogWriter?['owner']:['owner','admin','manager','staff','owner']).map((role,index)=>({id:randomUUID(),name:tag,email:`${tag}-${index}@example.invalid`,role}));
+  const organizations=[{id:randomUUID(),name:tag,created_by:users[0].id},...(catalogWriter?[]:[{id:randomUUID(),name:tag,created_by:users[4].id}])];
   const members=users.map((user,index)=>({organization_id:organizations[index===4?1:0].id,user_id:user.id,role:user.role,status:'active'}));
-  const restaurants=[0,0,1].map((org,index)=>({id:randomUUID(),organization_id:organizations[org].id,owner_id:organizations[org].created_by,name:tag,slug:`${tag}-${index}`}));
+  const restaurants=(catalogWriter?[0]:[0,0,1]).map((org,index)=>({id:randomUUID(),organization_id:organizations[org].id,owner_id:organizations[org].created_by,name:tag,slug:catalogWriter?tag:`${tag}-${index}`}));
   const userIds=users.map(v=>v.id),orgIds=organizations.map(v=>v.id),restaurantIds=restaurants.map(v=>v.id);
   const residueSql=`SELECT (
     (select count(*) from public.organizations where id=ANY($1::uuid[]))+
@@ -87,6 +90,16 @@ async function createTenantFixtureDriverAt({ownerUrl,tag,createPool=options=>new
           'members',(select coalesce(jsonb_agg(jsonb_build_object('organization_id',organization_id,'user_id',user_id,'role',role,'status',status)),'[]') from public.organization_members where organization_id=ANY($1::uuid[]) or user_id=ANY($2::uuid[]))
         ) AS owned_snapshot`,[orgIds,userIds,restaurantIds])).rows[0]?.owned_snapshot;
         for(const [key,expected]of Object.entries({users:users.map(({role,...v})=>v),organizations,restaurants,members}))ensure(snapshot&&isDeepStrictEqual(ordered(snapshot[key]),ordered(expected)));
+        if(catalogWriter){
+          // No cascading discard of work left by a failed probe. R2 retirement
+          // and scoped journal/revision cleanup require their own proven gate.
+          const extra=(await client.query(`SELECT ((select count(*) from public.menu_items where restaurant_id=ANY($1::uuid[]))+
+            (select count(*) from public.orders where restaurant_id=ANY($1::uuid[]))+
+            (select count(*) from public.table_sessions where restaurant_id=ANY($1::uuid[]))+
+            (select count(*) from public.catalog_publication_revisions where restaurant_id=ANY($1::uuid[]))+
+            (select count(*) from better_auth.session where "userId"=ANY($2::uuid[])))::int AS catalog_fixture_effects`,[restaurantIds,userIds])).rows[0];
+          ensure(extra?.catalog_fixture_effects===0);
+        }
         // Unexpected effects are not ours to discard just because their tenant
         // is synthetic. This smoke never creates onboarding/billing/catalog work.
         const effects=(await client.query(`SELECT ((select count(*) from public.onboarding_intents where organization_id=ANY($1::uuid[]))+
