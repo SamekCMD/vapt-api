@@ -4,7 +4,7 @@ const id=n=>`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
 const baseUrl='https://stage11-inert-vapt-api-parallel.autoistloko.workers.dev';
 const capabilities={owner:['restaurant.read','restaurant.operate','restaurant.manage','restaurant.create','billing.read','billing.manage'],admin:['restaurant.read','restaurant.operate','restaurant.manage','restaurant.create','billing.read','billing.manage'],manager:['restaurant.read','restaurant.operate','restaurant.manage','billing.read'],staff:['restaurant.read','restaurant.operate']};
 const tag='tenant-smoke-11111111-1111-4111-8111-111111111111';
-function scenario({badStatus=false,leak=false,cleanupFails=false,wrongUnit=false,brokenLogout=false,uncertainSeed=false}={}){
+function scenario({production=false,badStatus=false,leak=false,cleanupFails=false,wrongUnit=false,brokenLogout=false,uncertainSeed=false}={}){
   const organizations=[{id:id(10),name:tag,created_by:id(1)},{id:id(11),name:tag,created_by:id(5)}];
   const users=['owner','admin','manager','staff','owner'].map((role,i)=>({id:id(i+1),role,email:`${tag}-${i}@example.invalid`,password:'synthetic-password',organizationId:organizations[i===4?1:0].id}));
   const restaurants=[0,0,1].map((org,i)=>({id:id(i+20),organization_id:organizations[org].id,owner_id:organizations[org].created_by,name:tag,slug:`${tag}-${i}`}));
@@ -13,10 +13,16 @@ function scenario({badStatus=false,leak=false,cleanupFails=false,wrongUnit=false
   const json=(value,status=200,headers={})=>new Response(status===204?null:JSON.stringify(value),{status,headers:{'content-type':'application/json',...headers}});
   const fetcher=async(url,options)=>{
     calls.push({url,options});const path=new URL(url).pathname,query=new URL(url).searchParams;
-    if(!options.headers['CF-Access-Token'])return new Response(null,{status:302,headers:{location:'https://example.cloudflareaccess.com/cdn-cgi/access/login/test'}});
-    if(!options.headers.Authorization)return json({error:{code:'unauthorized'}},401);
+    if(production){
+      assert.equal(new URL(url).origin,'https://api.vapt.app.br');assert.equal(options.headers.Origin,'https://vapt.app.br');
+      assert.equal(options.headers['CF-Access-Token'],undefined);assert.equal(options.headers.Authorization,undefined);
+    }else{
+      if(!options.headers['CF-Access-Token'])return new Response(null,{status:302,headers:{location:'https://example.cloudflareaccess.com/cdn-cgi/access/login/test'}});
+      if(!options.headers.Authorization)return json({error:{code:'unauthorized'}},401);
+    }
     if(path==='/health')return json({ok:true});
     if(path==='/api/auth/sign-in/email'){
+      if(production)assert.match(options.headers['X-Captcha-Response'],/^synthetic-real-challenge-[1-5]$/);
       const user=users.find(v=>v.email===JSON.parse(options.body).email);sessions.add(user.id);return json({user:{id:user.id}},200,{'set-cookie':`__Secure-better-auth.session_token=${user.id}; Secure; HttpOnly; Path=/`});
     }
     const user=users.find(v=>options.headers.Cookie?.includes(v.id));
@@ -98,4 +104,48 @@ test('session deadline cancels HTTP, clears credentials and still cleans confirm
   const result=await run({...input,...s,fetcher,signal:controller.signal,pace:async()=>{}});
   assert.equal(sawCombinedAbort,true);assert.equal(result.ok,false);assert.equal(result.failureCode,'session_expired');
   assert.equal(result.cleaned,true);assert.deepEqual(s.state(),{seeded:1,cleaned:1,closed:1});
+});
+
+test('production smoke checks the same roles and units using five distinct challenge callbacks and no Access/bearer',async()=>{
+  const m=await import('./verify-tenant-preview.mjs');assert.equal(typeof m.runTenantProductionSmoke,'function');
+  const s=scenario({production:true});let challenges=0;
+  const result=await m.runTenantProductionSmoke({baseUrl:'https://api.vapt.app.br',...s,pace:async()=>{},captcha:async()=>`synthetic-real-challenge-${++challenges}`});
+  assert.equal(result.ok,true);assert.equal(result.cleaned,true);assert.equal(challenges,5);
+  assert.deepEqual(s.state(),{seeded:1,cleaned:1,closed:1});assert.equal(s.calls.filter(v=>v.url.endsWith('/api/auth/sign-out')).length,5);
+  assert.equal(s.calls.some(v=>/sign-up|checkout|portal|storage|public\/orders|rebuild/.test(v.url)),false);
+  assert.doesNotMatch(JSON.stringify(result),/synthetic-password|synthetic-real-challenge|session_token/);
+});
+test('production smoke rejects alternate URLs, perimeter credentials and absent challenge source before IO',async()=>{
+  const m=await import('./verify-tenant-preview.mjs');assert.equal(typeof m.runTenantProductionSmoke,'function');
+  for(const changes of [{baseUrl},{accessJwt:input.accessJwt},{bearer:input.bearer},{captcha:undefined}]){
+    const s=scenario({production:true}),result=await m.runTenantProductionSmoke({baseUrl:'https://api.vapt.app.br',...s,pace:async()=>{},captcha:async()=> 'synthetic-real-challenge-1',...changes});
+    assert.equal(result.ok,false);assert.equal(s.calls.length,0);assert.equal(s.state().seeded,0);
+  }
+});
+test('failed or dummy production challenge never sends a login and still cleans confirmed fixture identities',async()=>{
+  const m=await import('./verify-tenant-preview.mjs');assert.equal(typeof m.runTenantProductionSmoke,'function');
+  for(const captcha of [async()=>{throw Error('synthetic-private-token');},async()=> 'XXXX.DUMMY.TOKEN.XXXX']){
+    const s=scenario({production:true}),result=await m.runTenantProductionSmoke({baseUrl:'https://api.vapt.app.br',...s,pace:async()=>{},captcha});
+    assert.equal(result.ok,false);assert.equal(result.cleaned,true);assert.equal(s.calls.some(v=>v.url.endsWith('/api/auth/sign-in/email')),false);
+    assert.doesNotMatch(JSON.stringify(result),/synthetic-private|DUMMY/);
+  }
+});
+test('production billing-field leaks and wrong units still fail closed with scoped cleanup',async()=>{
+  const m=await import('./verify-tenant-preview.mjs');assert.equal(typeof m.runTenantProductionSmoke,'function');
+  for(const changes of [{leak:true},{wrongUnit:true},{brokenLogout:true}]){
+    const s=scenario({production:true,...changes}),result=await m.runTenantProductionSmoke({baseUrl:'https://api.vapt.app.br',...s,pace:async()=>{},captcha:async()=> 'synthetic-real-challenge-1'});
+    assert.equal(result.ok,false);assert.equal(result.cleaned,true);assert.equal(s.state().closed,1);
+  }
+});
+
+test('production refuses reusing a challenge before a second login is sent',async()=>{
+  const m=await import('./verify-tenant-preview.mjs'),s=scenario({production:true});
+  const result=await m.runTenantProductionSmoke({baseUrl:'https://api.vapt.app.br',...s,pace:async()=>{},captcha:async()=> 'synthetic-real-challenge-1'});
+  assert.equal(result.ok,false);assert.equal(result.cleaned,true);assert.equal(s.calls.filter(v=>v.url.endsWith('/api/auth/sign-in/email')).length,1);
+});
+test('aborting while a human challenge is pending still reaches scoped cleanup even if the callback never resolves',async()=>{
+  const m=await import('./verify-tenant-preview.mjs'),s=scenario({production:true}),controller=new AbortController();
+  const pending=m.runTenantProductionSmoke({baseUrl:'https://api.vapt.app.br',...s,signal:controller.signal,pace:async()=>{},captcha:()=>{queueMicrotask(()=>controller.abort());return new Promise(()=>{});}});
+  const result=await Promise.race([pending,new Promise(resolve=>setTimeout(resolve,100,'blocked'))]);
+  assert.notEqual(result,'blocked');assert.equal(result.cleaned,true);assert.equal(result.failureCode,'session_expired');
 });

@@ -5,12 +5,18 @@ import {Pool} from 'pg';
 import {hashPassword} from 'better-auth/crypto';
 const ensure=value=>{if(!value)throw Error('Tenant preview fixture guard failed');};
 const ordered=rows=>rows.map(v=>JSON.stringify(Object.fromEntries(Object.entries(v).sort()))).sort();
-export async function createTenantFixtureDriver({ownerUrl,tag,createPool=options=>new Pool(options),hash=hashPassword}={}){
+export function createTenantFixtureDriver(options={}){
+  return createTenantFixtureDriverAt(options,'ep-hidden-bird-b673zocn.c-2.sa-east-1.aws.neon.tech',/^tenant-smoke-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+}
+export function createProductionTenantFixtureDriver(options={}){
+  return createTenantFixtureDriverAt(options,'ep-holy-wildflower-b6vtv1dd.c-2.sa-east-1.aws.neon.tech',/^tenant-production-smoke-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+}
+async function createTenantFixtureDriverAt({ownerUrl,tag,createPool=options=>new Pool(options),hash=hashPassword},host,tagPattern){
   let url;try{url=new URL(ownerUrl);}catch{throw Error('Tenant preview fixture target failed');}
-  ensure(['postgres:','postgresql:'].includes(url.protocol)&&url.hostname==='ep-hidden-bird-b673zocn.c-2.sa-east-1.aws.neon.tech'
+  ensure(['postgres:','postgresql:'].includes(url.protocol)&&url.hostname===host
     &&url.pathname==='/vapt'&&url.username==='neondb_owner'&&url.password&&['','5432'].includes(url.port)&&!url.hash
     &&url.searchParams.get('sslmode')==='verify-full'&&[...url.searchParams].every(([k,v])=>k==='sslmode'&&v==='verify-full'||k==='channel_binding'&&v==='require')
-    &&/^tenant-smoke-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(tag));
+    &&tagPattern.test(tag));
   const pool=createPool({host:url.hostname,port:5432,database:'vapt',user:'neondb_owner',password:decodeURIComponent(url.password),
     ssl:{rejectUnauthorized:true},max:1,connectionTimeoutMillis:10000,statement_timeout:8000,lock_timeout:2000});
   ownerUrl=undefined;url=undefined;

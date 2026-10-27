@@ -60,3 +60,19 @@ test('uncertain COMMIT carries a nonsecret code while refusing automatic fixture
   await assert.rejects(driver.seed(),e=>e.safeCode==='tenant_seed_uncertain'&&!String(e).includes('synthetic-secret'));
   assert.equal(driver.identifiers().users.length,5);await assert.rejects(driver.cleanup());assert.equal(db.queries.some(v=>v.sql.startsWith('DELETE')),false);await driver.close();
 });
+
+test('production fixture factory uses only its own exact TLS endpoint and tag, leaving preview rejection intact',async()=>{
+  const m=await import('./tenant-preview-fixtures.mjs');assert.equal(typeof m.createProductionTenantFixtureDriver,'function');
+  const productionUrl=ownerUrl.replace('ep-hidden-bird-b673zocn','ep-holy-wildflower-b6vtv1dd');
+  const productionTag=tag.replace('tenant-smoke-','tenant-production-smoke-');
+  const db=database();let options;
+  const driver=await m.createProductionTenantFixtureDriver({ownerUrl:productionUrl,tag:productionTag,createPool:v=>{options=v;return db.pool;},hash:async()=> 'synthetic-hash'});
+  assert.equal(options.host,'ep-holy-wildflower-b6vtv1dd.c-2.sa-east-1.aws.neon.tech');assert.equal(options.ssl.rejectUnauthorized,true);assert.equal(options.max,1);
+  await driver.seed();assert.equal(driver.identifiers().restaurants.length,3);assert.deepEqual(await driver.cleanup(),{rows:0});await driver.close();
+});
+test('production fixtures refuse preview, weak TLS, foreign role and unmarked tag before constructing a pool',async()=>{
+  const m=await import('./tenant-preview-fixtures.mjs');assert.equal(typeof m.createProductionTenantFixtureDriver,'function');
+  const productionUrl=ownerUrl.replace('ep-hidden-bird-b673zocn','ep-holy-wildflower-b6vtv1dd'),productionTag=tag.replace('tenant-smoke-','tenant-production-smoke-');let calls=0;
+  for(const changes of [{ownerUrl},{ownerUrl:productionUrl.replace('verify-full','disable')},{ownerUrl:productionUrl.replace('neondb_owner','vapt_api_production')},{tag},{ownerUrl:productionUrl+'&options=unsafe'}])await assert.rejects(m.createProductionTenantFixtureDriver({ownerUrl:productionUrl,tag:productionTag,createPool:()=>{calls++;},...changes}));
+  assert.equal(calls,0);
+});

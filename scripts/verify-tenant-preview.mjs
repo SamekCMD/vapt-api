@@ -1,5 +1,6 @@
 import {isDeepStrictEqual} from 'node:util';
 import {setTimeout as delay} from 'node:timers/promises';
+import {createHash} from 'node:crypto';
 const target='https://stage11-inert-vapt-api-parallel.autoistloko.workers.dev';
 const origin='https://infra-foundation-vapt-web.autoistloko.workers.dev';
 const capabilities={owner:['restaurant.read','restaurant.operate','restaurant.manage','restaurant.create','billing.read','billing.manage'],admin:['restaurant.read','restaurant.operate','restaurant.manage','restaurant.create','billing.read','billing.manage'],manager:['restaurant.read','restaurant.operate','restaurant.manage','billing.read'],staff:['restaurant.read','restaurant.operate']};
@@ -12,27 +13,50 @@ function noBillingFields(value){
   }
 }
 // Inputs remain in the calling controller's memory. No CLI/env secret fallback.
-export async function runTenantPreviewSmoke({baseUrl,accessJwt,bearer,driver,fetcher=fetch,
-  signal,pace=()=>delay(3300,undefined,{signal}),onProgress=()=>{}}={}){
+export function runTenantPreviewSmoke(options={}){
+  return runTenantSmoke(options,{mode:'preview',target,origin});
+}
+export function runTenantProductionSmoke(options={}){
+  const deadline=AbortSignal.timeout(20*60*1000),signal=options.signal?AbortSignal.any([deadline,options.signal]):deadline;
+  return runTenantSmoke({...options,signal},{mode:'production',target:'https://api.vapt.app.br',origin:'https://vapt.app.br'});
+}
+async function runTenantSmoke({baseUrl,accessJwt,bearer,captcha,driver,fetcher=fetch,
+  signal,pace=()=>delay(3300,undefined,{signal}),onProgress=()=>{}},{mode,target,origin}){
   const report={ok:false,cleaned:false,stage:'input',users:0,organizations:0,restaurants:0,checks:0};
-  const cookies=new Map();let seeded=false,credentials=[],step='input';
+  const cookies=new Map(),challenges=new Set();let seeded=false,credentials=[],step='input',loginIndex=0;
   try{
-    ensure(baseUrl===target&&typeof accessJwt==='string'&&/^[A-Za-z0-9._-]{20,8192}$/.test(accessJwt)
-      &&typeof bearer==='string'&&/^[A-Za-z0-9_-]{32,256}$/.test(bearer)
-      &&['identifiers','seed','cleanup','close'].every(key=>typeof driver?.[key]==='function'));
+    ensure(baseUrl===target&&['identifiers','seed','cleanup','close'].every(key=>typeof driver?.[key]==='function'));
+    if(mode==='preview')ensure(typeof accessJwt==='string'&&/^[A-Za-z0-9._-]{20,8192}$/.test(accessJwt)&&typeof bearer==='string'&&/^[A-Za-z0-9_-]{32,256}$/.test(bearer));
+    else ensure(accessJwt===undefined&&bearer===undefined&&typeof captcha==='function');
   }catch{return report;}
-  const clearCredentials=()=>{credentials.forEach(v=>{v.password='';});credentials=[];cookies.clear();accessJwt=undefined;bearer=undefined;};
+  const clearCredentials=()=>{credentials.forEach(v=>{v.password='';});credentials=[];cookies.clear();challenges.clear();accessJwt=undefined;bearer=undefined;};
   signal?.addEventListener('abort',clearCredentials,{once:true});
+  async function waitForChallenge(){
+    signal?.throwIfAborted();let abort;
+    const cancelled=new Promise((_,reject)=>{abort=()=>reject(Error('Human challenge cancelled'));signal?.addEventListener('abort',abort,{once:true});});
+    try{return await Promise.race([Promise.resolve().then(()=>captcha({index:loginIndex,role:credentials[loginIndex].role,signal})),cancelled]);}
+    finally{signal?.removeEventListener('abort',abort);}
+  }
   async function request(path,{method='GET',body,cookie,expected=200,perimeter='both'}={}){
     signal?.throwIfAborted();await pace();signal?.throwIfAborted();
     const headers={Origin:origin};
-    if(perimeter!=='none')headers['CF-Access-Token']=accessJwt;
-    if(perimeter==='both')headers.Authorization=`Bearer ${bearer}`;
+    if(mode==='preview'&&perimeter!=='none')headers['CF-Access-Token']=accessJwt;
+    if(mode==='preview'&&perimeter==='both')headers.Authorization=`Bearer ${bearer}`;
     if(cookie)headers.Cookie=cookie;
     if(body!==undefined)headers['Content-Type']='application/json';
-    if(path==='/api/auth/sign-in/email')headers['X-Captcha-Response']='XXXX.DUMMY.TOKEN.XXXX';
+    if(path==='/api/auth/sign-in/email'){
+      if(mode==='preview')headers['X-Captcha-Response']='XXXX.DUMMY.TOKEN.XXXX';
+      else{
+        ensure(loginIndex<5);let challenge=await waitForChallenge();
+        signal?.throwIfAborted();ensure(typeof challenge==='string'&&challenge.length>=20&&challenge.length<=8192&&!/[\r\n]/.test(challenge)&&!challenge.startsWith('XXXX.DUMMY.'));
+        const digest=createHash('sha256').update(challenge).digest('hex');ensure(!challenges.has(digest));challenges.add(digest);
+        headers['X-Captcha-Response']=challenge;challenge=undefined;loginIndex++;
+      }
+    }
     const requestSignal=signal?AbortSignal.any([signal,AbortSignal.timeout(30000)]):AbortSignal.timeout(30000);
-    const response=await fetcher(target+path,{method,headers,...(body===undefined?{}:{body:JSON.stringify(body)}),redirect:'manual',signal:requestSignal});
+    let response;
+    try{response=await fetcher(target+path,{method,headers,...(body===undefined?{}:{body:JSON.stringify(body)}),redirect:'manual',signal:requestSignal});}
+    finally{delete headers['X-Captcha-Response'];}
     signal?.throwIfAborted();
     if(response.status!==expected){report.actualStatus=response.status;report.expectedStatus=expected;await response.body?.cancel();throw Error('Tenant smoke HTTP assertion failed');}
     report.checks++;
@@ -47,8 +71,10 @@ export async function runTenantPreviewSmoke({baseUrl,accessJwt,bearer,driver,fet
   }
   try{
     report.stage='perimeter';step='perimeter';onProgress(report.stage);
-    await request('/',{expected:302,perimeter:'none'});
-    await request('/health',{expected:401,perimeter:'access'});
+    if(mode==='preview'){
+      await request('/',{expected:302,perimeter:'none'});
+      await request('/health',{expected:401,perimeter:'access'});
+    }else await request('/auth/me',{expected:401});
     await request('/health');
     const manifest=driver.identifiers();
     ensure(manifest.users.length===5&&manifest.organizations.length===2&&manifest.restaurants.length===3);

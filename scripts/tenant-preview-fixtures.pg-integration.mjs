@@ -4,15 +4,18 @@ import test from 'node:test';
 import {randomUUID} from 'node:crypto';
 import {verifyPassword} from 'better-auth/crypto';
 import {withLocalDatabase} from '../src/modules/tenancy/pg-test-support.ts';
-import {createTenantFixtureDriver} from './tenant-preview-fixtures.mjs';
+import {createTenantFixtureDriver,createProductionTenantFixtureDriver} from './tenant-preview-fixtures.mjs';
 
-test('actual PostgreSQL tenant smoke seed and committed cleanup preserve FKs and remove preferences plus auth sessions',async()=>{
+for(const [environment,createDriver,host,prefix] of [
+  ['preview',createTenantFixtureDriver,'ep-hidden-bird-b673zocn','tenant-smoke-'],
+  ['production',createProductionTenantFixtureDriver,'ep-holy-wildflower-b6vtv1dd','tenant-production-smoke-'],
+])test(`actual PostgreSQL ${environment} tenant smoke seed and committed cleanup preserve FKs and remove preferences plus auth sessions`,async()=>{
   await withLocalDatabase(async pool=>{
     // Substitute only the external owner/TLS identity boundary. All fixture SQL,
     // transactions, constraints and committed readback use genuine local PG.
-    const driver=await createTenantFixtureDriver({
-      ownerUrl:'postgresql://neondb_owner:synthetic-only@ep-hidden-bird-b673zocn.c-2.sa-east-1.aws.neon.tech/vapt?sslmode=verify-full',
-      tag:`tenant-smoke-${randomUUID()}`,
+    const driver=await createDriver({
+      ownerUrl:`postgresql://neondb_owner:synthetic-only@${host}.c-2.sa-east-1.aws.neon.tech/vapt?sslmode=verify-full`,
+      tag:prefix+randomUUID(),
       createPool:()=>({query:async(sql,p)=>sql.includes('current_database()')?{rows:[{database:'vapt',role:'neondb_owner'}]}:pool.query(sql,p),connect:()=>pool.connect(),async end(){}}),
     });
     try{
