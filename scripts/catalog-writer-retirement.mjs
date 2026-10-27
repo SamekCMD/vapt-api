@@ -32,16 +32,16 @@ export async function retireProductionCatalogWriterFixture(options={}){
     ensure(pool?.options?.host==='ep-holy-wildflower-b6vtv1dd.c-2.sa-east-1.aws.neon.tech'&&pool.options.database==='vapt'
       &&pool.options.user==='neondb_owner'&&pool.options.ssl?.rejectUnauthorized===true&&pool.options.max===1
       &&typeof verifyLoggedOut==='function'&&typeof store?.get==='function'&&typeof store.put==='function');
-    const deadline=AbortSignal.timeout(90000);let requests=0;
+    const deadline=AbortSignal.timeout(90000),active=options.signal?AbortSignal.any([options.signal,deadline]):deadline;let requests=0;
     async function external(work){
-      ensure(requests++<32);const signal=AbortSignal.any([deadline,AbortSignal.timeout(15000)]);signal.throwIfAborted();
-      let abort;
-      try{return await Promise.race([Promise.resolve().then(()=>work(signal)),new Promise((_,reject)=>{abort=()=>reject(Error('External request stopped'));signal.addEventListener('abort',abort,{once:true});})]);}
-      finally{signal.removeEventListener('abort',abort);}
+      ensure(requests++<32);const signal=AbortSignal.any([active,AbortSignal.timeout(15000)]);signal.throwIfAborted();
+      // The concrete S3 transport observes this signal. Drain its promise before
+      // releasing the SQL transaction, instead of abandoning an in-flight PUT.
+      const value=await work(signal);signal.throwIfAborted();return value;
     }
     ensure((await external(signal=>verifyLoggedOut(signal)))?.status===401);
     const identity=(await pool.query('select current_database() as database,current_user as role')).rows[0];ensure(identity?.database==='vapt'&&identity.role==='neondb_owner');
-    client=await pool.connect();await client.query('BEGIN');
+    active.throwIfAborted();client=await pool.connect();active.throwIfAborted();await client.query('BEGIN');
     // Match the existing ownership cleanup order. Locks also block FK-dependent
     // session/item insertion while the target-specific retirement is in flight.
     await client.query('select id from public.organizations where id=$1 for update',[org.id]);
@@ -115,14 +115,15 @@ export async function retireProductionCatalogWriterFixture(options={}){
     for(const a of artifacts)ensure((await read(a.key,4096)).body===a.fence);
     const registrationAfter=await read(manifestKey,4096);ensure(registrationAfter.etag===registration.etag&&registrationAfter.body===registration.body);
     for(const row of rows){
+      active.throwIfAborted();
       const deleted=await client.query(`delete from public.catalog_publication_operations where operation_id=$1 and actor_id=$2
         and restaurant_id=$3 and version=$4::bigint and fingerprint=$5 returning operation_id`,[row.operation_id,actor.id,target.id,row.version,row.fingerprint]);ensure(deleted.rowCount===1);
     }
-    ensure((await client.query('delete from public.catalog_publication_revisions where restaurant_id=$1 and version=$2::bigint returning restaurant_id',[target.id,last])).rowCount===1);
+    active.throwIfAborted();ensure((await client.query('delete from public.catalog_publication_revisions where restaurant_id=$1 and version=$2::bigint returning restaurant_id',[target.id,last])).rowCount===1);
     const residueSql=`select ((select count(*) from public.catalog_publication_operations where restaurant_id=$1 or actor_id=$2)+
       (select count(*) from public.catalog_publication_revisions where restaurant_id=$1))::int n`;
     ensure((await client.query(residueSql,[target.id,actor.id])).rows[0]?.n===0);
-    committing=true;await client.query('COMMIT');client.release();client=null;
+    active.throwIfAborted();committing=true;await client.query('COMMIT');client.release();client=null;
     ensure((await pool.query(residueSql,[target.id,actor.id])).rows[0]?.n===0);
     return{restaurantId:target.id,journalRows:0,revisionRows:0,keys:[slugKey,manifestKey,...states.map(s=>prefix+`snapshots/${s.version}.json`)],
       readbackConfirmed:true,objectWrites,retainedFenceBytes:Buffer.byteLength(registration.body)+artifacts.reduce((n,a)=>n+Buffer.byteLength(a.fence),0)};

@@ -74,8 +74,8 @@ async function createTenantFixtureDriverAt({ownerUrl,tag,createPool=options=>new
       }catch{await client.query('ROLLBACK').catch(()=>{});const error=Error(committing?'Tenant preview fixture seed uncertain':'Tenant preview fixture seed failed');if(committing)error.safeCode='tenant_seed_uncertain';throw error;}
       finally{hashes.fill('');client.release();}
     },
-    async cleanup(){
-      ensure(seeded&&!cleaned);const client=await pool.connect();
+    async cleanup({signal}={}){
+      ensure(seeded&&!cleaned);signal?.throwIfAborted();const client=await pool.connect();
       try{
         await client.query('BEGIN');
         // Lock identities before checking the full owned relation set. Foreign
@@ -107,11 +107,11 @@ async function createTenantFixtureDriverAt({ownerUrl,tag,createPool=options=>new
           (select count(*) from public.billing_provider_events where organization_id=ANY($1::uuid[]))+
           (select count(*) from public.catalog_publication_operations where restaurant_id=ANY($2::uuid[]))+
           (select count(*) from public.payment_effect_outbox where restaurant_id=ANY($2::uuid[])))::integer AS residue`,[orgIds,restaurantIds])).rows[0];ensure(effects?.residue===0);
-        for(const r of restaurants)await client.query('DELETE FROM public.restaurants WHERE id=$1 AND organization_id=$2 AND owner_id=$3 AND name=$4 AND slug=$5',[r.id,r.organization_id,r.owner_id,r.name,r.slug]);
-        for(const org of organizations)await client.query('DELETE FROM public.organizations WHERE id=$1 AND created_by=$2 AND name=$3',[org.id,org.created_by,org.name]);
-        for(const user of users)await client.query('DELETE FROM better_auth."user" WHERE id=$1 AND name=$2 AND email=$3',[user.id,user.name,user.email]);
+        for(const r of restaurants){signal?.throwIfAborted();await client.query('DELETE FROM public.restaurants WHERE id=$1 AND organization_id=$2 AND owner_id=$3 AND name=$4 AND slug=$5',[r.id,r.organization_id,r.owner_id,r.name,r.slug]);}
+        for(const org of organizations){signal?.throwIfAborted();await client.query('DELETE FROM public.organizations WHERE id=$1 AND created_by=$2 AND name=$3',[org.id,org.created_by,org.name]);}
+        for(const user of users){signal?.throwIfAborted();await client.query('DELETE FROM better_auth."user" WHERE id=$1 AND name=$2 AND email=$3',[user.id,user.name,user.email]);}
         ensure((await client.query(residueSql,[orgIds,userIds,restaurantIds])).rows[0]?.residue===0);
-        await client.query('COMMIT');
+        signal?.throwIfAborted();await client.query('COMMIT');
       }catch{await client.query('ROLLBACK').catch(()=>{});throw Error('Tenant preview fixture cleanup failed');}
       finally{client.release();}
       // Release first: this operator intentionally has a one-connection pool.

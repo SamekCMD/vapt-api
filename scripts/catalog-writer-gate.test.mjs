@@ -102,3 +102,14 @@ test('abort while a human challenge never resolves stops before seed and release
   f.options.captcha=()=>{abort.abort();return new Promise(()=>{});};
   const result=await run(f.options);assert.equal(result.ok,false);assert.equal(f.state().seeded,false);assert.equal(f.http.length,0);assert.equal(f.state().released,true);assert.equal(f.state().closed,true);
 });
+
+for(const phase of ['retirement','fixture_cleanup'])test(`abort during ${phase} drains the mutator before revoking or closing shared resources`,async()=>{
+  const run=await feature(),f=fixture(),abort=new AbortController();f.options.signal=abort.signal;
+  let enter,release,seenSignal;const entered=new Promise(ok=>{enter=ok;}),held=new Promise(ok=>{release=ok;});
+  const blocked=async value=>{seenSignal=value?.signal;enter();await held;throw Error('Synthetic cancelled mutation');};
+  if(phase==='retirement')f.options.storage.retire=blocked;else f.options.driver.cleanup=blocked;
+  const pending=run(f.options);await entered;abort.abort();await new Promise(ok=>setImmediate(ok));
+  try{assert.equal(f.state().released,false,'revocation must wait for rollback/drain');assert.equal(f.state().closed,false);assert.equal(seenSignal?.aborted,true);}
+  finally{release();}
+  const result=await pending;assert.equal(result.uncertain,true);assert.equal(result.cleaned,false);assert.equal(f.state().released,true);assert.equal(f.state().closed,true);
+});

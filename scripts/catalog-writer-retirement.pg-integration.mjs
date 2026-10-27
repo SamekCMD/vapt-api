@@ -91,3 +91,15 @@ test('lost retirement COMMIT is uncertain, never retried and never followed by i
   assert.equal(commits,1);assert.equal((await f.pool.query('select count(*)::int n from public.catalog_publication_operations where restaurant_id=$1',[f.r.id])).rows[0].n,0);
   assert.equal((await f.pool.query('select count(*)::int n from better_auth."user" where id=$1',[f.u.id])).rows[0].n,1);
 }));
+
+for(const phase of ['before-delete','before-commit'])test(`cancelled retirement ${phase} rolls back the real SQL journal and preserves identities`,async()=>scenario(async f=>{
+  const abort=new AbortController();f.options.signal=abort.signal;let armed=false,commits=0;
+  f.options.pool={...f.adapter,async connect(){const client=await f.pool.connect();return{release:()=>client.release(),async query(sql,p){
+    const result=await client.query(sql,p);if(sql==='COMMIT')commits++;
+    if(phase==='before-commit'&&sql.startsWith('delete from public.catalog_publication_revisions')){armed=true;abort.abort();}return result;
+  }};}};
+  if(phase==='before-delete'){const get=f.store.get;f.store.get=async(key,options)=>{const value=await get(key,options);if(!armed&&key===f.manifestKey&&f.writes.length>0){armed=true;abort.abort();}return value;};}
+  await assert.rejects(()=>f.retire(f.options),e=>e.safeCode==='catalog_writer_retirement_uncertain');assert.equal(armed,true);assert.equal(commits,0);
+  assert.equal((await f.pool.query('select count(*)::int n from public.catalog_publication_operations where restaurant_id=$1',[f.r.id])).rows[0].n,5);
+  assert.equal((await f.pool.query('select count(*)::int n from better_auth."user" where id=$1',[f.u.id])).rows[0].n,1);
+}));

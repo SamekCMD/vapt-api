@@ -1,12 +1,18 @@
-// Operator-only S3 transport. Explicit short-lived credentials only, no env or
+// Operator-only S3 transport. Explicit restricted credentials only, no env or
 // credential-chain fallback. Seven fixed target keys, no list/create/delete,
 // no manifest overwrite, no general-purpose object writes or automatic retries.
+// expiresAt is the LOCAL use cutoff (<=30min), not proof of provider expiry.
+// The controller must verify the approved provider TTL and revoke on exit.
 import {S3Client,GetObjectCommand,PutObjectCommand} from '@aws-sdk/client-s3';
 import {isDeepStrictEqual} from 'node:util';
 const ensure=v=>{if(!v)throw Error('Catalog S3 guard failed');};
 const uuid=v=>typeof v==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(v);
 const version=v=>typeof v==='string'&&/^[1-9][0-9]{0,18}$/.test(v)&&BigInt(v)<=9223372036854775807n;
 const etag=v=>typeof v==='string'&&/^"[a-f0-9]{32}"$/.test(v);
+export function productionCatalogWriterCredentialWindow(receivedAt){
+  ensure(Number.isSafeInteger(receivedAt)&&receivedAt>0&&Number.isSafeInteger(receivedAt+1800000));
+  return{workExpiresAt:receivedAt+1200000,expiresAt:receivedAt+1800000};
+}
 export function createProductionCatalogWriterS3Store(options={}){
   const {restaurantId,tag,expiresAt,requestHandler}=options,versions=structuredClone(options.versions);
   ensure(uuid(restaurantId)&&typeof tag==='string'&&tag.startsWith('catalog-writer-')&&uuid(tag.slice(15))
@@ -23,6 +29,21 @@ export function createProductionCatalogWriterS3Store(options={}){
   const admitted=key=>{ensure(!closed&&Date.now()<expiresAt&&keys.has(key)&&requests<32);};
   const signal=value=>value?AbortSignal.any([value,AbortSignal.timeout(15000)]):AbortSignal.timeout(15000);
   return{
+    async verifyRevoked({signal:callerSignal}={}){
+      let body;
+      try{
+        admitted(slugKey);requests++;
+        const value=await client.send(new GetObjectCommand({Bucket:'vapt-catalog-production',Key:slugKey}),{abortSignal:signal(callerSignal)});
+        body=value.Body;body?.destroy?.();
+        if(body&&!body.destroy&&typeof body.cancel==='function')await body.cancel();
+        return{revoked:false};
+      }catch(error){
+        body?.destroy?.();
+        if(error?.$metadata?.httpStatusCode===403)return{revoked:true};
+        if(error?.$metadata?.httpStatusCode===404)return{revoked:false};
+        throw Error('Catalog S3 revocation check stopped');
+      }
+    },
     async get(key,{maxBytes=65536,signal:callerSignal}={}){
       let body;
       try{

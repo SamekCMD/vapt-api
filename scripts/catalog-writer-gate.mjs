@@ -12,7 +12,7 @@ function forgetCredentials(value){
 }
 export async function runProductionCatalogWriterGate(options={}){
   const report={ok:false,cleaned:false,seeded:false,sessionRevoked:false,credentialRevoked:false,uncertain:false,authRequests:0,stage:'input'};
-  let owned=false,cookie,credentials=[],step='input',seedAttempted=false,loginAttempted=false,loginConfirmed=false,logoutAttempted=false,cleanupAttempted=false;
+  let owned=false,cookie,credentials=[],step='input',seedAttempted=false,loginAttempted=false,loginConfirmed=false,logoutAttempted=false,cleanupAttempted=false,retirementAttempted=false;
   const deadline=AbortSignal.timeout(1200000),signal=options.signal?AbortSignal.any([options.signal,deadline]):deadline;
   const mark=value=>{step=value;options.onProgress?.(value);};
   async function wait(work,activeSignal=signal){
@@ -86,15 +86,18 @@ export async function runProductionCatalogWriterGate(options={}){
     report.uncertain=report.probe.uncertain===true;ensure(report.probe.ok===true&&!report.uncertain);await record('probe_confirmed');
     await logout();
     mark('retirement');await wait(()=>options.preflight('before_retirement',{manifest}));await record('retirement_attempt');
-    const retired=await wait(()=>options.storage.retire({manifest,operationIds:ids,probe:report.probe,
-      verifyLoggedOut:async()=>({status:(await auth('/auth/me',{expected:401,cleanup:true})).status})}));
+    // Mutating transactions must drain/roll back before revocation and pool
+    // close. Unlike read-only/human waits, never abandon their promise on abort.
+    signal.throwIfAborted();retirementAttempted=true;
+    const retired=await options.storage.retire({manifest,operationIds:ids,probe:report.probe,signal,
+      verifyLoggedOut:async()=>({status:(await auth('/auth/me',{expected:401,cleanup:true})).status})});
     ensure(retired?.restaurantId===target.id&&retired.readbackConfirmed===true&&retired.journalRows===0&&retired.revisionRows===0);
-    await record('retirement_confirmed');report.retired={journalRows:0,revisionRows:0,readbackConfirmed:true};
+    report.retired={journalRows:0,revisionRows:0,readbackConfirmed:true};await record('retirement_confirmed');
     mark('fixture_cleanup');await record('fixture_cleanup_attempt');cleanupAttempted=true;
-    ensure((await wait(()=>options.driver.cleanup()))?.rows===0);report.cleaned=true;await record('fixture_cleanup_confirmed');
+    signal.throwIfAborted();ensure((await options.driver.cleanup({signal}))?.rows===0);report.cleaned=true;await record('fixture_cleanup_confirmed');
   }catch(error){
     report.failedStep=step;
-    if(error?.safeCode==='tenant_seed_uncertain'||error?.safeCode==='catalog_writer_retirement_uncertain'||seedAttempted&&!report.seeded||loginAttempted&&!loginConfirmed||cleanupAttempted&&!report.cleaned)report.uncertain=true;
+    if(error?.safeCode==='tenant_seed_uncertain'||error?.safeCode==='catalog_writer_retirement_uncertain'||seedAttempted&&!report.seeded||loginAttempted&&!loginConfirmed||retirementAttempted&&!report.retired||cleanupAttempted&&!report.cleaned)report.uncertain=true;
   }finally{
     if(owned){
       if(cookie&&!logoutAttempted)try{await logout();}catch{report.uncertain=true;report.failedStep??='logout';}

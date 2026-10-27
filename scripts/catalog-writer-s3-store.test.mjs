@@ -26,6 +26,18 @@ test('S3 412 is an explicit failed CAS and is not retried',async()=>{
   const create=await feature(),f=fixture(async()=>response('<Error><Code>PreconditionFailed</Code></Error>',412,{'content-type':'application/xml'}));const store=create(f.options);
   try{assert.equal(await store.put(key,'{"retired":true,"version":"15"}',{ifMatch:etag}),null);assert.equal(f.requests.length,1);}finally{store.close();}
 });
+test('revocation verification requires an actual S3 403 and is not a generic error success',async()=>{
+  const create=await feature(),f=fixture(async request=>{assert.equal(request.method,'GET');assert.equal(request.path,`/vapt-catalog-production/catalog/v1/production/slugs/${tag}.json`);return response('<Error><Code>AccessDenied</Code></Error>',403,{'content-type':'application/xml'});}),store=create(f.options);
+  try{assert.equal(typeof store.verifyRevoked,'function');assert.deepEqual(await store.verifyRevoked(),{revoked:true});assert.equal(f.requests.length,1);}finally{store.close();}
+});
+test('an authorized missing object is not proof that the credential was revoked',async()=>{
+  const create=await feature(),f=fixture(async()=>response('<Error><Code>NoSuchKey</Code></Error>',404,{'content-type':'application/xml'})),store=create(f.options);
+  try{assert.equal(typeof store.verifyRevoked,'function');assert.deepEqual(await store.verifyRevoked(),{revoked:false});assert.equal(f.requests.length,1);}finally{store.close();}
+});
+test('a provider failure never masquerades as confirmed revocation',async()=>{
+  const create=await feature(),f=fixture(async()=>response('<Error><Code>InternalError</Code></Error>',500,{'content-type':'application/xml'})),store=create(f.options);
+  try{assert.equal(typeof store.verifyRevoked,'function');await assert.rejects(()=>store.verifyRevoked(),e=>e.message==='Catalog S3 revocation check stopped');assert.equal(f.requests.length,1);}finally{store.close();}
+});
 test('S3 service failures never retry or expose provider messages',async()=>{
   const create=await feature(),f=fixture(async()=>response('<Error><Code>InternalError</Code><Message>provider-secret-diagnostic</Message></Error>',500,{'content-type':'application/xml'}));const store=create(f.options);
   try{await assert.rejects(()=>store.get(key),e=>e.message==='Catalog S3 request stopped');assert.equal(f.requests.length,1);}finally{store.close();}
@@ -58,4 +70,14 @@ test('expired, overlong or incomplete credentials and unordered versions are ref
 test('closing the transport prevents all further signed requests',async()=>{
   const create=await feature(),f=fixture(async()=>response('{}')),store=create(f.options);store.close();
   await assert.rejects(()=>store.get(key));await assert.rejects(()=>store.put(key,'{"retired":true,"version":"15"}',{ifMatch:etag}));assert.equal(f.requests.length,0);
+});
+
+test('the full work deadline reserves ten minutes for revocation without extending the local credential cutoff',async t=>{
+  const module=await import('./catalog-writer-s3-store.mjs');assert.equal(typeof module.productionCatalogWriterCredentialWindow,'function','credential cleanup reserve missing');
+  const received=Date.now();let now=received;t.mock.method(Date,'now',()=>now);
+  const window=module.productionCatalogWriterCredentialWindow(received);assert.deepEqual(window,{workExpiresAt:received+1200000,expiresAt:received+1800000});
+  const f=fixture(async()=>response('<Error><Code>AccessDenied</Code></Error>',403,{'content-type':'application/xml'}));
+  const store=module.createProductionCatalogWriterS3Store({...f.options,expiresAt:window.expiresAt});
+  try{now=window.workExpiresAt+1;assert.deepEqual(await store.verifyRevoked(),{revoked:true});now=window.expiresAt;await assert.rejects(store.verifyRevoked());assert.equal(f.requests.length,1,'no signed request after the local cutoff');}
+  finally{store.close();}
 });

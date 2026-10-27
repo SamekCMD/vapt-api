@@ -93,3 +93,15 @@ test('writer fixture rejects wrong production target and tenant-smoke tags befor
 test('writer fixture refuses cleanup while catalog work, sessions or domain children remain',async()=>{
   const create=await catalogFeature(),db=database({catalogEffects:1}),driver=await create({ownerUrl:catalogUrl,tag:catalogTag,createPool:()=>db.pool,hash:async()=> 'synthetic-hash'});await driver.seed();await assert.rejects(driver.cleanup());assert.equal(db.queries.filter(q=>q.sql.startsWith('DELETE')).length,0);assert.equal(db.queries.at(-1).sql,'ROLLBACK');await driver.close();
 });
+
+for(const phase of ['before-delete','before-commit'])test(`writer cleanup cancellation ${phase} rolls back rather than committing identity deletion`,async()=>{
+  const create=await catalogFeature(),db=database(),abort=new AbortController();let cleaning=false,armed=false;
+  const pool={...db.pool,async connect(){const client=await db.pool.connect();return{release:()=>client.release(),async query(sql,p){
+    const value=await client.query(sql,p);
+    if(cleaning&&!armed&&(phase==='before-delete'&&sql.includes('AS residue')||phase==='before-commit'&&sql.startsWith('DELETE FROM better_auth.'))){armed=true;abort.abort();}
+    return value;
+  }};}};
+  const driver=await create({ownerUrl:catalogUrl,tag:catalogTag,createPool:()=>pool,hash:async()=> 'synthetic-hash'});await driver.seed();cleaning=true;const start=db.queries.length;
+  try{await assert.rejects(driver.cleanup({signal:abort.signal}));const queries=db.queries.slice(start);assert.equal(queries.some(q=>q.sql==='COMMIT'),false);assert.equal(queries.at(-1).sql,'ROLLBACK');if(phase==='before-delete')assert.equal(queries.some(q=>q.sql.startsWith('DELETE')),false);}
+  finally{await driver.close();}
+});
