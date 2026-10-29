@@ -122,7 +122,7 @@ async function runProductionCatalogGate(options,image){
       if(cookie&&!logoutAttempted)try{await logout();}catch{report.uncertain=true;report.failedStep??='logout';}
       else if(logoutAttempted&&!report.sessionRevoked)report.uncertain=true;
       cookie=undefined;forgetCredentials(credentials);credentials=[];
-      const cleanupSignal=AbortSignal.timeout(90000);
+      const cleanupSignal=AbortSignal.timeout(300000);
       try{await wait(()=>options.record('credential_revoke_attempt'),cleanupSignal);}catch{report.failedStep??='credential_journal';}
       // A broken disk/journal must stop test mutations, not prevent security
       // cleanup. Revocation still gets exactly one attempt, never a retry.

@@ -106,6 +106,34 @@ test('legacy CRUD retirement still rejects a single image baseline instead of ac
   const legacy=await feature();await assert.rejects(()=>legacy(f.options));assert.equal(f.writes.length,0);
 },{image:true}));
 
+for(const kind of ['ready','missing-session','wrong-membership','extra-operation','wrong-snapshot','wrong-manifest','wrong-revision'])test(`image preflight verifies SQL and three R2 keys without writes: ${kind}`,async()=>scenario(async f=>{
+  const m=await import('./catalog-image-baseline-preflight.mjs').catch(()=>({}));assert.equal(typeof m.verifyProductionCatalogImageBaseline,'function','concrete image baseline preflight missing');
+  if(kind!=='missing-session')await f.pool.query('insert into better_auth.session(id,"userId",token,"expiresAt","updatedAt") values($1,$2,$3,now()+interval \'1 hour\',now())',[randomUUID(),f.u.id,randomUUID()]);
+  if(kind==='wrong-membership')await f.pool.query("update public.organization_members set role='admin' where user_id=$1",[f.u.id]);
+  if(kind==='extra-operation'){
+    const extra=structuredClone(f.states[0]);extra.version='9007199254740994';
+    await f.pool.query(`insert into public.catalog_publication_operations(operation_id,actor_id,restaurant_id,fingerprint,version,snapshot,result) values($1,$2,$3,$4,$5,$6::jsonb,'{}'::jsonb)`,[randomUUID(),f.u.id,f.r.id,'e'.repeat(64),extra.version,JSON.stringify(extra)]);
+  }
+  if(kind==='wrong-snapshot'){const state=structuredClone(f.states[0]);state.catalog.restaurant.logoUrl='https://unexpected.invalid/image';f.set(f.prefix+'snapshots/'+state.version+'.json',state);}
+  if(kind==='wrong-manifest')f.set(f.manifestKey,{restaurantId:f.r.id,version:f.states[0].version,canonicalSlug:f.r.slug,previousVersion:'9007199254740992'});
+  if(kind==='wrong-revision')await f.pool.query('update public.catalog_publication_revisions set version=9007199254740994 where restaurant_id=$1',[f.r.id]);
+  const reads=[],store={async get(key,options){assert.ok(options.signal);reads.push(key);return f.store.get(key);},async put(){throw Error('Preflight must never PUT');}};
+  const options={pool:f.adapter,store,manifest:f.manifest,baseline:f.options.probe,operationId:f.options.operationIds.rebuild};
+  if(kind==='ready'){
+    assert.deepEqual(await m.verifyProductionCatalogImageBaseline(options),{verified:true,restaurantId:f.r.id,operationId:f.options.operationIds.rebuild,version:'9007199254740993',keysChecked:3});
+    assert.deepEqual(reads,[f.slugKey,f.manifestKey,f.prefix+'snapshots/9007199254740993.json']);
+  }else await assert.rejects(()=>m.verifyProductionCatalogImageBaseline(options),e=>e.message==='Catalog image baseline preflight stopped');
+  assert.equal(f.writes.length,0);assert.equal((await f.pool.query('select count(*)::int n from public.catalog_publication_operations where restaurant_id=$1',[f.r.id])).rows[0].n,kind==='extra-operation'?2:1);
+},{image:true}));
+
+test('preflight rollback failure discards the connection and never exposes the database diagnostic',async()=>scenario(async f=>{
+  const {verifyProductionCatalogImageBaseline:verify}=await import('./catalog-image-baseline-preflight.mjs');
+  await f.pool.query('insert into better_auth.session(id,"userId",token,"expiresAt","updatedAt") values($1,$2,$3,now()+interval \'1 hour\',now())',[randomUUID(),f.u.id,randomUUID()]);
+  let discarded=false;const pool={...f.adapter,async connect(){const c=await f.pool.connect();return{async query(sql,p){const value=await c.query(sql,p);if(sql==='ROLLBACK')throw Error('private-database-transport-diagnostic');return value;},release(error){discarded=error instanceof Error;c.release(error);}};}};
+  await assert.rejects(()=>verify({pool,store:f.store,manifest:f.manifest,baseline:f.options.probe,operationId:f.options.operationIds.rebuild}),e=>e.message==='Catalog image baseline preflight stopped');
+  assert.equal(discarded,true);assert.equal(f.writes.length,0);
+},{image:true}));
+
 for(const kind of ['logout','session','member','unknown-operation','pending','foreign-manifest','foreign-snapshot'])test(`retirement refuses ${kind} before any artifact write or journal deletion`,async()=>scenario(async f=>{
   if(kind==='logout')f.options.verifyLoggedOut=async()=>({status:200});
   if(kind==='session')await f.pool.query('insert into better_auth.session(id,"userId",token,"expiresAt","updatedAt") values($1,$2,$3,now()+interval \'1 hour\',now())',[randomUUID(),f.u.id,randomUUID()]);

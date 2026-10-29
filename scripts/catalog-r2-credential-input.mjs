@@ -3,11 +3,18 @@
 import {createServer} from 'node:http';
 import {randomBytes} from 'node:crypto';
 export async function createCatalogR2CredentialInput(){
+  return createCredentialInput(false);
+}
+export async function createCatalogImageR2CredentialInput(){
+  return createCredentialInput(true);
+}
+async function createCredentialInput(image){
+  const tokenName=image?'vapt-catalog-production-image-test-2026-10-29':'vapt-catalog-production-writer-test-2026-10-27';
   const nonce=randomBytes(32).toString('hex');let origin,host,closed=false,received=false,claimed=false,resolve,reject;
   const pending=new Promise((ok,fail)=>{resolve=ok;reject=fail;});pending.catch(()=>{});
   const html=()=>`<!doctype html><html lang="pt-BR"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="vapt-nonce" content="${nonce}"><title>Vapt — credencial R2 de teste</title>
 <style nonce="${nonce}">body{font:18px system-ui;max-width:720px;margin:40px auto;padding:24px}label{display:block;margin:24px 0}input{display:block;width:100%;padding:12px;box-sizing:border-box}button{font:inherit;padding:14px}</style>
-<h1>Credencial R2 para o teste de catálogo</h1><p>Use apenas a chave <strong>vapt-catalog-production-writer-test-2026-10-27</strong>, limitada a objetos de <strong>vapt-catalog-production</strong>. Validade na Cloudflare:24h; uso local:até30min; revogação ao encerrar.</p>
+<h1>Credencial R2 para o teste de catálogo</h1><p>Use apenas a chave <strong>${tokenName}</strong>, limitada a objetos de <strong>vapt-catalog-production</strong>. Validade na Cloudflare:24h; uso local:até30min; revogação ao encerrar.</p>
 <p>Copie os dois campos S3 da tela Cloudflare. Não cole API Token Value, senha, dados do banco ou cookies. Os valores serão entregues uma vez ao controlador local, somente em memória; não serão mostrados nesta página, no chat ou nos logs.</p>
 <form id="keys" autocomplete="off"><label>Access Key ID<input id="access" type="password" autocomplete="off" spellcheck="false" required minlength="32" maxlength="32"></label><label>Secret Access Key<input id="secret" type="password" autocomplete="off" spellcheck="false" required minlength="64" maxlength="64"></label><button type="submit">Entregar chaves ao teste local</button></form><p id="state">Aguardando as duas chaves S3.</p>
 <script nonce="${nonce}">const form=document.getElementById('keys'),a=document.getElementById('access'),s=document.getElementById('secret'),label=document.getElementById('state');let sent=false;
@@ -30,7 +37,7 @@ catch{body=undefined;a.value='';s.value='';label.textContent='Não foi possível
       if(!value||Array.isArray(value)||typeof value!=='object'||Object.keys(value).sort().join(',')!=='accessKeyId,secretAccessKey'
         ||typeof value.accessKeyId!=='string'||! /^[a-f0-9]{32}$/.test(value.accessKeyId)
         ||typeof value.secretAccessKey!=='string'||! /^[a-f0-9]{64}$/.test(value.secretAccessKey))return send(400,{});
-      received=true;resolve({accessKeyId:value.accessKeyId,secretAccessKey:value.secretAccessKey});value.accessKeyId=undefined;value.secretAccessKey=undefined;send(204);
+      received=true;resolve({accessKeyId:value.accessKeyId,secretAccessKey:value.secretAccessKey,...(image?{receivedAt:Date.now()}:{})});value.accessKeyId=undefined;value.secretAccessKey=undefined;send(204);
     }catch{if(!res.headersSent)send(400,{});else res.end();}
   });
   server.requestTimeout=10000;server.headersTimeout=10000;server.maxConnections=4;

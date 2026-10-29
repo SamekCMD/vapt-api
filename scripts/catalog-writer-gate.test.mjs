@@ -139,6 +139,13 @@ test('unconfirmed credential revocation makes an otherwise successful run incomp
   const run=await feature(),f=fixture();f.options.storage.revoke=async()=>({revoked:false});
   const result=await run(f.options);assert.equal(result.ok,false);assert.equal(result.cleaned,true);assert.equal(result.credentialRevoked,false);
 });
+
+test('credential revocation reserves enough time for human confirmation and one propagation-delayed verification',async t=>{
+  const run=await feature(),f=fixture(),pending=[];let clock=0;
+  t.mock.method(AbortSignal,'timeout',milliseconds=>{const c=new AbortController();pending.push({at:clock+milliseconds,c});return c.signal;});
+  f.options.storage.revoke=async()=>{clock+=125000;for(const timer of pending)if(timer.at<=clock)timer.c.abort();return{revoked:true};};
+  const result=await run(f.options);assert.equal(result.credentialRevoked,true);assert.equal(result.ok,true);
+});
 test('uncertain identity-cleanup COMMIT is never retried and still releases storage',async()=>{
   const run=await feature(),f=fixture();let cleanups=0;
   f.options.driver.cleanup=async()=>{cleanups++;throw Error('Synthetic lost cleanup commit');};
