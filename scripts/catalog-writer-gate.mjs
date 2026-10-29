@@ -4,6 +4,8 @@
 // preflights, short-lived storage access and verified revocation.
 import {setTimeout as delay} from 'node:timers/promises';
 import {runProductionCatalogWriterProbe} from './catalog-writer-probe.mjs';
+import {runProductionCatalogImageBaseline} from './catalog-image-baseline-probe.mjs';
+import {runProductionCatalogImageLeaseProbe} from './catalog-image-lease-probe.mjs';
 const ensure=v=>{if(!v)throw Error('Catalog writer gate guard failed');};
 const uuid=v=>typeof v==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(v);
 const names=['create','patch','private','mixed','delete','rebuild'];
@@ -11,6 +13,13 @@ function forgetCredentials(value){
   if(Array.isArray(value))for(const entry of value)if(entry&&typeof entry==='object')try{entry.password='';}catch{}
 }
 export async function runProductionCatalogWriterGate(options={}){
+  return runProductionCatalogGate(options,false);
+}
+// Fixed branding-only profile, not a caller-selected probe or general job.
+export async function runProductionCatalogImageGate(options={}){
+  return runProductionCatalogGate(options,true);
+}
+async function runProductionCatalogGate(options,image){
   const report={ok:false,cleaned:false,seeded:false,sessionRevoked:false,credentialRevoked:false,uncertain:false,authRequests:0,stage:'input'};
   let owned=false,cookie,credentials=[],step='input',seedAttempted=false,loginAttempted=false,loginConfirmed=false,logoutAttempted=false,cleanupAttempted=false,retirementAttempted=false;
   const deadline=AbortSignal.timeout(1200000),signal=options.signal?AbortSignal.any([options.signal,deadline]):deadline;
@@ -61,7 +70,8 @@ export async function runProductionCatalogWriterGate(options={}){
     ensure([actor.id,org.id,target.id].every(uuid)&&new Set([actor.id,org.id,target.id]).size===3&&actor.name===manifest.tag
       &&actor.email===manifest.tag+'-0@example.invalid'&&org.name===manifest.tag&&org.created_by===actor.id
       &&target.owner_id===actor.id&&target.organization_id===org.id&&target.name===manifest.tag&&target.slug===manifest.tag);
-    ensure(ids&&Object.keys(ids).sort().join(',')===[...names].sort().join(',')&&names.every(n=>uuid(ids[n]))&&new Set(Object.values(ids)).size===6);
+    const selectedNames=image?['rebuild','oversized','upload']:names;
+    ensure(ids&&Object.keys(ids).sort().join(',')===[...selectedNames].sort().join(',')&&selectedNames.every(n=>uuid(ids[n]))&&new Set(Object.values(ids)).size===selectedNames.length);
     mark('preflight');await wait(()=>options.preflight('before_seed',{manifest}));
     mark('storage_ready');const storage=await wait(()=>options.storage.ready({manifest}));
     ensure(storage?.bucket==='vapt-catalog-production'&&Number.isSafeInteger(storage.expiresAt)&&storage.expiresAt-Date.now()<=1800000);
@@ -81,18 +91,27 @@ export async function runProductionCatalogWriterGate(options={}){
       ensure(cookie&&login.value?.user?.id===actor.id&&login.value.user.email===actor.email);loginConfirmed=true;
     }finally{challenge=undefined;forgetCredentials(credentials);}
     await record('login_confirmed');
-    mark('probe');await record('probe_attempt');report.probe=await runProductionCatalogWriterProbe({baseUrl:options.baseUrl,restaurantId:target.id,tag:manifest.tag,operationIds:ids,
-      cookie,fetcher:options.fetcher,pace:options.pace,signal,preflight:()=>options.preflight('before_probe',{manifest})});
+    mark('probe');await record('probe_attempt');
+    const input={baseUrl:options.baseUrl,restaurantId:target.id,tag:manifest.tag,cookie,fetcher:options.fetcher,pace:options.pace,signal,
+      preflight:()=>options.preflight('before_probe',{manifest})};
+    report.probe=image?await runProductionCatalogImageBaseline({...input,operationId:ids.rebuild})
+      :await runProductionCatalogWriterProbe({...input,operationIds:ids});
     report.uncertain=report.probe.uncertain===true;ensure(report.probe.ok===true&&!report.uncertain);await record('probe_confirmed');
+    if(image){
+      mark('image_probe');await record('image_probe_attempt');
+      report.imageProbe=await runProductionCatalogImageLeaseProbe({...input,itemId:'branding',operationIds:{oversized:ids.oversized,upload:ids.upload},
+        preflight:()=>options.preflight('before_image',{manifest,baseline:report.probe})});
+      report.uncertain=report.imageProbe.uncertain===true;ensure(report.imageProbe.ok===true&&!report.uncertain);await record('image_probe_confirmed');
+    }
     await logout();
     mark('retirement');await wait(()=>options.preflight('before_retirement',{manifest}));await record('retirement_attempt');
     // Mutating transactions must drain/roll back before revocation and pool
     // close. Unlike read-only/human waits, never abandon their promise on abort.
     signal.throwIfAborted();retirementAttempted=true;
-    const retired=await options.storage.retire({manifest,operationIds:ids,probe:report.probe,signal,
+    const retired=await options.storage.retire({manifest,operationIds:image?{rebuild:ids.rebuild}:ids,probe:report.probe,...(image?{imageProbe:report.imageProbe}:{}),signal,
       verifyLoggedOut:async()=>({status:(await auth('/auth/me',{expected:401,cleanup:true})).status})});
-    ensure(retired?.restaurantId===target.id&&retired.readbackConfirmed===true&&retired.journalRows===0&&retired.revisionRows===0);
-    report.retired={journalRows:0,revisionRows:0,readbackConfirmed:true};await record('retirement_confirmed');
+    ensure(retired?.restaurantId===target.id&&retired.readbackConfirmed===true&&retired.journalRows===0&&retired.revisionRows===0&&(!image||retired.imageAbsentConfirmed===true));
+    report.retired={journalRows:0,revisionRows:0,readbackConfirmed:true,...(image?{imageAbsentConfirmed:true}:{})};await record('retirement_confirmed');
     mark('fixture_cleanup');await record('fixture_cleanup_attempt');cleanupAttempted=true;
     signal.throwIfAborted();ensure((await options.driver.cleanup({signal}))?.rows===0);report.cleaned=true;await record('fixture_cleanup_confirmed');
   }catch(error){
@@ -113,6 +132,6 @@ export async function runProductionCatalogWriterGate(options={}){
       try{await wait(()=>options.driver.close(),cleanupSignal);}catch{report.failedStep??='driver_close';}
     }
   }
-  report.ok=report.cleaned&&report.sessionRevoked&&report.credentialRevoked&&report.probe?.ok===true&&!report.uncertain&&!report.failedStep;
+  report.ok=report.cleaned&&report.sessionRevoked&&report.credentialRevoked&&report.probe?.ok===true&&(!image||report.imageProbe?.ok===true)&&!report.uncertain&&!report.failedStep;
   report.stage=report.ok?'verified':report.failedStep??step;return report;
 }

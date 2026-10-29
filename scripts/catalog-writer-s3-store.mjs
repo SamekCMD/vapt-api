@@ -14,9 +14,18 @@ export function productionCatalogWriterCredentialWindow(receivedAt){
   return{workExpiresAt:receivedAt+1200000,expiresAt:receivedAt+1800000};
 }
 export function createProductionCatalogWriterS3Store(options={}){
+  return createProductionCatalogS3Store(options,5);
+}
+// Fixed one-publication profile for an unused branding upload. The caller may
+// not select a general list/count of objects or acquire image-bucket access.
+export function createProductionCatalogImageS3Store(options={}){
+  ensure(!Object.hasOwn(options,'versions'));
+  return createProductionCatalogS3Store({...options,versions:[options.version]},1);
+}
+function createProductionCatalogS3Store(options,count){
   const {restaurantId,tag,expiresAt,requestHandler}=options,versions=structuredClone(options.versions);
   ensure(uuid(restaurantId)&&typeof tag==='string'&&tag.startsWith('catalog-writer-')&&uuid(tag.slice(15))
-    &&Array.isArray(versions)&&versions.length===5&&versions.every((v,i)=>version(v)&&(i===0||BigInt(v)>BigInt(versions[i-1])))
+    &&Array.isArray(versions)&&versions.length===count&&versions.every((v,i)=>version(v)&&(i===0||BigInt(v)>BigInt(versions[i-1])))
     &&typeof options.accessKeyId==='string'&&/^[a-f0-9]{32}$/.test(options.accessKeyId)
     &&typeof options.secretAccessKey==='string'&&/^[a-f0-9]{64}$/.test(options.secretAccessKey)
     &&Number.isSafeInteger(expiresAt)&&expiresAt>Date.now()&&expiresAt-Date.now()<=1800000);

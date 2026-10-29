@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {S3Client,PutObjectCommand} from '@aws-sdk/client-s3';
+import {getSignedUrl} from '@aws-sdk/s3-request-presigner';
 const feature=async()=>{const m=await import('./catalog-writer-gate.mjs').catch(()=>({}));assert.equal(typeof m.runProductionCatalogWriterGate,'function','one-shot writer lifecycle missing');return m.runProductionCatalogWriterGate;};
 const u='11111111-1111-4111-8111-111111111111',o='22222222-2222-4222-8222-222222222222',r='33333333-3333-4333-8333-333333333333',item='44444444-4444-4444-8444-444444444444';
 const tag='catalog-writer-55555555-5555-4555-8555-555555555555',cookie='__Secure-better-auth.session_token=synthetic-session-value-that-stays-private',password='synthetic-password-that-stays-private',challenge='synthetic-human-challenge-that-stays-private';
@@ -38,10 +40,55 @@ function fixture(){
       if(path==='/api/auth/sign-in/email'){
         assert.equal(seeded,true);assert.equal(loggedIn,false);loggedIn=true;assert.deepEqual(JSON.parse(init.body),{email:manifest.users[0].email,password});assert.equal(init.headers['X-Captcha-Response'],challenge);
       }else{assert.equal(init.headers.Cookie,cookie);assert.ok(events.includes('preflight:before_probe'));}
-      return Response.json(next[3],{status:next[2],headers:path==='/api/auth/sign-in/email'?{'set-cookie':cookie+'; Path=/; Secure; HttpOnly; SameSite=Lax'}:{}});
+      return next[2]===204?new Response(null,{status:204}):Response.json(next[3],{status:next[2],headers:path==='/api/auth/sign-in/email'?{'set-cookie':cookie+'; Path=/; Secure; HttpOnly; SameSite=Lax'}:{}});
     }};
   return{options,events,http,credentials,steps,state:()=>({seeded,cleaned,loggedIn,loggedOut,retired,released,closed})};
 }
+
+async function imageFixture(){
+  const f=fixture(),root='/restaurants/'+r,path=root+'/branding/image',key=r+'/branding/'+item;
+  const ids={rebuild:operationIds.rebuild,oversized:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1',upload:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2'};
+  f.options.operationIds=ids;
+  const client=new S3Client({endpoint:'https://3ce69408aa5112617a282957aba71932.r2.cloudflarestorage.com',region:'auto',requestChecksumCalculation:'WHEN_REQUIRED',credentials:{accessKeyId:'a'.repeat(32),secretAccessKey:'b'.repeat(64)}});
+  let signed;try{signed=await getSignedUrl(client,new PutObjectCommand({Bucket:'vapt-assets-production',Key:key,ContentType:'image/webp',ContentLength:42,IfMatch:'"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"'}),{expiresIn:300,signableHeaders:new Set(['content-length','content-type','if-match'])});}finally{client.destroy();}
+  const descriptor={state:'upload_required',method:'PUT',objectKey:key,publicUrl:'https://pub-a1c726374f434a7d8c2e2324d61a4de7.r2.dev/'+key,
+    uploadUrl:signed,headers:{'Content-Type':'image/webp','If-Match':'"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"'},expiresInSeconds:300};
+  const scope={id:r,name:tag,slug:tag,description:null,logoUrl:null},uploaded={state:'uploaded',objectKey:key,publicUrl:descriptor.publicUrl};
+  f.steps.splice(1,f.steps.length-1,
+    ['GET',root,200,scope],['GET',root+'/menu-items',200,[]],['POST',root+'/catalog/rebuild',200,{receipt:receipt('rebuild','15')}],['GET',root+'/catalog-operations/'+ids.rebuild,200,receipt('rebuild','15')],
+    ['GET',root,200,scope],['POST',path+'/upload',400,{error:{code:'invalid_request'}}],['POST',path+'/upload',200,descriptor],
+    ['POST',path+'/upload',200,uploaded],['POST',path+'/upload',200,uploaded],['DELETE',path,204,null],['POST',path+'/upload',410,{error:{code:'menu_image_upload_expired'}}]);
+  const fetcher=f.options.fetcher,retire=f.options.storage.retire,network=[],fault={};let puts=0;
+  f.options.fetcher=async(url,init)=>{
+    network.push([init.method,new URL(url).pathname]);
+    if(url===signed){assert.equal(init.method,'PUT');assert.equal(init.headers.Cookie,undefined);puts++;if(fault.lostPut)throw Error('lost private signed request');return new Response(null,{status:puts===1?200:412});}
+    if(new URL(url).pathname===path+'/upload')assert.ok(f.events.includes('preflight:before_image'));
+    return fetcher(url,init);
+  };
+  f.options.storage.retire=async value=>{
+    assert.deepEqual(value.operationIds,{rebuild:ids.rebuild});assert.equal(value.probe.receipts.length,1);assert.equal(value.imageProbe.ok,true);assert.equal(value.imageProbe.objectKey,key);
+    return{...await retire({...value,operationIds}),imageAbsentConfirmed:!fault.missingReadback};
+  };
+  return{...f,network,fault};
+}
+const imageFeature=async()=>{const m=await import('./catalog-writer-gate.mjs');assert.equal(typeof m.runProductionCatalogImageGate,'function','image lifecycle not integrated');return m.runProductionCatalogImageGate;};
+test('image gate uses one baseline and real lease probe before logout, retirement, cleanup and revocation',async()=>{
+  const run=await imageFeature(),f=await imageFixture(),result=await run(f.options);
+  assert.equal(result.ok,true);assert.equal(result.probe.requests,4);assert.equal(result.imageProbe.requests,10);assert.equal(result.authRequests,4);assert.equal(f.network.length,18);
+  assert.equal(f.steps.length,0);assert.equal(result.cleaned,true);assert.equal(result.retired.imageAbsentConfirmed,true);assert.equal(f.credentials[0].password,'');
+  assert.equal(f.network.filter(([method,path])=>method==='POST'&&path.endsWith('/catalog/rebuild')).length,1);
+  assert.equal(f.network.some(([method,path])=>method==='PATCH'||path.includes('/menu-items/')),false);assert.doesNotMatch(JSON.stringify(result),/X-Amz|synthetic-session|synthetic-password/);
+});
+for(const kind of ['before-image','pending-baseline','lost-put','missing-readback'])test(`image gate ${kind} preserves fixture, logs out and revokes without retry`,async()=>{
+  const run=await imageFeature(),f=await imageFixture();
+  if(kind==='before-image'){const pre=f.options.preflight;f.options.preflight=async(...args)=>{await pre(...args);if(args[0]==='before_image')throw Error('baseline not proven');};}
+  if(kind==='pending-baseline')f.steps[4][3]={...receipt('rebuild','15'),phase:'committed',retryable:true};
+  if(kind==='lost-put')f.fault.lostPut=true;
+  if(kind==='missing-readback')f.fault.missingReadback=true;
+  const result=await run(f.options);assert.equal(result.ok,false);assert.equal(result.cleaned,false);assert.equal(result.sessionRevoked,true);assert.equal(result.credentialRevoked,true);
+  assert.equal(f.events.filter(v=>v==='revoke').length,1);assert.equal(f.network.filter(([method])=>method==='PUT').length,kind==='lost-put'?1:kind==='missing-readback'?3:0);
+  if(kind==='pending-baseline'||kind==='lost-put'||kind==='missing-readback')assert.equal(result.uncertain,true);
+});
 test('one-owner gate runs real HTTP probe, logout401, target retirement, cleanup and credential revocation in order',async()=>{
   const run=await feature(),f=fixture(),result=await run(f.options);
   assert.equal(result.ok,true);assert.equal(result.cleaned,true);assert.equal(result.sessionRevoked,true);assert.equal(result.credentialRevoked,true);assert.equal(result.probe.requests,15);assert.equal(result.authRequests,4);assert.equal(f.http.length,19);

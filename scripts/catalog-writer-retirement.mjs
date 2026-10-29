@@ -10,6 +10,14 @@ const ordered=rows=>rows.map(v=>JSON.stringify(Object.fromEntries(Object.entries
 const names=['create','patch','private','mixed','delete','rebuild'];
 
 export async function retireProductionCatalogWriterFixture(options={}){
+  return retireProductionCatalogFixture(options,false);
+}
+// Fixed separate profile: one ready empty rebuild and one unused branding
+// upload, already retired. Never relax the legacy five-version CRUD contract.
+export async function retireProductionCatalogImageFixture(options={}){
+  return retireProductionCatalogFixture(options,true);
+}
+async function retireProductionCatalogFixture(options,image){
   let client,objectWrites=0,committing=false;
   try{
     const {pool,store,verifyLoggedOut}=options,manifest=structuredClone(options.manifest),probe=structuredClone(options.probe),ids=structuredClone(options.operationIds);
@@ -21,10 +29,19 @@ export async function retireProductionCatalogWriterFixture(options={}){
       &&org.name===manifest.tag&&org.created_by===actor.id&&target.owner_id===actor.id&&target.organization_id===org.id
       &&target.name===manifest.tag&&target.slug===manifest.tag
       &&isDeepStrictEqual(manifest.members,[{organization_id:org.id,user_id:actor.id,role:'owner',status:'active'}]));
-    ensure(ids&&Object.keys(ids).sort().join(',')===[...names].sort().join(',')&&names.every(n=>uuid(ids[n]))&&new Set(Object.values(ids)).size===6
-      &&probe?.ok===true&&probe.uncertain===false&&probe.stage==='verified'&&probe.receipts?.length===6);
+    const selectedNames=image?['rebuild']:names;
+    ensure(ids&&Object.keys(ids).sort().join(',')===[...selectedNames].sort().join(',')&&selectedNames.every(n=>uuid(ids[n]))&&new Set(Object.values(ids)).size===selectedNames.length
+      &&probe?.ok===true&&probe.uncertain===false&&probe.stage==='verified'&&probe.receipts?.length===selectedNames.length);
+    const imageProbe=image?structuredClone(options.imageProbe):null;
+    if(image){
+      const parts=imageProbe?.objectKey?.split('/');
+      ensure(imageProbe?.ok===true&&imageProbe.uncertain===false&&imageProbe.stage==='verified'&&imageProbe.imageBytes===42
+        &&imageProbe.uploadVerified===true&&imageProbe.leaseRetired===true&&imageProbe.staleWritesBlocked===2
+        &&parts?.length===3&&parts[0]===target.id&&parts[1]==='branding'&&uuid(parts[2])
+        &&uuid(imageProbe.leaseId)&&imageProbe.leaseId!==ids.rebuild&&typeof options.verifyImageAbsent==='function');
+    }
     const publicReceipts=[];
-    for(const [index,name]of names.entries()){
+    for(const [index,name]of selectedNames.entries()){
       const r=probe.receipts[index];ensure(r.operationId===ids[name]&&r.restaurantId===target.id&&r.phase==='ready'&&r.committed===true&&r.retryable===false);
       if(name==='private')ensure(r.version===null);
       else{ensure(version(r.version)&&(publicReceipts.length===0||BigInt(r.version)>BigInt(publicReceipts.at(-1).version)));publicReceipts.push(r);}
@@ -69,10 +86,10 @@ export async function retireProductionCatalogWriterFixture(options={}){
       (select count(*) from public.payment_transactions where restaurant_id=$2)
     )::int n`,[actor.id,target.id,org.id])).rows[0];ensure(effects?.n===0);
     const current=(await client.query('select description,logo_url,onboarding_status from public.restaurants where id=$1',[target.id])).rows[0];
-    ensure(current?.description===manifest.tag+' public'&&current.logo_url===null&&current.onboarding_status==='complete');
+    ensure(current?.description===(image?null:manifest.tag+' public')&&current.logo_url===null&&current.onboarding_status==='complete');
     const rows=(await client.query(`select operation_id,actor_id,restaurant_id,fingerprint,version::text,snapshot,previous_slug
       from public.catalog_publication_operations where restaurant_id=$1 or actor_id=$2 for update`,[target.id,actor.id])).rows;
-    ensure(rows.length===5);const states=[];
+    ensure(rows.length===(image?1:5));const states=[];
     for(const receipt of publicReceipts){
       const row=rows.find(r=>r.operation_id===receipt.operationId);
       ensure(row&&row.actor_id===actor.id&&row.restaurant_id===target.id&&row.version===receipt.version&&/^[a-f0-9]{64}$/.test(row.fingerprint)
@@ -82,8 +99,8 @@ export async function retireProductionCatalogWriterFixture(options={}){
         &&Array.isArray(row.snapshot.catalog.items)&&row.snapshot.catalog.items.every(i=>i.restaurantId===target.id&&i.imageUrl===null)
         &&Buffer.byteLength(JSON.stringify(row.snapshot))<=65536);states.push(row.snapshot);
     }
-    ensure(states.at(-1).catalog.items.length===0&&states.at(-2).catalog.items.length===0);
-    const last=publicReceipts.at(-1).version,previous=publicReceipts.at(-2).version;
+    ensure(states.at(-1).catalog.items.length===0&&(image?states[0].catalog.restaurant.description===null:states.at(-2).catalog.items.length===0));
+    const last=publicReceipts.at(-1).version,previous=image?null:publicReceipts.at(-2).version;
     const revisions=(await client.query('select restaurant_id,version::text from public.catalog_publication_revisions where restaurant_id=$1 for update',[target.id])).rows;
     ensure(isDeepStrictEqual(revisions,[{restaurant_id:target.id,version:last}]));
     const prefix=`catalog/v1/production/restaurants/${target.id}/`,slugKey=`catalog/v1/production/slugs/${target.slug}.json`,manifestKey=prefix+'manifest.json';
@@ -99,9 +116,15 @@ export async function retireProductionCatalogWriterFixture(options={}){
     const artifacts=[{key:slugKey,object:mapping,fence:JSON.stringify({...expectedMapping,tombstone:true})}];
     for(const [index,state]of states.entries()){
       const key=prefix+`snapshots/${state.version}.json`,object=await read(key,65536),value=JSON.parse(object.body),fence=JSON.stringify({retired:true,version:state.version});
-      ensure(isDeepStrictEqual(value,state)||(index<3&&isDeepStrictEqual(value,{retired:true,version:state.version})));
+      ensure(isDeepStrictEqual(value,state)||(!image&&index<3&&isDeepStrictEqual(value,{retired:true,version:state.version})));
       artifacts.push({key,object,fence});
     }
+    // A retired lease plus a rejected stale PUT is not evidence of physical
+    // object absence: both can succeed while uploaded bytes still exist.
+    // The controller must supply one authenticated exact-object readback;
+    // never infer absence from a public CDN, 401/403, or a generic failure.
+    if(image)ensure(isDeepStrictEqual(await external(signal=>options.verifyImageAbsent({objectKey:imageProbe.objectKey,signal})),
+      {absent:true,bucket:'vapt-assets-production',objectKey:imageProbe.objectKey}));
     // Validate the entire owned set BEFORE the first write. Preserve the valid
     // manifest as a small fence: late DO pruning can still read it and finish,
     // rather than turning harmless cleanup into repeated failing alarms.
@@ -126,7 +149,7 @@ export async function retireProductionCatalogWriterFixture(options={}){
     active.throwIfAborted();committing=true;await client.query('COMMIT');client.release();client=null;
     ensure((await pool.query(residueSql,[target.id,actor.id])).rows[0]?.n===0);
     return{restaurantId:target.id,journalRows:0,revisionRows:0,keys:[slugKey,manifestKey,...states.map(s=>prefix+`snapshots/${s.version}.json`)],
-      readbackConfirmed:true,objectWrites,retainedFenceBytes:Buffer.byteLength(registration.body)+artifacts.reduce((n,a)=>n+Buffer.byteLength(a.fence),0)};
+      readbackConfirmed:true,...(image?{imageAbsentConfirmed:true}:{}),objectWrites,retainedFenceBytes:Buffer.byteLength(registration.body)+artifacts.reduce((n,a)=>n+Buffer.byteLength(a.fence),0)};
   }catch{
     if(client)await client.query('ROLLBACK').catch(()=>{});
     throw Object.assign(Error('Catalog writer retirement stopped'),{safeCode:objectWrites>0||committing?'catalog_writer_retirement_uncertain':'catalog_writer_retirement_failed'});

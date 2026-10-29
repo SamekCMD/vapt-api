@@ -13,6 +13,21 @@ function fixture(handler){
     },destroy(){}}};return{options,requests};
 }
 const response=(body,statusCode=200,headers={})=>({statusCode,headers:{etag,'content-type':'application/json',...headers},body:Readable.from([Buffer.from(body)])});
+
+test('image baseline transport permits only its three keys and CAS fences, never the five-version CRUD profile',async()=>{
+  const m=await import('./catalog-writer-s3-store.mjs');assert.equal(typeof m.createProductionCatalogImageS3Store,'function','image baseline transport missing');
+  const f=fixture(async()=>response('{}')),options={...f.options,version:'9007199254740993'};delete options.versions;
+  const store=m.createProductionCatalogImageS3Store(options),snapshot=prefix+'snapshots/9007199254740993.json';
+  try{
+    await store.get(snapshot);await store.get(prefix+'manifest.json');await store.get(`catalog/v1/production/slugs/${tag}.json`);
+    await store.put(snapshot,'{"retired":true,"version":"9007199254740993"}',{ifMatch:etag});
+    await store.put(`catalog/v1/production/slugs/${tag}.json`,JSON.stringify({restaurantId:id,version:'9007199254740993',canonicalSlug:tag,tombstone:true}),{ifMatch:etag});
+    for(const foreign of [key,prefix+'snapshots/9007199254740994.json','../'+snapshot])await assert.rejects(()=>store.get(foreign));
+    await assert.rejects(()=>store.put(prefix+'manifest.json','{}',{ifMatch:etag}));assert.equal(f.requests.length,5);
+    assert.throws(()=>m.createProductionCatalogWriterS3Store({...f.options,versions:['9007199254740993']}),'old CRUD transport must stay fixed at five');
+    assert.throws(()=>m.createProductionCatalogImageS3Store({...options,version:'0'}));
+  }finally{store.close();}
+});
 test('S3 reads only explicit production keys with real SDK signing, bounded body and quoted ETag',async()=>{
   const create=await feature(),f=fixture(async request=>{assert.equal(request.method,'GET');assert.equal(request.path,'/vapt-catalog-production/'+key);return response('{"retired":true,"version":"15"}');});
   const store=create(f.options);try{assert.deepEqual(await store.get(key,{maxBytes:4096}),{body:'{"retired":true,"version":"15"}',etag});assert.equal(f.requests.length,1);}finally{store.close();}
