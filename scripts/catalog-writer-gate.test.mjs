@@ -162,6 +162,23 @@ test('failed catalog mutation logs out once but does not discard unresolved jour
   f.options.fetcher=async(url,init)=>{if(init.method==='POST'&&url.endsWith('/menu-items'))throw Error('lost command response');return fetcher(url,init);};
   const result=await run(f.options);assert.equal(result.ok,false);assert.equal(result.probe.uncertain,true);assert.equal(result.sessionRevoked,true);assert.equal(f.state().retired,false);assert.equal(f.state().cleaned,false);assert.equal(f.http.filter(v=>v[1]==='/api/auth/sign-out').length,1);assert.equal(f.state().released,true);
 });
+for(const failedPhase of ['probe_attempt','logout_attempt'])test(`persistent journal failure from ${failedPhase} cannot prevent one security logout and401`,async()=>{
+  const run=await feature(),f=fixture(),record=f.options.record;let broken=false;
+  f.options.record=async(...args)=>{await record(...args);if(args[0]===failedPhase)broken=true;if(broken)throw Error('Synthetic disk failure');};
+  const result=await run(f.options);
+  assert.equal(result.ok,false);assert.equal(result.sessionRevoked,true);assert.equal(result.credentialRevoked,true);assert.equal(f.state().cleaned,false);assert.equal(f.state().retired,false);
+  assert.equal(f.http.filter(v=>v[1]==='/api/auth/sign-out').length,1);assert.equal(f.http.filter(v=>v[1]==='/auth/me').length,1);assert.equal(f.state().released,true);assert.equal(f.state().closed,true);
+});
+for(const outcome of ['resolve','reject'])test(`cancelled seed drains its ${outcome} before revocation/close, with no following login`,async()=>{
+  const run=await feature(),f=fixture(),abort=new AbortController(),seed=f.options.driver.seed;f.options.signal=abort.signal;
+  let enter,release;const entered=new Promise(ok=>{enter=ok;}),held=new Promise(ok=>{release=ok;});
+  f.options.driver.seed=async()=>{enter();await held;if(outcome==='reject')throw Error('Synthetic rolled-back seed');return seed();};
+  const pending=run(f.options);await entered;abort.abort();await new Promise(ok=>setImmediate(ok));
+  try{assert.equal(f.state().released,false,'security cleanup must wait for seed drain');assert.equal(f.state().closed,false);}
+  finally{release();}
+  const result=await pending;assert.equal(result.ok,false);assert.equal(result.uncertain,true);assert.equal(f.http.length,0);assert.equal(f.state().cleaned,false);assert.equal(f.state().released,true);assert.equal(f.state().closed,true);
+  if(outcome==='resolve')assert.equal(f.credentials[0].password,'');
+});
 test('lost logout response is not retried, and blocks retirement',async()=>{
   const run=await feature(),f=fixture(),fetcher=f.options.fetcher;let logouts=0;
   f.options.fetcher=async(url,init)=>{if(url.endsWith('/api/auth/sign-out')){logouts++;throw Error('lost logout');}return fetcher(url,init);};

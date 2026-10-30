@@ -9,6 +9,15 @@ async function setup(t,create){
   return{bridge,request,page,html};
 }
 
+test('reference input requests only the new reference credential and timestamps its one private delivery',async t=>{
+  const m=await import('./catalog-r2-credential-input.mjs');assert.equal(typeof m.createCatalogBrandingReferenceR2CredentialInput,'function','reference collector missing');
+  const f=await setup(t,m.createCatalogBrandingReferenceR2CredentialInput);
+  assert.match(f.html,/<strong>vapt-catalog-production-branding-reference-2026-10-30<\/strong>/);assert.doesNotMatch(f.html,/image-test-2026-10-29|writer-test-2026-10-27/);
+  const pending=f.bridge.waitForCredentials(),before=Date.now(),keys={accessKeyId:'a'.repeat(32),secretAccessKey:'b'.repeat(64)};
+  assert.equal((await f.request('/credentials',keys)).status,204);const value=await pending;assert.ok(value.receivedAt>=before&&value.receivedAt<=Date.now());
+  assert.deepEqual({accessKeyId:value.accessKeyId,secretAccessKey:value.secretAccessKey},keys);assert.equal((await f.request('/credentials',keys)).status,409);
+  assert.doesNotMatch(await(await fetch(f.bridge.url)).text(),/aaaaaaaa|bbbbbbbb/);
+});
 test('image credential form identifies only its fixed token and timestamps delivery while preserving the legacy profile',async t=>{
   const m=await import('./catalog-r2-credential-input.mjs');assert.equal(typeof m.createCatalogImageR2CredentialInput,'function','image-specific input missing');
   const legacy=await setup(t),f=await setup(t,m.createCatalogImageR2CredentialInput);

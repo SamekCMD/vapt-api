@@ -60,9 +60,13 @@ async function runProductionCatalogGate(options,image){
     ensure(cookie&&!logoutAttempted);logoutAttempted=true;mark('logout');
     // Cleanup gets a fresh bounded budget even when the user cancels the test.
     const cleanupSignal=AbortSignal.timeout(90000);
-    await wait(()=>options.record('logout_attempt'),cleanupSignal);
+    let journalFailed=false;
+    try{await wait(()=>options.record('logout_attempt'),cleanupSignal);}catch{journalFailed=true;}
     await auth('/api/auth/sign-out',{method:'POST',body:{},cleanup:true});await auth('/auth/me',{expected:401,cleanup:true});
-    report.sessionRevoked=true;await wait(()=>options.record('logout_confirmed'),cleanupSignal);
+    report.sessionRevoked=true;
+    try{await wait(()=>options.record('logout_confirmed'),cleanupSignal);}catch{journalFailed=true;}
+    // Disk failure blocks retirement/success, never security logout itself.
+    ensure(!journalFailed);
   }
   try{
     ensure(options.baseUrl==='https://api.vapt.app.br'&&['preflight','record','captcha','fetcher'].every(n=>typeof options[n]==='function')
@@ -85,10 +89,11 @@ async function runProductionCatalogGate(options,image){
     mark('human_challenge');let challenge=await wait(active=>options.captcha({index:0,role:'owner',signal:active}));
     ensure(typeof challenge==='string'&&challenge.length>=20&&challenge.length<=8192&&!/[\r\n]/.test(challenge)&&!challenge.startsWith('XXXX.DUMMY.')
       &&storage.expiresAt-Date.now()>=600000);signal.throwIfAborted();
-    mark('seed');await record('seed_attempt',{manifest,operationIds:ids});seedAttempted=true;
-    credentials=await wait(()=>Promise.resolve(options.driver.seed()).then(value=>{
-      if(signal.aborted)forgetCredentials(value);return value;
-    }));report.seeded=true;
+    mark('seed');await record('seed_attempt',{manifest,operationIds:ids});signal.throwIfAborted();seedAttempted=true;
+    // Like retirement/cleanup, a started SQL mutator must drain before pool
+    // close or security revocation. This driver cannot be cancelled mid-COMMIT.
+    credentials=await options.driver.seed();report.seeded=true;
+    if(signal.aborted){forgetCredentials(credentials);report.uncertain=true;signal.throwIfAborted();}
     ensure(credentials?.length===1&&credentials[0].id===actor.id&&credentials[0].email===actor.email&&credentials[0].role==='owner'
       &&credentials[0].organizationId===org.id&&typeof credentials[0].password==='string'&&credentials[0].password.length>=32);
     await record('seed_confirmed');
