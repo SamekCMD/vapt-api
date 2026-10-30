@@ -5,9 +5,43 @@ import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {withLocalDatabase} from '../src/modules/tenancy/pg-test-support.ts';
 import {buildPublicCatalog} from '../src/modules/catalog/repository.ts';
-import {createProductionCatalogWriterFixtureDriver} from './tenant-preview-fixtures.mjs';
+import {createProductionCatalogWriterFixtureDriver,restoreProductionCatalogWriterFixtureDriver} from './tenant-preview-fixtures.mjs';
 const feature=async(image=false)=>{const m=await import('./catalog-writer-retirement.mjs').catch(()=>({}));const f=image?m.retireProductionCatalogImageFixture:m.retireProductionCatalogWriterFixture;assert.equal(typeof f,'function','scoped retirement missing');return f;};
 const names=['create','patch','private','mixed','delete','rebuild'];
+for(const effect of ['account_preferences','restaurant_activation_progress']){
+  async function addEffect(f){
+    if(effect==='account_preferences')await f.pool.query('insert into public.account_preferences(user_id,organization_id,restaurant_id) values($1,$2,$3)',[f.u.id,f.manifest.organizations[0].id,f.r.id]);
+    else await f.pool.query("insert into public.restaurant_activation_progress(restaurant_id,module,completed_by) values($1,'menu',$2)",[f.r.id,f.u.id]);
+  }
+  test(`retirement preserves unexpected ${effect} before any catalog write`,async()=>scenario(async f=>{
+    await addEffect(f);await assert.rejects(()=>f.retire(f.options));assert.equal(f.writes.length,0);
+    assert.equal((await f.pool.query(`select count(*)::int n from public.${effect}`)).rows[0].n,1);
+  },{image:true}));
+  test(`restored cleanup refuses to cascade-delete unexpected ${effect}`,async()=>scenario(async f=>{
+    await f.retire(f.options);await addEffect(f);
+    const restored=await restoreProductionCatalogWriterFixtureDriver({ownerUrl:'postgresql://neondb_owner:synthetic-only@ep-holy-wildflower-b6vtv1dd.c-2.sa-east-1.aws.neon.tech/vapt?sslmode=verify-full',tag:f.manifest.tag,manifest:f.manifest,createPool:()=>f.adapter});
+    try{await assert.rejects(restored.cleanup());assert.equal((await f.pool.query(`select count(*)::int n from public.${effect}`)).rows[0].n,1);assert.equal((await f.pool.query('select count(*)::int n from public.restaurants where id=$1',[f.r.id])).rows[0].n,1);}
+    finally{await restored.close();}
+  },{image:true}));
+}
+test('a journal-restored fixture cleans the actual existing identities only after catalog retirement and never reseeds',async()=>{
+  await scenario(async({pool,adapter,manifest,options,retire})=>{
+    await retire(options);
+    const restored=await restoreProductionCatalogWriterFixtureDriver({ownerUrl:'postgresql://neondb_owner:synthetic-only@ep-holy-wildflower-b6vtv1dd.c-2.sa-east-1.aws.neon.tech/vapt?sslmode=verify-full',tag:manifest.tag,manifest,createPool:()=>adapter});
+    try{
+      await assert.rejects(restored.seed());assert.deepEqual(restored.identifiers(),manifest);assert.deepEqual(await restored.cleanup(),{rows:0});
+      const residue=(await pool.query('select ((select count(*) from better_auth."user" where id=$1)+(select count(*) from public.organizations where id=$2)+(select count(*) from public.restaurants where id=$3))::int n',[manifest.users[0].id,manifest.organizations[0].id,manifest.restaurants[0].id])).rows[0];assert.equal(residue.n,0);
+    }finally{await restored.close();}
+  },{image:true});
+});
+test('a restored fixture detects actual ownership marker drift before deleting the existing restaurant',async()=>{
+  await scenario(async({pool,adapter,manifest,options,retire})=>{
+    await retire(options);await pool.query('update public.restaurants set slug=$2 where id=$1',[manifest.restaurants[0].id,manifest.tag+'-changed']);
+    const restored=await restoreProductionCatalogWriterFixtureDriver({ownerUrl:'postgresql://neondb_owner:synthetic-only@ep-holy-wildflower-b6vtv1dd.c-2.sa-east-1.aws.neon.tech/vapt?sslmode=verify-full',tag:manifest.tag,manifest,createPool:()=>adapter});
+    try{await assert.rejects(restored.cleanup());assert.equal((await pool.query('select count(*)::int n from public.restaurants where id=$1',[manifest.restaurants[0].id])).rows[0].n,1);}
+    finally{await restored.close();}
+  },{image:true});
+});
 async function scenario(work,{image=false}={}){
   const retire=await feature(image);
   await withLocalDatabase(async pool=>{

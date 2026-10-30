@@ -14,7 +14,23 @@ export function createProductionTenantFixtureDriver(options={}){
 export function createProductionCatalogWriterFixtureDriver(options={}){
   return createTenantFixtureDriverAt(options,'ep-holy-wildflower-b6vtv1dd.c-2.sa-east-1.aws.neon.tech',/^catalog-writer-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,true);
 }
-async function createTenantFixtureDriverAt({ownerUrl,tag,createPool=options=>new Pool(options),hash=hashPassword},host,tagPattern,catalogWriter=false){
+// Recovery of a reconciled, journal-owned fixture only. It cannot seed or mint
+// credentials. The unchanged cleanup path rechecks ownership and all effects
+// under locks before deleting anything; the controller must retire R2 first.
+export async function restoreProductionCatalogWriterFixtureDriver(options={}){
+  const m=structuredClone(options.manifest),uuid=v=>typeof v==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(v);
+  const fields=(v,want)=>v&&Object.keys(v).sort().join(',')===want;
+  ensure(fields(m,'members,organizations,restaurants,tag,users')&&m.tag===options.tag
+    &&m.users?.length===1&&m.organizations?.length===1&&m.restaurants?.length===1&&m.members?.length===1);
+  const [u]=m.users,[o]=m.organizations,[r]=m.restaurants;
+  ensure(fields(u,'email,id,name')&&fields(o,'created_by,id,name')&&fields(r,'id,name,organization_id,owner_id,slug')
+    &&[u.id,o.id,r.id].every(uuid)&&new Set([u.id,o.id,r.id]).size===3
+    &&u.name===m.tag&&u.email===m.tag+'-0@example.invalid'&&o.name===m.tag&&o.created_by===u.id
+    &&r.name===m.tag&&r.slug===m.tag&&r.owner_id===u.id&&r.organization_id===o.id
+    &&isDeepStrictEqual(m.members,[{organization_id:o.id,user_id:u.id,role:'owner',status:'active'}]));
+  return createTenantFixtureDriverAt(options,'ep-holy-wildflower-b6vtv1dd.c-2.sa-east-1.aws.neon.tech',/^catalog-writer-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,true,m);
+}
+async function createTenantFixtureDriverAt({ownerUrl,tag,createPool=options=>new Pool(options),hash=hashPassword},host,tagPattern,catalogWriter=false,restored){
   let url;try{url=new URL(ownerUrl);}catch{throw Error('Tenant preview fixture target failed');}
   ensure(['postgres:','postgresql:'].includes(url.protocol)&&url.hostname===host
     &&url.pathname==='/vapt'&&url.username==='neondb_owner'&&url.password&&['','5432'].includes(url.port)&&!url.hash
@@ -25,10 +41,10 @@ async function createTenantFixtureDriverAt({ownerUrl,tag,createPool=options=>new
   ownerUrl=undefined;url=undefined;
   try{const row=(await pool.query('select current_database() as database,current_user as role')).rows[0];ensure(row?.database==='vapt'&&row.role==='neondb_owner');}
   catch{await pool.end();throw Error('Tenant preview fixture identity failed');}
-  const users=(catalogWriter?['owner']:['owner','admin','manager','staff','owner']).map((role,index)=>({id:randomUUID(),name:tag,email:`${tag}-${index}@example.invalid`,role}));
-  const organizations=[{id:randomUUID(),name:tag,created_by:users[0].id},...(catalogWriter?[]:[{id:randomUUID(),name:tag,created_by:users[4].id}])];
-  const members=users.map((user,index)=>({organization_id:organizations[index===4?1:0].id,user_id:user.id,role:user.role,status:'active'}));
-  const restaurants=(catalogWriter?[0]:[0,0,1]).map((org,index)=>({id:randomUUID(),organization_id:organizations[org].id,owner_id:organizations[org].created_by,name:tag,slug:catalogWriter?tag:`${tag}-${index}`}));
+  const users=restored?restored.users.map(v=>({...v,role:'owner'})):(catalogWriter?['owner']:['owner','admin','manager','staff','owner']).map((role,index)=>({id:randomUUID(),name:tag,email:`${tag}-${index}@example.invalid`,role}));
+  const organizations=restored?restored.organizations:[{id:randomUUID(),name:tag,created_by:users[0].id},...(catalogWriter?[]:[{id:randomUUID(),name:tag,created_by:users[4].id}])];
+  const members=restored?restored.members:users.map((user,index)=>({organization_id:organizations[index===4?1:0].id,user_id:user.id,role:user.role,status:'active'}));
+  const restaurants=restored?restored.restaurants:(catalogWriter?[0]:[0,0,1]).map((org,index)=>({id:randomUUID(),organization_id:organizations[org].id,owner_id:organizations[org].created_by,name:tag,slug:catalogWriter?tag:`${tag}-${index}`}));
   const userIds=users.map(v=>v.id),orgIds=organizations.map(v=>v.id),restaurantIds=restaurants.map(v=>v.id);
   const residueSql=`SELECT (
     (select count(*) from public.organizations where id=ANY($1::uuid[]))+
@@ -47,7 +63,7 @@ async function createTenantFixtureDriverAt({ownerUrl,tag,createPool=options=>new
     (select count(*) from better_auth.account where "userId"=ANY($2::uuid[]))+
     (select count(*) from better_auth.session where "userId"=ANY($2::uuid[]))
   )::integer AS residue`;
-  let attempted=false,seeded=false,cleaned=false;
+  let attempted=Boolean(restored),seeded=Boolean(restored),cleaned=false;
   return{
     identifiers(){return structuredClone({tag,users:users.map(({role,...v})=>v),organizations,restaurants,members});},
     async seed(){
@@ -96,8 +112,10 @@ async function createTenantFixtureDriverAt({ownerUrl,tag,createPool=options=>new
           const extra=(await client.query(`SELECT ((select count(*) from public.menu_items where restaurant_id=ANY($1::uuid[]))+
             (select count(*) from public.orders where restaurant_id=ANY($1::uuid[]))+
             (select count(*) from public.table_sessions where restaurant_id=ANY($1::uuid[]))+
+            (select count(*) from public.account_preferences where restaurant_id=ANY($1::uuid[]) or user_id=ANY($2::uuid[]) or organization_id=ANY($3::uuid[]))+
+            (select count(*) from public.restaurant_activation_progress where restaurant_id=ANY($1::uuid[]) or completed_by=ANY($2::uuid[]))+
             (select count(*) from public.catalog_publication_revisions where restaurant_id=ANY($1::uuid[]))+
-            (select count(*) from better_auth.session where "userId"=ANY($2::uuid[])))::int AS catalog_fixture_effects`,[restaurantIds,userIds])).rows[0];
+            (select count(*) from better_auth.session where "userId"=ANY($2::uuid[])))::int AS catalog_fixture_effects`,[restaurantIds,userIds,orgIds])).rows[0];
           ensure(extra?.catalog_fixture_effects===0);
         }
         // Unexpected effects are not ours to discard just because their tenant

@@ -76,6 +76,8 @@ async function retireProductionCatalogFixture(options,image){
       (select count(*) from public.menu_items where restaurant_id=$2)+
       (select count(*) from public.orders where restaurant_id=$2)+
       (select count(*) from public.table_sessions where restaurant_id=$2)+
+      (select count(*) from public.account_preferences where user_id=$1 or restaurant_id=$2 or organization_id=$3)+
+      (select count(*) from public.restaurant_activation_progress where restaurant_id=$2 or completed_by=$1)+
       (select count(*) from public.onboarding_intents where actor_id=$1 or restaurant_id=$2 or organization_id=$3)+
       (select count(*) from public.billing_email_outbox where organization_id=$3)+
       (select count(*) from public.billing_provider_events where organization_id=$3)+

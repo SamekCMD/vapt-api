@@ -4,12 +4,22 @@ const id='11111111-1111-4111-8111-111111111111',key=id+'/branding/22222222-2222-
 const feature=async()=>{const m=await import('./catalog-image-readback.mjs').catch(()=>({}));assert.equal(typeof m.verifyProductionCatalogImageAbsent,'function','exact image readback missing');return m.verifyProductionCatalogImageAbsent;};
 function fixture(work){
   const calls=[],options={restaurantId:id,objectKey:key,accessToken:'synthetic-oauth-only-never-a-real-secret',fetcher:async(url,init)=>{
-    calls.push({url,init});assert.equal(url,'https://api.cloudflare.com/client/v4/accounts/3ce69408aa5112617a282957aba71932/r2/buckets/vapt-assets-production/objects/'+encodeURIComponent(key));
+    calls.push({url,init});assert.equal(url,'https://api.cloudflare.com/client/v4/accounts/3ce69408aa5112617a282957aba71932/r2/buckets/vapt-assets-production/objects/11111111-1111-4111-8111-111111111111/branding/22222222-2222-4222-8222-222222222222');
     assert.equal(init.method,'GET');assert.equal(init.redirect,'error');assert.equal(init.credentials,'omit');assert.ok(init.signal);
     assert.deepEqual(init.headers,{Authorization:'Bearer synthetic-oauth-only-never-a-real-secret'});return work(init.signal);
   }};return{calls,options};
 }
 const missing=()=>Response.json({success:false,errors:[{code:10007,message:'The specified key does not exist.'}],messages:[],result:null},{status:404});
+test('literal path separators address the existing object instead of accepting an encoded-key 404 as absence',async()=>{
+  const verify=await feature();let requests=0;
+  const result=await verify({restaurantId:id,objectKey:key,accessToken:'synthetic-oauth-only-never-a-real-secret',fetcher:async url=>{
+    requests++;
+    if(url==='https://api.cloudflare.com/client/v4/accounts/3ce69408aa5112617a282957aba71932/r2/buckets/vapt-assets-production/objects/11111111-1111-4111-8111-111111111111/branding/22222222-2222-4222-8222-222222222222')return new Response('existing bytes');
+    if(url.includes('%2F'))return missing();
+    throw Error('unexpected target');
+  }});
+  assert.equal(result.absent,false,'404 for the wrong encoded key must not certify physical deletion');assert.equal(requests,1);
+});
 test('only an authenticated exact-object 404 NoSuchKey confirms physical absence',async()=>{
   const verify=await feature(),f=fixture(missing);assert.deepEqual(await verify(f.options),{absent:true,bucket:'vapt-assets-production',objectKey:key});assert.equal(f.calls.length,1);
 });

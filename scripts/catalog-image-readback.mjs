@@ -20,7 +20,9 @@ export async function verifyProductionCatalogImageAbsent(options={}){
       });
     }
     response=await wait(async()=>{
-      const result=await fetcher('https://api.cloudflare.com/client/v4/accounts/3ce69408aa5112617a282957aba71932/r2/buckets/vapt-assets-production/objects/'+encodeURIComponent(objectKey),
+      // The validated UUID/branding/UUID segments need no escaping. R2 REST
+      // requires literal separators: %2F can address a different object key.
+      const result=await fetcher('https://api.cloudflare.com/client/v4/accounts/3ce69408aa5112617a282957aba71932/r2/buckets/vapt-assets-production/objects/'+objectKey,
         {method:'GET',credentials:'omit',redirect:'error',signal,headers:{Authorization:'Bearer '+token}});
       if(signal.aborted){void result.body?.cancel().catch(()=>{});signal.throwIfAborted();}return result;
     });
