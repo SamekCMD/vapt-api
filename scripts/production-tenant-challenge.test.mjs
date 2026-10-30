@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import {createRequire} from 'node:module';
+const {JSDOM}=createRequire(new URL('../../../package.json',import.meta.url))('jsdom');
 
 async function setup(t,factory='createProductionTenantChallenge'){
   const m=await import('./production-tenant-challenge.mjs').catch(()=>({}));
@@ -11,6 +13,36 @@ async function setup(t,factory='createProductionTenantChallenge'){
   const request=(path,body,extra={})=>fetch(c.url+path,{method:body===undefined?'GET':'POST',headers:{Origin:c.url,'X-Vapt-Nonce':nonce,...(body===undefined?{}:{'Content-Type':'application/json'}),...extra},...(body===undefined?{}:{body:JSON.stringify(body)})});
   return{c,html,request};
 }
+async function page(t,c,{holdStart=false}={}){
+  const html=await(await fetch(c.url)).text(),dom=new JSDOM(html,{url:c.url,runScripts:'outside-only'}),calls=[];
+  let release;const held=new Promise(ok=>{release=ok;});t.after(()=>{release();dom.window.close();});
+  dom.window.setTimeout=()=>0;
+  dom.window.fetch=async(path,init)=>{calls.push(path);if(holdStart&&path==='/start')await held;return fetch(c.url+path,{...init,headers:{Origin:c.url,...init.headers}});};
+  dom.window.eval(dom.window.document.querySelector('script[nonce]').textContent);
+  return{window:dom.window,button:dom.window.document.getElementById('start'),calls,release,tick:()=>dom.window.eval('tick()')};
+}
+test('a fresh challenge page cannot start until its first server-state read completes',async t=>{
+  const {c}=await setup(t,'createProductionCatalogChallenge'),p=await page(t,c);
+  assert.equal(p.button.disabled,true);await p.tick();assert.equal(p.button.disabled,false);
+});
+test('reloading an already running challenge keeps Start disabled and never sends a second start',async t=>{
+  const {c,request}=await setup(t,'createProductionCatalogChallenge');await request('/start',{});
+  const p=await page(t,c);assert.equal(p.button.disabled,true);await p.tick();assert.equal(p.button.disabled,true);
+  p.button.click();assert.equal(p.calls.includes('/start'),false);assert.equal((await(await request('/status')).json()).state,'running');
+});
+test('a status read while the initial Start request is pending cannot reenable the button',async t=>{
+  const {c}=await setup(t,'createProductionCatalogChallenge'),p=await page(t,c,{holdStart:true});await p.tick();
+  p.button.click();await p.tick();assert.equal(p.button.disabled,true);p.button.click();assert.equal(p.calls.filter(v=>v==='/start').length,1);
+  p.release();await c.waitForStart();await p.tick();assert.equal(p.button.disabled,true);
+});
+test('a reloaded finished page keeps Start disabled without sending a request',async t=>{
+  const {c,request}=await setup(t,'createProductionCatalogChallenge');await request('/start',{});c.complete({ok:true,cleaned:true});
+  const p=await page(t,c);await p.tick();assert.equal(p.button.disabled,true);p.button.click();assert.equal(p.calls.includes('/start'),false);
+});
+test('losing local status after waiting was observed disables Start instead of permitting an unconfirmed run',async t=>{
+  const {c}=await setup(t,'createProductionCatalogChallenge'),p=await page(t,c);await p.tick();assert.equal(p.button.disabled,false);
+  p.window.fetch=async()=>new Response(null,{status:503});await p.tick();assert.equal(p.button.disabled,true);
+});
 test('loopback start is explicit and once-only; five challenges reach only the pending callback, never status',async t=>{
   const {c,request,html}=await setup(t);let started=false;c.waitForStart().then(()=>{started=true;});
   assert.equal(new URL(c.url).hostname,'127.0.0.1');assert.equal(started,false);

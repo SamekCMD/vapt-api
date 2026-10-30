@@ -9,6 +9,14 @@ const endpoint='vapt-assets-production.3ce69408aa5112617a282957aba71932.r2.cloud
 const publicOrigin='https://pub-a1c726374f434a7d8c2e2324d61a4de7.r2.dev';
 const image=Buffer.from('UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEADsD+JaQAA3AAAAAA','base64');
 export async function runProductionCatalogImageLeaseProbe(options={}){
+  return runImageProbe(options,false);
+}
+// Separate fixed profile for the attachment cycle. It cannot retire the lease
+// before publication; the older full-lifecycle export stays unchanged.
+export async function runProductionCatalogImageUploadProbe(options={}){
+  return runImageProbe(options,true);
+}
+async function runImageProbe(options,uploadOnly){
   const report={ok:false,requests:0,checks:0,imageBytes:image.length,uploadVerified:false,leaseRetired:false,staleWritesBlocked:0,uncertain:false,stage:'input'};
   let phase='input',cookie,descriptor,signal;
   const check=value=>{assert(value);report.checks++;};
@@ -94,6 +102,7 @@ export async function runProductionCatalogImageLeaseProbe(options={}){
     phase='upload_verification';await verifyUploaded();report.uploadVerified=true;report.uncertain=false;
     phase='stale_upload_denial';report.uncertain=true;await put(412);report.staleWritesBlocked++;
     await verifyUploaded();report.uncertain=false;
+    if(uploadOnly){report.ok=true;report.stage='uploaded';return report;}
     phase='retirement';report.uncertain=true;await api(path+'?objectKey='+encodeURIComponent(d.objectKey),'DELETE',undefined,undefined,204);
     phase='retirement_verification';check((await api(path+'/upload','POST',input,ids.upload,410))?.error?.code==='menu_image_upload_expired');
     phase='resurrection_denial';await put(412);report.staleWritesBlocked++;report.leaseRetired=true;

@@ -69,8 +69,44 @@ async function imageFixture(){
     assert.deepEqual(value.operationIds,{rebuild:ids.rebuild});assert.equal(value.probe.receipts.length,1);assert.equal(value.imageProbe.ok,true);assert.equal(value.imageProbe.objectKey,key);
     return{...await retire({...value,operationIds}),imageAbsentConfirmed:!fault.missingReadback};
   };
-  return{...f,network,fault};
+  return{...f,network,fault,retireBase:retire};
 }
+async function referenceFixture(){
+  const f=await imageFixture(),root='/restaurants/'+r,path=root+'/branding/image',publicUrl='https://pub-a1c726374f434a7d8c2e2324d61a4de7.r2.dev/'+r+'/branding/'+item;
+  Object.assign(f.options.operationIds,{attach:operationIds.create,detach:operationIds.patch,advance:operationIds.mixed});
+  const ready=(n,v)=>({receipt:{...receipt('rebuild',v),operationId:f.options.operationIds[n]}}),scope={id:r,name:tag,slug:tag,description:null,logoUrl:null};
+  f.steps.splice(-2,2);
+  f.steps.push(['GET',root,200,scope],['GET',root+'/menu-items',200,[]],['PATCH',root,200,ready('attach','16')],['GET',root,200,{...scope,logoUrl:publicUrl}],
+    ['DELETE',path,409,{error:{code:'menu_image_cleanup_pending'}}],['PATCH',root,200,ready('detach','17')],['GET',root,200,scope],
+    ['DELETE',path,409,{error:{code:'menu_image_cleanup_pending'}}],['POST',root+'/catalog/rebuild',200,ready('advance','18')],['GET',root,200,scope],['DELETE',path,204,null]);
+  let absent=false;const fetcher=f.options.fetcher;
+  f.options.fetcher=async(...args)=>{const result=await fetcher(...args);if(args[1].method==='DELETE'&&result.status===204)absent=true;return result;};
+  f.options.storage.verifyImage=async({objectKey})=>({absent,bucket:'vapt-assets-production',objectKey});
+  f.options.storage.readRetained=async({version,previousVersion})=>[version,previousVersion].map(v=>({version:v,catalog:{restaurant:{id:r,name:tag,slug:tag,logoUrl:v==='16'?publicUrl:null},items:[]}}));
+  f.options.storage.retire=async value=>{
+    assert.equal(value.probe.receipts.length,4);assert.deepEqual(Object.keys(value.operationIds).sort(),['advance','attach','detach','rebuild']);
+    assert.equal(value.imageProbe.protectedDeletions,2);assert.equal(value.imageProbe.itemId,'branding');assert.equal(value.imageProbe.imageAbsentConfirmed,true);
+    return{...await f.retireBase({...value,operationIds}),imageAbsentConfirmed:true};
+  };
+  return f;
+}
+const referenceFeature=async()=>{const m=await import('./catalog-writer-gate.mjs');assert.equal(typeof m.runProductionCatalogBrandingReferenceGate,'function','reference lifecycle missing');return m.runProductionCatalogBrandingReferenceGate;};
+test('branding reference lifecycle composes baseline, upload-only and protection before logout and guarded cleanup',async()=>{
+  const run=await referenceFeature(),f=await referenceFixture(),result=await run(f.options);
+  assert.equal(result.ok,true);assert.equal(result.cleaned,true);assert.equal(result.uploadProbe.stage,'uploaded');assert.equal(result.imageProbe.protectedDeletions,2);
+  assert.equal(result.imageProbe.receipts.length,3);assert.equal(result.authRequests,4);assert.equal(f.steps.length,0);assert.equal(f.network.filter(([m])=>m==='PUT').length,2);
+  assert.equal(f.credentials[0].password,'');assert.equal(f.events.filter(v=>v==='revoke').length,1);
+  assert.doesNotMatch(JSON.stringify(result),/X-Amz|synthetic-password|synthetic-session|server-response-secret/);
+});
+for(const kind of ['before-reference','retained-unavailable','wrong-absence','missing-ports'])test(`reference lifecycle ${kind} never cleans unproven work and still releases resources`,async()=>{
+  const run=await referenceFeature(),f=await referenceFixture();
+  if(kind==='before-reference'){const pre=f.options.preflight;f.options.preflight=async(...args)=>{await pre(...args);if(args[0]==='before_reference')throw Error('private preflight diagnostic');};}
+  if(kind==='retained-unavailable')f.options.storage.readRetained=async()=>{throw Error('private store diagnostic');};
+  if(kind==='wrong-absence')f.options.storage.verifyImage=async({objectKey})=>({absent:true,bucket:'vapt-assets-production',objectKey});
+  if(kind==='missing-ports')delete f.options.storage.readRetained;
+  const result=await run(f.options);assert.equal(result.ok,false);assert.equal(result.cleaned,false);assert.equal(f.state().retired,false);assert.equal(f.state().released,true);assert.equal(f.state().closed,true);
+  assert.equal(f.events.filter(v=>v==='revoke').length,1);if(kind==='missing-ports')assert.equal(f.network.length,0);else assert.equal(result.sessionRevoked,true);
+});
 const imageFeature=async()=>{const m=await import('./catalog-writer-gate.mjs');assert.equal(typeof m.runProductionCatalogImageGate,'function','image lifecycle not integrated');return m.runProductionCatalogImageGate;};
 test('image gate uses one baseline and real lease probe before logout, retirement, cleanup and revocation',async()=>{
   const run=await imageFeature(),f=await imageFixture(),result=await run(f.options);

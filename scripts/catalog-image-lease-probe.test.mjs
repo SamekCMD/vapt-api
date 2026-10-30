@@ -68,6 +68,17 @@ for(const [name,change]of [
   assert.equal(result.ok,false);assert.equal(result.uncertain,true);assert.equal(f.calls.some(c=>c.method==='PUT'||c.method==='DELETE'),false);assert.doesNotMatch(JSON.stringify(result),/X-Amz|do-not-forward/);
 });
 function keyForForeign(){return `77777777-7777-4777-8777-777777777777/branding/${object}`;}
+for(const target of ['branding',item])test(`upload-only ${target==='branding'?'logo':'product'} proof stops before retirement and binds the verified lease`,async()=>{
+  const m=await import('./catalog-image-lease-probe.mjs');assert.equal(typeof m.runProductionCatalogImageUploadProbe,'function','upload-only proof missing');
+  const f=await fixture(target),r=await m.runProductionCatalogImageUploadProbe(f.options);
+  assert.equal(r.ok,true);assert.equal(r.stage,'uploaded');assert.equal(r.uploadVerified,true);assert.equal(r.uncertain,false);assert.equal(r.leaseRetired,false);assert.equal(r.staleWritesBlocked,1);
+  assert.equal(r.objectKey,f.key);assert.equal(r.leaseId,operationIds.upload);assert.equal(f.calls.filter(c=>c.method==='PUT').length,2);assert.equal(f.calls.some(c=>c.method==='DELETE'),false);
+});
+test('a lost upload-only PUT response remains uncertain without retry or retirement',async()=>{
+  const m=await import('./catalog-image-lease-probe.mjs');assert.equal(typeof m.runProductionCatalogImageUploadProbe,'function');
+  const f=await fixture();f.fault.lostPut=true;const r=await m.runProductionCatalogImageUploadProbe(f.options);
+  assert.equal(r.ok,false);assert.equal(r.uncertain,true);assert.equal(f.calls.filter(c=>c.method==='PUT').length,1);assert.equal(f.calls.some(c=>c.method==='DELETE'),false);
+});
 for(const name of ['lostPut','staleAccepted','changedKey','lostRetire'])test(`${name} stops without transport retries or subsequent cleanup`,async()=>{
   const run=await feature(),f=await fixture();f.fault[name]=true;const result=await run(f.options);
   assert.equal(result.ok,false);assert.equal(result.uncertain,true);assert.equal(f.calls.filter(c=>c.method==='DELETE').length,name==='lostRetire'?1:0);

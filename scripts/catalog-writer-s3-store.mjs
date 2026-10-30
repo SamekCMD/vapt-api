@@ -28,7 +28,12 @@ export function createProductionCatalogImageS3Store(options={}){
 export function createProductionCatalogBrandingReferenceS3Store(options={}){
   return createProductionCatalogS3Store(options,4,64);
 }
-function createProductionCatalogS3Store(options,count,maxRequests=32){
+// Each intermediate read knows only current/previous, never future sequence
+// values. Six GETs, no write capability, closed by the enclosing phase.
+export function createProductionCatalogRetainedReadS3Store(options={}){
+  return createProductionCatalogS3Store(options,2,6,true);
+}
+function createProductionCatalogS3Store(options,count,maxRequests=32,readOnly=false){
   const {restaurantId,tag,expiresAt,requestHandler}=options,versions=structuredClone(options.versions);
   ensure(uuid(restaurantId)&&typeof tag==='string'&&tag.startsWith('catalog-writer-')&&uuid(tag.slice(15))
     &&Array.isArray(versions)&&versions.length===count&&versions.every((v,i)=>version(v)&&(i===0||BigInt(v)>BigInt(versions[i-1])))
@@ -74,7 +79,7 @@ function createProductionCatalogS3Store(options,count,maxRequests=32){
     },
     async put(key,body,{ifMatch,signal:callerSignal}={}){
       try{
-        admitted(key);ensure(key!==manifestKey&&typeof body==='string'&&Buffer.byteLength(body)<=4096&&etag(ifMatch));
+        admitted(key);ensure(!readOnly&&key!==manifestKey&&typeof body==='string'&&Buffer.byteLength(body)<=4096&&etag(ifMatch));
         const expected=key===slugKey?{restaurantId,version:versions.at(-1),canonicalSlug:tag,tombstone:true}:{retired:true,version:snapshots.get(key)};
         ensure(isDeepStrictEqual(JSON.parse(body),expected));requests++;
         const value=await client.send(new PutObjectCommand({Bucket:'vapt-catalog-production',Key:key,Body:body,ContentType:'application/json',IfMatch:ifMatch}),{abortSignal:signal(callerSignal)});

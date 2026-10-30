@@ -14,6 +14,16 @@ function fixture(handler){
 }
 const response=(body,statusCode=200,headers={})=>({statusCode,headers:{etag,'content-type':'application/json',...headers},body:Readable.from([Buffer.from(body)])});
 
+test('a phase-local retained reader has exactly two known revisions and six GETs, never PUT capability',async()=>{
+  const m=await import('./catalog-writer-s3-store.mjs');assert.equal(typeof m.createProductionCatalogRetainedReadS3Store,'function','read-only phase transport missing');
+  const f=fixture(async()=>response('{}')),store=m.createProductionCatalogRetainedReadS3Store({...f.options,versions:['11','12']});
+  try{
+    await assert.rejects(()=>store.put(prefix+'snapshots/12.json','{"retired":true,"version":"12"}',{ifMatch:etag}));
+    await assert.rejects(()=>store.get(prefix+'snapshots/13.json'));
+    for(let i=0;i<6;i++)await store.get(prefix+'snapshots/12.json');await assert.rejects(()=>store.get(prefix+'snapshots/12.json'));assert.equal(f.requests.length,6);
+  }finally{store.close();}
+});
+
 test('four-version branding reference transport signs only its six owned keys and exact CAS fences',async()=>{
   const m=await import('./catalog-writer-s3-store.mjs');assert.equal(typeof m.createProductionCatalogBrandingReferenceS3Store,'function','four-version transport missing');
   const f=fixture(async()=>response('{}')),store=m.createProductionCatalogBrandingReferenceS3Store({...f.options,versions:['11','12','13','14']});

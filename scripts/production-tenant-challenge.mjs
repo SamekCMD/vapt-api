@@ -18,19 +18,20 @@ async function createChallenge({roles,title,intro}){
   let origin,host;
   const html=()=>`<!doctype html><html lang="pt-BR"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="vapt-nonce" content="${nonce}"><title>Vapt — validação de produção</title>
 <style nonce="${nonce}">body{font:18px system-ui;max-width:700px;margin:60px auto;padding:24px}button{padding:14px;font:inherit}#challenge{margin:24px 0}</style>
-<h1>${title}</h1><p>${intro} Nenhum email ou pagamento será enviado. Mantenha esta aba aberta e conclua os desafios quando solicitados.</p><button id="start">Iniciar testes</button><p id="state">Aguardando início.</p><div id="challenge"></div>
+<h1>${title}</h1><p>${intro} Nenhum email ou pagamento será enviado. Mantenha esta aba aberta e conclua os desafios quando solicitados.</p><button id="start" disabled>Iniciar testes</button><p id="state">Aguardando início.</p><div id="challenge"></div>
 <script nonce="${nonce}">
 const nonce=document.querySelector('meta[name=vapt-nonce]').content,button=document.getElementById('start'),label=document.getElementById('state');
-let widget,active=-1,ready=false,busy=false,done=false;
+let widget,active=-1,ready=false,busy=false,done=false,starting=false;
 async function request(path,body){const response=await fetch(path,{method:body===undefined?'GET':'POST',headers:{'X-Vapt-Nonce':nonce,...(body===undefined?{}:{'Content-Type':'application/json'})},...(body===undefined?{}:{body:JSON.stringify(body)})});if(!response.ok)throw Error('local');return response;}
-button.onclick=async()=>{button.disabled=true;try{await request('/start',{});}catch{label.textContent='Não foi possível iniciar. Avise no chat.';}};
+button.onclick=async()=>{starting=true;button.disabled=true;try{await request('/start',{});}catch{label.textContent='Não foi possível iniciar. Avise no chat.';}};
 window.vaptTurnstileReady=()=>{ready=true;};
 async function tick(){try{const s=await(await request('/status')).json();
+button.disabled=starting||s.state!=='waiting';
 if(s.state==='finished'){done=true;button.disabled=true;if(widget!==undefined){turnstile.remove(widget);widget=undefined;}label.textContent=s.outcome.ok&&s.outcome.cleaned?'Validação concluída; dados sintéticos removidos.':'Validação encerrada. Consulte o resultado no chat.';return;}
 label.textContent=s.pending?'Login '+(s.pending.index+1)+' de ${roles.length} ('+s.pending.role+'): conclua o desafio abaixo.':s.state==='waiting'?'Aguardando início.':'Testes em andamento; aguarde o próximo desafio.';
 if(s.pending&&ready&&!busy&&s.pending.index!==active){if(widget!==undefined)turnstile.remove(widget);active=s.pending.index;const index=active;
 widget=turnstile.render('#challenge',{sitekey:'0x4AAAAAAEhvIktjmb6yaq09',callback:async token=>{busy=true;try{await request('/challenge',{index,token});}catch{label.textContent='Desafio não recebido. Avise no chat.';}finally{token=undefined;busy=false;}},'expired-callback':()=>{active=-1;},'error-callback':()=>{label.textContent='O desafio não carregou. Avise no chat.';}});}
-}catch{label.textContent='Controlador local encerrado. Consulte o chat.';done=true;}finally{if(!done)setTimeout(tick,2000);}}tick();
+}catch{button.disabled=true;label.textContent='Controlador local encerrado. Consulte o chat.';done=true;}finally{if(!done)setTimeout(tick,2000);}}tick();
 </script><script src="https://challenges.cloudflare.com/turnstile/v0/api.js?onload=vaptTurnstileReady&render=explicit" async defer></script></html>`;
   const server=createServer(async(req,res)=>{
     const send=(code,value)=>{res.writeHead(code,{'Content-Type':typeof value==='string'?'text/html; charset=utf-8':'application/json','Cache-Control':'no-store','Referrer-Policy':'no-referrer','X-Content-Type-Options':'nosniff','Content-Security-Policy':`default-src 'none'; script-src 'nonce-${nonce}' https://challenges.cloudflare.com; style-src 'nonce-${nonce}'; frame-src https://challenges.cloudflare.com; connect-src 'self' https://challenges.cloudflare.com; base-uri 'none'; frame-ancestors 'none'; form-action 'none'`});res.end(value===undefined?'':typeof value==='string'?value:JSON.stringify(value));};
