@@ -9,7 +9,7 @@ const feature=async()=>{const m=await import('./catalog-image-reference-probe.mj
 function fixture(itemId='branding'){
   const objectKey=restaurantId+'/'+itemId+'/'+objectId,publicUrl=origin+'/'+objectKey,root='/restaurants/'+restaurantId;
   const resource=itemId==='branding'?root:root+'/menu-items/'+itemId,imagePath=itemId==='branding'?root+'/branding/image':resource+'/image';
-  const calls=[],fault={},states=[],readbacks=[];let currentUrl=null,revision=9007199254740993n,mutations=0,deleted=false;
+  const calls=[],fault={},states=[],readbacks=[],privateReads=[];let currentUrl=null,revision=9007199254740993n,mutations=0,deleted=false;
   const targetItems=()=>itemId==='branding'?[]:[{id:itemId,restaurantId,name:tag+' image item',imageUrl:currentUrl}];
   const snapshot=v=>({version:String(v),catalog:{restaurant:{id:restaurantId,name:tag,slug:tag,logoUrl:itemId==='branding'?currentUrl:null},items:targetItems()}});
   states.push(snapshot(revision));
@@ -17,7 +17,15 @@ function fixture(itemId='branding'){
   const options={baseUrl:'https://api.vapt.app.br',restaurantId,itemId,tag,cookie,objectKey,publicUrl,baselineVersion:'9007199254740993',operationIds:structuredClone(operationIds),pace:async()=>{},waitPending:async()=>{},
     preflight:async()=>{},
     imageReadback:async input=>{readbacks.push(input);return{absent:deleted,bucket:'vapt-assets-production',objectKey};},
-    readRetained:async input=>{const values=structuredClone(states.slice(0,2));fault.retained?.(values,input);return values;},
+    readRetained:async input=>{
+      const values=structuredClone(states.slice(0,2));fault.retained?.(values,input);
+      const {readProductionCatalogImageReferences}=await import('./catalog-image-reference-readback.mjs');
+      const prefix=`catalog/v1/production/restaurants/${restaurantId}/`;
+      const objects=new Map([[`catalog/v1/production/slugs/${tag}.json`,{restaurantId,version:input.version,canonicalSlug:tag,tombstone:false}],
+        [prefix+'manifest.json',{restaurantId,version:input.version,canonicalSlug:tag,previousVersion:input.previousVersion}],
+        ...values.map(v=>[prefix+`snapshots/${v.version}.json`,v])]);
+      return readProductionCatalogImageReferences({...input,tag,store:{async get(key){privateReads.push(key);return objects.has(key)?{body:JSON.stringify(objects.get(key)),etag:'unchanged'}:null;}}});
+    },
     fetcher:async(url,init)=>{
       const u=new URL(url);calls.push({url,method:init.method,headers:{...init.headers},body:init.body});
       assert.equal(u.origin,'https://api.vapt.app.br');assert.equal(init.credentials,'omit');assert.equal(init.redirect,'error');assert(init.signal instanceof AbortSignal);
@@ -42,13 +50,15 @@ function fixture(itemId='branding'){
       const v=fault.regression?'9007199254740993':String(revision);
       return Response.json({receipt:receipt(id,v,fault.pendingForever?'committed':'ready'),result:{private:'must-not-escape'}},{status:fault.pendingForever?202:200});
     }};
-  return{options,calls,fault,readbacks,get mutations(){return mutations;},get deleted(){return deleted;}};
+  return{options,calls,fault,readbacks,privateReads,get mutations(){return mutations;},get deleted(){return deleted;}};
 }
 for(const profile of ['branding',item])test(`bounded ${profile==='branding'?'logo':'product'} reference cycle protects current and previous snapshots before retirement`,async()=>{
   const run=await feature(),f=fixture(profile),result=await run(f.options);
   assert.equal(result.ok,true);assert.equal(result.uncertain,false);assert.equal(result.protectedDeletions,2);assert.equal(result.imageAbsentConfirmed,true);
+  assert.equal(result.restaurantId,restaurantId);assert.equal(result.itemId,profile);assert.equal(result.objectKey,f.options.objectKey);assert.equal(result.baselineVersion,'9007199254740993');
   assert.deepEqual(result.receipts.map(r=>r.version),['9007199254740994','9007199254740995','9007199254740996']);
   assert.equal(f.mutations,3);assert.equal(f.deleted,true);assert.equal(f.calls.filter(c=>c.method==='DELETE').length,3);assert.equal(f.calls.some(c=>c.method==='PUT'),false);
+  assert.equal(f.privateReads.length,18,'the real readback helper validates six exact private objects per phase');
   assert.doesNotMatch(JSON.stringify(result),/synthetic-private|must-not-escape|private mutation/);
 });
 for(const [name,change] of [

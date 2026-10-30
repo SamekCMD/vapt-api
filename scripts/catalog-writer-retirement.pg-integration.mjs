@@ -6,8 +6,38 @@ import {randomUUID} from 'node:crypto';
 import {withLocalDatabase} from '../src/modules/tenancy/pg-test-support.ts';
 import {buildPublicCatalog} from '../src/modules/catalog/repository.ts';
 import {createProductionCatalogWriterFixtureDriver,restoreProductionCatalogWriterFixtureDriver} from './tenant-preview-fixtures.mjs';
-const feature=async(image=false)=>{const m=await import('./catalog-writer-retirement.mjs').catch(()=>({}));const f=image?m.retireProductionCatalogImageFixture:m.retireProductionCatalogWriterFixture;assert.equal(typeof f,'function','scoped retirement missing');return f;};
+const feature=async(image=false,reference=false)=>{const m=await import('./catalog-writer-retirement.mjs').catch(()=>({}));const f=reference?m.retireProductionCatalogBrandingReferenceFixture:image?m.retireProductionCatalogImageFixture:m.retireProductionCatalogWriterFixture;assert.equal(typeof f,'function','scoped retirement missing');return f;};
 const names=['create','patch','private','mixed','delete','rebuild'];
+test('four-version branding retirement fences only the owned catalog and enables guarded cleanup',async()=>scenario(async f=>{
+  const result=await f.retire(f.options);assert.equal(result.readbackConfirmed,true);assert.equal(result.imageAbsentConfirmed,true);assert.equal(result.keys.length,6);assert.equal(result.objectWrites,3);
+  assert.equal(result.journalRows,0);assert.equal(result.revisionRows,0);assert.equal(f.objects.size,7);
+  assert.deepEqual(await f.driver.cleanup(),{rows:0});
+},{reference:true}));
+for(const kind of ['unprovenProtection','productProfile','imagePresent','wrongAttachment','extraOperation','retiredCurrent'])test(`branding reference retirement refuses ${kind} before any fence or SQL cleanup`,async()=>scenario(async f=>{
+  if(kind==='unprovenProtection')f.options.imageProbe.protectedDeletions=1;
+  if(kind==='productProfile')f.options.imageProbe.itemId=randomUUID();
+  if(kind==='imagePresent')f.options.verifyImageAbsent=async({objectKey})=>({absent:false,bucket:'vapt-assets-production',objectKey});
+  if(kind==='wrongAttachment'){
+    const changed=structuredClone(f.states[1]);changed.catalog.restaurant.logoUrl='https://other.invalid/image';
+    await f.pool.query('update public.catalog_publication_operations set snapshot=$2::jsonb where operation_id=$1',[f.options.operationIds.attach,JSON.stringify(changed)]);
+  }
+  if(kind==='extraOperation'){
+    const extra=structuredClone(f.states[3]);extra.version='9007199254740999';
+    await f.pool.query(`insert into public.catalog_publication_operations(operation_id,actor_id,restaurant_id,fingerprint,version,snapshot,result) values($1,$2,$3,$4,9007199254740999,$5::jsonb,'{}')`,[randomUUID(),f.u.id,f.r.id,'e'.repeat(64),JSON.stringify(extra)]);
+  }
+  if(kind==='retiredCurrent')f.set(f.prefix+'snapshots/'+f.states[3].version+'.json',{retired:true,version:f.states[3].version});
+  await assert.rejects(()=>f.retire(f.options));assert.equal(f.writes.length,0);
+  assert.equal((await f.pool.query('select count(*)::int n from public.catalog_publication_operations where restaurant_id=$1',[f.r.id])).rows[0].n,kind==='extraOperation'?5:4);
+  await assert.rejects(f.driver.cleanup());
+},{reference:true}));
+test('a lost branding reference fence response never repeats a write or removes SQL evidence',async()=>scenario(async f=>{
+  const put=f.store.put;let attempts=0;f.store.put=async(...args)=>{attempts++;await put(...args);throw Error('private lost response');};
+  await assert.rejects(()=>f.retire(f.options),e=>e.safeCode==='catalog_writer_retirement_uncertain');assert.equal(attempts,1);
+  assert.equal((await f.pool.query('select count(*)::int n from public.catalog_publication_operations where restaurant_id=$1',[f.r.id])).rows[0].n,4);
+},{reference:true}));
+test('old single-image and CRUD retirement profiles reject four-version reference evidence',async()=>scenario(async f=>{
+  for(const image of [false,true])await assert.rejects(()=>(feature(image).then(retire=>retire(f.options))));assert.equal(f.writes.length,0);
+},{reference:true}));
 for(const effect of ['account_preferences','restaurant_activation_progress']){
   async function addEffect(f){
     if(effect==='account_preferences')await f.pool.query('insert into public.account_preferences(user_id,organization_id,restaurant_id) values($1,$2,$3)',[f.u.id,f.manifest.organizations[0].id,f.r.id]);
@@ -42,8 +72,8 @@ test('a restored fixture detects actual ownership marker drift before deleting t
     finally{await restored.close();}
   },{image:true});
 });
-async function scenario(work,{image=false}={}){
-  const retire=await feature(image);
+async function scenario(work,{image=false,reference=false}={}){
+  image ||= reference;const retire=await feature(image,reference);
   await withLocalDatabase(async pool=>{
     const adapter={options:{host:'ep-holy-wildflower-b6vtv1dd.c-2.sa-east-1.aws.neon.tech',database:'vapt',user:'neondb_owner',ssl:{rejectUnauthorized:true},max:1},
       query:(sql,p)=>sql.includes('current_database()')?Promise.resolve({rows:[{database:'vapt',role:'neondb_owner'}]}):pool.query(sql,p),connect:()=>pool.connect(),async end(){}};
@@ -53,9 +83,11 @@ async function scenario(work,{image=false}={}){
       if(!image)await pool.query('update public.restaurants set description=$2 where id=$1',[r.id,manifest.tag+' public']);
       // Exercise decimal versions above Number.MAX_SAFE_INTEGER.
       await pool.query("select setval('public.catalog_publication_version_seq',9007199254740992,true)");
-      const selectedNames=image?['rebuild']:names;
+      const selectedNames=reference?['rebuild','attach','detach','advance']:image?['rebuild']:names;
+      const referenceKey=r.id+'/branding/'+randomUUID(),referenceUrl='https://pub-a1c726374f434a7d8c2e2324d61a4de7.r2.dev/'+referenceKey;
       const operationIds=Object.fromEntries(selectedNames.map(n=>[n,randomUUID()])),receipts=[],states=[];
       for(const name of selectedNames){
+        if(reference&&['attach','detach'].includes(name))await pool.query('update public.restaurants set logo_url=$2 where id=$1',[r.id,name==='attach'?referenceUrl:null]);
         let version=null;
         if(name!=='private'){
           version=(await pool.query("select nextval('public.catalog_publication_version_seq')::text version")).rows[0].version;
@@ -72,14 +104,18 @@ async function scenario(work,{image=false}={}){
       const set=(key,body)=>objects.set(key,{body:typeof body==='string'?body:JSON.stringify(body),etag:'etag-'+(++serial)});
       set(slugKey,{restaurantId:r.id,version:last,canonicalSlug:r.slug,tombstone:false});
       set(manifestKey,{restaurantId:r.id,version:last,canonicalSlug:r.slug,previousVersion:previous});
-      for(const state of states)set(prefix+`snapshots/${state.version}.json`,!image&&states.indexOf(state)<3?{retired:true,version:state.version}:state);
+      for(const state of states)set(prefix+`snapshots/${state.version}.json`,(reference&&states.indexOf(state)<2||!image&&states.indexOf(state)<3)?{retired:true,version:state.version}:state);
       // An unrelated object must not even enter the target key set.
       set('catalog/v1/production/restaurants/'+randomUUID()+'/manifest.json',{keep:true});
       const store={async get(key){return structuredClone(objects.get(key)??null);},async put(key,body,{ifMatch}){
         writes.push(key);if(objects.get(key)?.etag!==ifMatch)return null;set(key,body);return{etag:objects.get(key).etag};
       }};
       const options={pool:adapter,manifest,operationIds,probe:{ok:true,uncertain:false,stage:'verified',receipts},verifyLoggedOut:async()=>({status:401}),store};
-      if(image){
+      if(reference){
+        options.imageProbe={ok:true,uncertain:false,stage:'verified',restaurantId:r.id,itemId:'branding',objectKey:referenceKey,baselineVersion:states[0].version,
+          protectedDeletions:2,imageAbsentConfirmed:true,receipts:receipts.slice(1)};
+        options.verifyImageAbsent=async({objectKey})=>({absent:true,bucket:'vapt-assets-production',objectKey});
+      }else if(image){
         options.imageProbe={ok:true,uncertain:false,stage:'verified',imageBytes:42,uploadVerified:true,leaseRetired:true,staleWritesBlocked:2,
           objectKey:r.id+'/branding/'+randomUUID(),leaseId:randomUUID()};
         options.verifyImageAbsent=async({objectKey,signal})=>{assert.ok(signal);return{absent:true,bucket:'vapt-assets-production',objectKey};};

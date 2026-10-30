@@ -20,6 +20,7 @@ export async function runProductionCatalogImageReferenceProbe(options={}){
     assert(parts.length===3&&parts[0]===restaurantId&&parts[1]===itemId&&uuid(parts[2])&&publicUrl===imageOrigin+'/'+objectKey);
     const ids=structuredClone(options.operationIds),names=['attach','detach','advance'];
     assert(ids&&Object.keys(ids).sort().join(',')==='advance,attach,detach'&&names.every(n=>uuid(ids[n]))&&new Set(Object.values(ids)).size===3);
+    Object.assign(report,{restaurantId,itemId,objectKey,baselineVersion});
     cookie=options.cookie;signal=options.signal?AbortSignal.any([options.signal,AbortSignal.timeout(300000)]):AbortSignal.timeout(300000);
     const pace=options.pace??(({signal})=>delay(3300,undefined,{signal})),waitPending=options.waitPending??(({signal})=>delay(5000,undefined,{signal}));
     assert(typeof pace==='function'&&typeof waitPending==='function');

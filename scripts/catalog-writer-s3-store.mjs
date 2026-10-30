@@ -1,5 +1,5 @@
 // Operator-only S3 transport. Explicit restricted credentials only, no env or
-// credential-chain fallback. Seven fixed target keys, no list/create/delete,
+// credential-chain fallback. Fixed profile-specific keys, no list/create/delete,
 // no manifest overwrite, no general-purpose object writes or automatic retries.
 // expiresAt is the LOCAL use cutoff (<=30min), not proof of provider expiry.
 // The controller must verify the approved provider TTL and revoke on exit.
@@ -22,7 +22,13 @@ export function createProductionCatalogImageS3Store(options={}){
   ensure(!Object.hasOwn(options,'versions'));
   return createProductionCatalogS3Store({...options,versions:[options.version]},1);
 }
-function createProductionCatalogS3Store(options,count){
+// Four exact revisions of the separate branding-reference gate: six keys,
+// at most64 requests for three readbacks, retirement and one revocation check.
+// Older profiles keep their existing key counts and32-request limit.
+export function createProductionCatalogBrandingReferenceS3Store(options={}){
+  return createProductionCatalogS3Store(options,4,64);
+}
+function createProductionCatalogS3Store(options,count,maxRequests=32){
   const {restaurantId,tag,expiresAt,requestHandler}=options,versions=structuredClone(options.versions);
   ensure(uuid(restaurantId)&&typeof tag==='string'&&tag.startsWith('catalog-writer-')&&uuid(tag.slice(15))
     &&Array.isArray(versions)&&versions.length===count&&versions.every((v,i)=>version(v)&&(i===0||BigInt(v)>BigInt(versions[i-1])))
@@ -35,7 +41,7 @@ function createProductionCatalogS3Store(options,count){
   const client=new S3Client({endpoint:'https://3ce69408aa5112617a282957aba71932.r2.cloudflarestorage.com',region:'auto',forcePathStyle:true,
     credentials,maxAttempts:1,requestChecksumCalculation:'WHEN_REQUIRED',responseChecksumValidation:'WHEN_REQUIRED',...(requestHandler?{requestHandler}:{})});
   let closed=false,requests=0;
-  const admitted=key=>{ensure(!closed&&Date.now()<expiresAt&&keys.has(key)&&requests<32);};
+  const admitted=key=>{ensure(!closed&&Date.now()<expiresAt&&keys.has(key)&&requests<maxRequests);};
   const signal=value=>value?AbortSignal.any([value,AbortSignal.timeout(15000)]):AbortSignal.timeout(15000);
   return{
     async verifyRevoked({signal:callerSignal}={}){

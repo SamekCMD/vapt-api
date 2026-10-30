@@ -14,6 +14,24 @@ function fixture(handler){
 }
 const response=(body,statusCode=200,headers={})=>({statusCode,headers:{etag,'content-type':'application/json',...headers},body:Readable.from([Buffer.from(body)])});
 
+test('four-version branding reference transport signs only its six owned keys and exact CAS fences',async()=>{
+  const m=await import('./catalog-writer-s3-store.mjs');assert.equal(typeof m.createProductionCatalogBrandingReferenceS3Store,'function','four-version transport missing');
+  const f=fixture(async()=>response('{}')),store=m.createProductionCatalogBrandingReferenceS3Store({...f.options,versions:['11','12','13','14']});
+  try{
+    for(const v of ['11','12','13','14'])await store.get(prefix+`snapshots/${v}.json`);
+    await store.get(prefix+'manifest.json');await store.get(`catalog/v1/production/slugs/${tag}.json`);
+    await store.put(prefix+'snapshots/12.json','{"retired":true,"version":"12"}',{ifMatch:etag});
+    await assert.rejects(()=>store.get(key));await assert.rejects(()=>store.put(prefix+'manifest.json','{}',{ifMatch:etag}));assert.equal(f.requests.length,7);
+    for(const versions of [['11'],['11','12','13'],['11','12','13','14','15']])assert.throws(()=>m.createProductionCatalogBrandingReferenceS3Store({...f.options,versions}));
+  }finally{store.close();}
+});
+test('reference transport caps the complete readback plus retirement window at64 requests',async()=>{
+  const m=await import('./catalog-writer-s3-store.mjs');assert.equal(typeof m.createProductionCatalogBrandingReferenceS3Store,'function');
+  const f=fixture(async()=>response('{}')),store=m.createProductionCatalogBrandingReferenceS3Store({...f.options,versions:['11','12','13','14']});
+  try{for(let i=0;i<64;i++)await store.get(prefix+'snapshots/14.json');await assert.rejects(()=>store.get(prefix+'snapshots/14.json'));assert.equal(f.requests.length,64);}
+  finally{store.close();}
+});
+
 test('image baseline transport permits only its three keys and CAS fences, never the five-version CRUD profile',async()=>{
   const m=await import('./catalog-writer-s3-store.mjs');assert.equal(typeof m.createProductionCatalogImageS3Store,'function','image baseline transport missing');
   const f=fixture(async()=>response('{}')),options={...f.options,version:'9007199254740993'};delete options.versions;
