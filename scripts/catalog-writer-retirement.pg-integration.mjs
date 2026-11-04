@@ -116,7 +116,7 @@ test('a restored fixture detects actual ownership marker drift before deleting t
     finally{await restored.close();}
   },{image:true});
 });
-async function scenario(work,{image=false,reference=false,product=false}={}){
+async function scenario(work,{image=false,reference=false,product=false,baselineOnly=false}={}){
   reference ||= product;image ||= reference;const retire=await feature(image,reference,product);
   await withLocalDatabase(async pool=>{
     const adapter={options:{host:'ep-holy-wildflower-b6vtv1dd.c-2.sa-east-1.aws.neon.tech',database:'vapt',user:'neondb_owner',ssl:{rejectUnauthorized:true},max:1},
@@ -127,7 +127,7 @@ async function scenario(work,{image=false,reference=false,product=false}={}){
       if(!image)await pool.query('update public.restaurants set description=$2 where id=$1',[r.id,manifest.tag+' public']);
       // Exercise decimal versions above Number.MAX_SAFE_INTEGER.
       await pool.query("select setval('public.catalog_publication_version_seq',9007199254740992,true)");
-      const selectedNames=product?['create','attach','detach','advance','delete']:reference?['rebuild','attach','detach','advance']:image?['rebuild']:names;
+      const selectedNames=product?(baselineOnly?['create']:['create','attach','detach','advance','delete']):reference?['rebuild','attach','detach','advance']:image?['rebuild']:names;
       const itemId=product?randomUUID():'branding',referenceKey=r.id+'/'+itemId+'/'+randomUUID(),referenceUrl='https://pub-a1c726374f434a7d8c2e2324d61a4de7.r2.dev/'+referenceKey;
       const operationIds=Object.fromEntries(selectedNames.map(n=>[n,randomUUID()])),receipts=[],states=[];
       for(const name of selectedNames){
@@ -151,7 +151,7 @@ async function scenario(work,{image=false,reference=false,product=false}={}){
       const set=(key,body)=>objects.set(key,{body:typeof body==='string'?body:JSON.stringify(body),etag:'etag-'+(++serial)});
       set(slugKey,{restaurantId:r.id,version:last,canonicalSlug:r.slug,tombstone:false});
       set(manifestKey,{restaurantId:r.id,version:last,canonicalSlug:r.slug,previousVersion:previous});
-      for(const state of states)set(prefix+`snapshots/${state.version}.json`,(reference&&states.indexOf(state)<(product?3:2)||!image&&states.indexOf(state)<3)?{retired:true,version:state.version}:state);
+      for(const state of states)set(prefix+`snapshots/${state.version}.json`,(!baselineOnly&&(reference&&states.indexOf(state)<(product?3:2)||!image&&states.indexOf(state)<3))?{retired:true,version:state.version}:state);
       // An unrelated object must not even enter the target key set.
       set('catalog/v1/production/restaurants/'+randomUUID()+'/manifest.json',{keep:true});
       const store={async get(key){return structuredClone(objects.get(key)??null);},async put(key,body,{ifMatch}){
@@ -161,7 +161,7 @@ async function scenario(work,{image=false,reference=false,product=false}={}){
       if(reference){
         options.imageProbe={ok:true,uncertain:false,stage:'verified',restaurantId:r.id,itemId,objectKey:referenceKey,baselineVersion:states[0].version,
           protectedDeletions:2,imageAbsentConfirmed:true,receipts:receipts.slice(1,product?4:undefined)};
-        if(product)options.itemDeleteProbe={ok:true,uncertain:false,stage:'verified',restaurantId:r.id,itemId,objectKey:referenceKey,
+        if(product&&!baselineOnly)options.itemDeleteProbe={ok:true,uncertain:false,stage:'verified',restaurantId:r.id,itemId,objectKey:referenceKey,
           itemAbsentConfirmed:true,imageAbsentConfirmed:true,previousVersion:states[3].version,receipts:receipts.slice(4)};
         options.verifyImageAbsent=async({objectKey})=>({absent:true,bucket:'vapt-assets-production',objectKey});
       }else if(image){
@@ -225,6 +225,43 @@ test('legacy CRUD retirement still rejects a single image baseline instead of ac
   const legacy=await feature();await assert.rejects(()=>legacy(f.options));assert.equal(f.writes.length,0);
 },{image:true}));
 
+for(const kind of ['ready','wrong-current-price','unexpected-variation','wrong-journal-item','wrong-r2-item','pruned-snapshot','wrong-baseline-item','existing-image','missing-session','extra-operation','wrong-manifest'])test('product baseline independently verifies actual SQL and three private keys: '+kind,async()=>scenario(async f=>{
+  const m=await import('./catalog-image-baseline-preflight.mjs');assert.equal(typeof m.verifyProductionCatalogProductImageBaseline,'function','product baseline verifier missing');
+  const reads=[],baseline={...f.options.probe,restaurantId:f.r.id,itemId:f.itemId};
+  const options={pool:f.adapter,manifest:f.manifest,baseline,operationId:f.options.operationIds.create,
+    store:{async get(key,options){assert.ok(options.signal);reads.push(key);return f.store.get(key);},async put(){assert.fail('baseline must never write');}}};
+  if(kind!=='missing-session')await f.pool.query('insert into better_auth.session(id,"userId",token,"expiresAt","updatedAt") values($1,$2,$3,now()+interval \'1 hour\',now())',[randomUUID(),f.u.id,randomUUID()]);
+  if(kind==='wrong-current-price')await f.pool.query('update public.menu_items set price=99.99 where id=$1',[f.itemId]);
+  if(kind==='unexpected-variation')await f.pool.query('insert into public.menu_item_variations(menu_item_id,name,options,required) values($1,\'unexpected\',array[\'x\']::text[],false)',[f.itemId]);
+  if(kind==='wrong-journal-item'){
+    const changed=structuredClone(f.states[0]);changed.catalog.items[0].id=randomUUID();
+    await f.pool.query('update public.catalog_publication_operations set snapshot=$2::jsonb where operation_id=$1',[options.operationId,JSON.stringify(changed)]);
+  }
+  if(kind==='wrong-r2-item'){
+    const changed=structuredClone(f.states[0]);changed.catalog.items[0].price='99.99';f.set(f.prefix+'snapshots/'+changed.version+'.json',changed);
+  }
+  if(kind==='pruned-snapshot')f.set(f.prefix+'snapshots/'+f.states[0].version+'.json',{retired:true,version:f.states[0].version});
+  if(kind==='wrong-baseline-item')baseline.itemId=randomUUID();
+  if(kind==='existing-image')await f.pool.query("update public.menu_items set image_url='https://unexpected.invalid/image' where id=$1",[f.itemId]);
+  if(kind==='extra-operation')await f.pool.query(`insert into public.catalog_publication_operations(operation_id,actor_id,restaurant_id,fingerprint,version,snapshot,result) values($1,$2,$3,$4,$5,$6::jsonb,'{}')`,[randomUUID(),f.u.id,f.r.id,'e'.repeat(64),f.states[0].version,JSON.stringify(f.states[0])]);
+  if(kind==='wrong-manifest')f.set(f.manifestKey,{restaurantId:f.r.id,version:f.states[0].version,canonicalSlug:f.r.slug,previousVersion:'9007199254740992'});
+  if(kind==='ready'){
+    assert.deepEqual(await m.verifyProductionCatalogProductImageBaseline(options),{verified:true,restaurantId:f.r.id,itemId:f.itemId,operationId:options.operationId,version:'9007199254740993',keysChecked:3});
+    assert.deepEqual(reads,[f.slugKey,f.manifestKey,f.prefix+'snapshots/9007199254740993.json']);
+    await assert.rejects(()=>m.verifyProductionCatalogImageBaseline(options),'branding baseline must remain empty-only');
+  }else await assert.rejects(()=>m.verifyProductionCatalogProductImageBaseline(options),e=>e.message==='Catalog image baseline preflight stopped');
+  assert.equal(f.writes.length,0);assert.ok(reads.length<=3);
+  assert.equal((await f.pool.query('select count(*)::int n from public.menu_items where id=$1',[f.itemId])).rows[0].n,1);
+},{product:true,baselineOnly:true}));
+test('product baseline cancellation during private read rolls back and releases its SQL client',async()=>scenario(async f=>{
+  const m=await import('./catalog-image-baseline-preflight.mjs');assert.equal(typeof m.verifyProductionCatalogProductImageBaseline,'function','product baseline verifier missing');
+  await f.pool.query('insert into better_auth.session(id,"userId",token,"expiresAt","updatedAt") values($1,$2,$3,now()+interval \'1 hour\',now())',[randomUUID(),f.u.id,randomUUID()]);
+  const abort=new AbortController();let released=false;
+  const pool={...f.adapter,connect:async()=>{const client=await f.pool.connect();return{query:(...args)=>client.query(...args),release(error){released=true;client.release(error);}};}};
+  await assert.rejects(()=>m.verifyProductionCatalogProductImageBaseline({pool,manifest:f.manifest,baseline:{...f.options.probe,restaurantId:f.r.id,itemId:f.itemId},operationId:f.options.operationIds.create,signal:abort.signal,
+    store:{get:async()=>{abort.abort();return new Promise(()=>{});}}}));
+  assert.equal(released,true);assert.equal(f.writes.length,0);
+},{product:true,baselineOnly:true}));
 for(const kind of ['ready','missing-session','wrong-membership','extra-operation','wrong-snapshot','wrong-manifest','wrong-revision'])test(`image preflight verifies SQL and three R2 keys without writes: ${kind}`,async()=>scenario(async f=>{
   const m=await import('./catalog-image-baseline-preflight.mjs').catch(()=>({}));assert.equal(typeof m.verifyProductionCatalogImageBaseline,'function','concrete image baseline preflight missing');
   if(kind!=='missing-session')await f.pool.query('insert into better_auth.session(id,"userId",token,"expiresAt","updatedAt") values($1,$2,$3,now()+interval \'1 hour\',now())',[randomUUID(),f.u.id,randomUUID()]);

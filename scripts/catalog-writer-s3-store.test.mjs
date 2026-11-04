@@ -14,6 +14,19 @@ function fixture(handler){
 }
 const response=(body,statusCode=200,headers={})=>({statusCode,headers:{etag,'content-type':'application/json',...headers},body:Readable.from([Buffer.from(body)])});
 
+test('product baseline transport permits exactly three GETs and no write or unknown revision',async()=>{
+  const m=await import('./catalog-writer-s3-store.mjs');assert.equal(typeof m.createProductionCatalogProductBaselineReadS3Store,'function','product baseline reader missing');
+  const f=fixture(async()=>response('{}')),options={...f.options,version:'9007199254740993'};delete options.versions;
+  const store=m.createProductionCatalogProductBaselineReadS3Store(options),snapshot=prefix+'snapshots/9007199254740993.json';
+  try{
+    await assert.rejects(()=>store.put(snapshot,'{"retired":true,"version":"9007199254740993"}',{ifMatch:etag}));
+    await assert.rejects(()=>store.get(key));
+    await store.get(`catalog/v1/production/slugs/${tag}.json`);await store.get(prefix+'manifest.json');await store.get(snapshot);
+    await assert.rejects(()=>store.get(snapshot));assert.equal(f.requests.length,3);assert.ok(f.requests.every(r=>r.method==='GET'));
+    assert.throws(()=>m.createProductionCatalogProductBaselineReadS3Store({...options,versions:['11']}));
+  }finally{store.close();}
+});
+
 test('product retirement transport permits only five exact revisions and32 signed requests',async()=>{
   const m=await import('./catalog-writer-s3-store.mjs');assert.equal(typeof m.createProductionCatalogProductReferenceS3Store,'function','product retirement transport missing');
   const f=fixture(async()=>response('{}')),store=m.createProductionCatalogProductReferenceS3Store(f.options);

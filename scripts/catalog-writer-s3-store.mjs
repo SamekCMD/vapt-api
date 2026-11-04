@@ -38,6 +38,12 @@ export function createProductionCatalogProductReferenceS3Store(options={}){
 export function createProductionCatalogRetainedReadS3Store(options={}){
   return createProductionCatalogS3Store(options,2,6,true);
 }
+// The initial product projection has one known revision and no predecessor.
+// Read-only even when supplied credentials can write; three GETs only.
+export function createProductionCatalogProductBaselineReadS3Store(options={}){
+  ensure(!Object.hasOwn(options,'versions'));
+  return createProductionCatalogS3Store({...options,versions:[options.version]},1,3,true);
+}
 function createProductionCatalogS3Store(options,count,maxRequests=32,readOnly=false){
   const {restaurantId,tag,expiresAt,requestHandler}=options,versions=structuredClone(options.versions);
   ensure(uuid(restaurantId)&&typeof tag==='string'&&tag.startsWith('catalog-writer-')&&uuid(tag.slice(15))
