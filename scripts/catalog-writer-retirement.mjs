@@ -22,10 +22,15 @@ export async function retireProductionCatalogImageFixture(options={}){
 export async function retireProductionCatalogBrandingReferenceFixture(options={}){
   return retireProductionCatalogFixture(options,'reference');
 }
+// Fixed five-publication product cycle. The item must already have been
+// deleted through the versioned API; this helper never deletes a menu item.
+export async function retireProductionCatalogProductImageFixture(options={}){
+  return retireProductionCatalogFixture(options,'product_reference');
+}
 async function retireProductionCatalogFixture(options,image){
   let client,objectWrites=0,committing=false;
   try{
-    const reference=image==='reference';
+    const product=image==='product_reference',reference=image==='reference'||product;
     const {pool,store,verifyLoggedOut}=options,manifest=structuredClone(options.manifest),probe=structuredClone(options.probe),ids=structuredClone(options.operationIds);
     ensure(typeof manifest?.tag==='string'&&manifest.tag.startsWith('catalog-writer-')&&uuid(manifest.tag.slice(15))
       &&manifest.users?.length===1&&manifest.organizations?.length===1&&manifest.restaurants?.length===1&&manifest.members?.length===1);
@@ -35,18 +40,24 @@ async function retireProductionCatalogFixture(options,image){
       &&org.name===manifest.tag&&org.created_by===actor.id&&target.owner_id===actor.id&&target.organization_id===org.id
       &&target.name===manifest.tag&&target.slug===manifest.tag
       &&isDeepStrictEqual(manifest.members,[{organization_id:org.id,user_id:actor.id,role:'owner',status:'active'}]));
-    const selectedNames=reference?['rebuild','attach','detach','advance']:image?['rebuild']:names;
+    const selectedNames=product?['create','attach','detach','advance','delete']:reference?['rebuild','attach','detach','advance']:image?['rebuild']:names;
     ensure(ids&&Object.keys(ids).sort().join(',')===[...selectedNames].sort().join(',')&&selectedNames.every(n=>uuid(ids[n]))&&new Set(Object.values(ids)).size===selectedNames.length
       &&probe?.ok===true&&probe.uncertain===false&&probe.stage==='verified'&&probe.receipts?.length===selectedNames.length);
     const imageProbe=image?structuredClone(options.imageProbe):null;
     if(image){
       const parts=imageProbe?.objectKey?.split('/');
       ensure(imageProbe?.ok===true&&imageProbe.uncertain===false&&imageProbe.stage==='verified'
-        &&parts?.length===3&&parts[0]===target.id&&parts[1]==='branding'&&uuid(parts[2])&&typeof options.verifyImageAbsent==='function');
-      if(reference)ensure(imageProbe.restaurantId===target.id&&imageProbe.itemId==='branding'&&imageProbe.baselineVersion===probe.receipts[0].version
-        &&imageProbe.protectedDeletions===2&&imageProbe.imageAbsentConfirmed===true&&isDeepStrictEqual(imageProbe.receipts,probe.receipts.slice(1)));
+        &&parts?.length===3&&parts[0]===target.id&&(product?uuid(parts[1]):parts[1]==='branding')&&uuid(parts[2])&&typeof options.verifyImageAbsent==='function');
+      if(reference)ensure(imageProbe.restaurantId===target.id&&imageProbe.itemId===parts[1]&&imageProbe.baselineVersion===probe.receipts[0].version
+        &&imageProbe.protectedDeletions===2&&imageProbe.imageAbsentConfirmed===true&&isDeepStrictEqual(imageProbe.receipts,probe.receipts.slice(1,product?4:undefined)));
       else ensure(imageProbe.imageBytes===42&&imageProbe.uploadVerified===true&&imageProbe.leaseRetired===true&&imageProbe.staleWritesBlocked===2
         &&uuid(imageProbe.leaseId)&&imageProbe.leaseId!==ids.rebuild);
+      if(product){
+        const deletion=structuredClone(options.itemDeleteProbe);
+        ensure(deletion?.ok===true&&deletion.uncertain===false&&deletion.stage==='verified'&&deletion.restaurantId===target.id
+          &&deletion.itemId===imageProbe.itemId&&deletion.objectKey===imageProbe.objectKey&&deletion.itemAbsentConfirmed===true&&deletion.imageAbsentConfirmed===true
+          &&deletion.previousVersion===probe.receipts[3].version&&isDeepStrictEqual(deletion.receipts,probe.receipts.slice(4)));
+      }
     }
     const publicReceipts=[];
     for(const [index,name]of selectedNames.entries()){
@@ -99,16 +110,27 @@ async function retireProductionCatalogFixture(options,image){
     ensure(current?.description===(image?null:manifest.tag+' public')&&current.logo_url===null&&current.onboarding_status==='complete');
     const rows=(await client.query(`select operation_id,actor_id,restaurant_id,fingerprint,version::text,snapshot,previous_slug
       from public.catalog_publication_operations where restaurant_id=$1 or actor_id=$2 for update`,[target.id,actor.id])).rows;
-    ensure(rows.length===(reference?4:image?1:5));const states=[];
+    ensure(rows.length===(product?5:reference?4:image?1:5));const states=[];
     for(const [index,receipt]of publicReceipts.entries()){
       const row=rows.find(r=>r.operation_id===receipt.operationId);
       ensure(row&&row.actor_id===actor.id&&row.restaurant_id===target.id&&row.version===receipt.version&&/^[a-f0-9]{64}$/.test(row.fingerprint)
         &&(row.previous_slug===null||row.previous_slug===target.slug)&&row.snapshot?.version===receipt.version
         &&row.snapshot.catalog?.restaurant?.id===target.id&&row.snapshot.catalog.restaurant.name===manifest.tag
-        &&row.snapshot.catalog.restaurant.slug===target.slug&&row.snapshot.catalog.restaurant.logoUrl===(reference&&index===1?'https://pub-a1c726374f434a7d8c2e2324d61a4de7.r2.dev/'+imageProbe.objectKey:null)
-        &&Array.isArray(row.snapshot.catalog.items)&&row.snapshot.catalog.items.every(i=>i.restaurantId===target.id&&i.imageUrl===null)
+        &&row.snapshot.catalog.restaurant.slug===target.slug&&row.snapshot.catalog.restaurant.logoUrl===(reference&&!product&&index===1?'https://pub-a1c726374f434a7d8c2e2324d61a4de7.r2.dev/'+imageProbe.objectKey:null)
+        &&Array.isArray(row.snapshot.catalog.items)&&row.snapshot.catalog.items.every(i=>i.restaurantId===target.id&&(product||i.imageUrl===null))
         &&Buffer.byteLength(JSON.stringify(row.snapshot))<=65536);states.push(row.snapshot);
-      if(reference)ensure(row.snapshot.catalog.items.length===0&&row.snapshot.catalog.restaurant.description===null);
+      if(reference)ensure(row.snapshot.catalog.restaurant.description===null);
+      if(reference&&!product)ensure(row.snapshot.catalog.items.length===0);
+      if(product){
+        const items=row.snapshot.catalog.items;
+        if(index===4)ensure(items.length===0);
+        else{
+          const item=items[0];ensure(items.length===1&&item.id===imageProbe.itemId&&item.name===manifest.tag+' image item'&&item.price==='12.34'
+            &&item.description==='Synthetic product image probe'&&item.category==='Test'&&item.available===true
+            &&item.availableFrom===null&&item.availableUntil===null&&item.badge===null&&item.isChefSuggestion===false&&item.prepTimeMinutes===5
+            &&isDeepStrictEqual(item.variations,[])&&item.imageUrl===(index===1?'https://pub-a1c726374f434a7d8c2e2324d61a4de7.r2.dev/'+imageProbe.objectKey:null));
+        }
+      }
     }
     ensure(states.at(-1).catalog.items.length===0&&(image?states[0].catalog.restaurant.description===null:states.at(-2).catalog.items.length===0));
     const last=publicReceipts.at(-1).version,previous=image&&!reference?null:publicReceipts.at(-2).version;
@@ -127,7 +149,7 @@ async function retireProductionCatalogFixture(options,image){
     const artifacts=[{key:slugKey,object:mapping,fence:JSON.stringify({...expectedMapping,tombstone:true})}];
     for(const [index,state]of states.entries()){
       const key=prefix+`snapshots/${state.version}.json`,object=await read(key,65536),value=JSON.parse(object.body),fence=JSON.stringify({retired:true,version:state.version});
-      ensure(isDeepStrictEqual(value,state)||((reference?index<2:!image&&index<3)&&isDeepStrictEqual(value,{retired:true,version:state.version})));
+      ensure(isDeepStrictEqual(value,state)||((reference?index<(product?3:2):!image&&index<3)&&isDeepStrictEqual(value,{retired:true,version:state.version})));
       artifacts.push({key,object,fence});
     }
     // A retired lease plus a rejected stale PUT is not evidence of physical

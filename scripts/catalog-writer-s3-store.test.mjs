@@ -14,6 +14,19 @@ function fixture(handler){
 }
 const response=(body,statusCode=200,headers={})=>({statusCode,headers:{etag,'content-type':'application/json',...headers},body:Readable.from([Buffer.from(body)])});
 
+test('product retirement transport permits only five exact revisions and32 signed requests',async()=>{
+  const m=await import('./catalog-writer-s3-store.mjs');assert.equal(typeof m.createProductionCatalogProductReferenceS3Store,'function','product retirement transport missing');
+  const f=fixture(async()=>response('{}')),store=m.createProductionCatalogProductReferenceS3Store(f.options);
+  try{
+    for(const v of versions)await store.get(prefix+`snapshots/${v}.json`);
+    await store.get(prefix+'manifest.json');await store.get(`catalog/v1/production/slugs/${tag}.json`);
+    await store.put(key,'{"retired":true,"version":"15"}',{ifMatch:etag});
+    await assert.rejects(()=>store.get(prefix+'snapshots/16.json'));await assert.rejects(()=>store.put(prefix+'manifest.json','{}',{ifMatch:etag}));
+    for(let i=8;i<32;i++)await store.get(key);await assert.rejects(()=>store.get(key));assert.equal(f.requests.length,32);
+    for(const versions of [['11'],['11','12','13','14'],['11','12','13','14','15','16']])assert.throws(()=>m.createProductionCatalogProductReferenceS3Store({...f.options,versions}));
+  }finally{store.close();}
+});
+
 test('a phase-local retained reader has exactly two known revisions and six GETs, never PUT capability',async()=>{
   const m=await import('./catalog-writer-s3-store.mjs');assert.equal(typeof m.createProductionCatalogRetainedReadS3Store,'function','read-only phase transport missing');
   const f=fixture(async()=>response('{}')),store=m.createProductionCatalogRetainedReadS3Store({...f.options,versions:['11','12']});

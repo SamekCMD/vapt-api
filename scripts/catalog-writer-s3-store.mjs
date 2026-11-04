@@ -28,6 +28,11 @@ export function createProductionCatalogImageS3Store(options={}){
 export function createProductionCatalogBrandingReferenceS3Store(options={}){
   return createProductionCatalogS3Store(options,4,64);
 }
+// Product retirement follows five proven revisions; phase-local retained
+// reads use their own six-GET stores, so this profile retains the32-call cap.
+export function createProductionCatalogProductReferenceS3Store(options={}){
+  return createProductionCatalogS3Store(options,5);
+}
 // Each intermediate read knows only current/previous, never future sequence
 // values. Six GETs, no write capability, closed by the enclosing phase.
 export function createProductionCatalogRetainedReadS3Store(options={}){

@@ -91,6 +91,55 @@ async function referenceFixture(){
   return f;
 }
 const referenceFeature=async()=>{const m=await import('./catalog-writer-gate.mjs');assert.equal(typeof m.runProductionCatalogBrandingReferenceGate,'function','reference lifecycle missing');return m.runProductionCatalogBrandingReferenceGate;};
+const productFeature=async()=>{const m=await import('./catalog-writer-gate.mjs');assert.equal(typeof m.runProductionCatalogProductImageGate,'function','product lifecycle missing');return m.runProductionCatalogProductImageGate;};
+async function productFixture(){
+  const f=fixture(),root='/restaurants/'+r,resource=root+'/menu-items/'+item,path=resource+'/image',key=r+'/'+item+'/66666666-6666-4666-8666-666666666666';
+  const ids={create:operationIds.create,oversized:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1',upload:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2',attach:operationIds.patch,detach:operationIds.mixed,advance:operationIds.rebuild,delete:operationIds.delete};
+  f.options.operationIds=ids;
+  const client=new S3Client({endpoint:'https://3ce69408aa5112617a282957aba71932.r2.cloudflarestorage.com',region:'auto',requestChecksumCalculation:'WHEN_REQUIRED',credentials:{accessKeyId:'a'.repeat(32),secretAccessKey:'b'.repeat(64)}});
+  let signed;try{signed=await getSignedUrl(client,new PutObjectCommand({Bucket:'vapt-assets-production',Key:key,ContentType:'image/webp',ContentLength:42,IfMatch:'"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"'}),{expiresIn:300,signableHeaders:new Set(['content-length','content-type','if-match'])});}finally{client.destroy();}
+  const scope={id:r,name:tag,slug:tag,description:null,logoUrl:null},menu={id:item,restaurantId:r,name:tag+' image item',price:'12.34',imageUrl:null},publicUrl='https://pub-a1c726374f434a7d8c2e2324d61a4de7.r2.dev/'+key;
+  const ready=(n,v)=>({operationId:ids[n],restaurantId:r,phase:'ready',version:v,committed:true,retryable:false});
+  const descriptor={state:'upload_required',method:'PUT',objectKey:key,publicUrl,uploadUrl:signed,headers:{'Content-Type':'image/webp','If-Match':'"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"'},expiresInSeconds:300},uploaded={state:'uploaded',objectKey:key,publicUrl};
+  f.steps.splice(1,f.steps.length-1,
+    ['GET',root,200,scope],['GET',root+'/menu-items',200,[]],['POST',root+'/menu-items',201,{receipt:ready('create','15')}],['GET',root+'/catalog-operations/'+ids.create,200,ready('create','15')],['GET',root+'/menu-items',200,[menu]],
+    ['GET',root,200,scope],['GET',root+'/menu-items',200,[menu]],['POST',path+'/upload',400,{error:{code:'invalid_request'}}],['POST',path+'/upload',200,descriptor],['POST',path+'/upload',200,uploaded],['POST',path+'/upload',200,uploaded],
+    ['GET',root,200,scope],['GET',root+'/menu-items',200,[menu]],['PATCH',resource,200,{receipt:ready('attach','16')}],['GET',root+'/menu-items',200,[{...menu,imageUrl:publicUrl}]],['DELETE',path,409,{error:{code:'menu_image_cleanup_pending'}}],
+    ['PATCH',resource,200,{receipt:ready('detach','17')}],['GET',root+'/menu-items',200,[menu]],['DELETE',path,409,{error:{code:'menu_image_cleanup_pending'}}],['POST',root+'/catalog/rebuild',200,{receipt:ready('advance','18')}],['GET',root+'/menu-items',200,[menu]],['DELETE',path,204,null],
+    ['GET',root,200,scope],['GET',root+'/menu-items',200,[menu]],['DELETE',resource,200,{receipt:ready('delete','19')}],['GET',root+'/catalog-operations/'+ids.delete,200,ready('delete','19')],['GET',root+'/menu-items',200,[]]);
+  let absent=false,puts=0;const fetcher=f.options.fetcher,retire=f.options.storage.retire,fault={};
+  f.options.fetcher=async(url,init)=>{
+    if(url===signed){assert.equal(init.method,'PUT');assert.equal(init.headers.Cookie,undefined);puts++;return new Response(null,{status:puts===1?200:412});}
+    if(new URL(url).pathname===resource&&init.method==='DELETE'&&fault.lostDelete)throw Error('private lost delete response');
+    const result=await fetcher(url,init);if(new URL(url).pathname===path&&init.method==='DELETE'&&result.status===204)absent=true;return result;
+  };
+  f.options.storage.verifyImage=async({objectKey})=>({absent,bucket:'vapt-assets-production',objectKey});
+  f.options.storage.readRetained=async({version,previousVersion})=>[version,previousVersion].map(v=>({version:v,catalog:{restaurant:scope,items:v==='19'&&!fault.stillPublished?[]:[{...menu,imageUrl:v==='16'?publicUrl:null}]}}));
+  f.options.storage.retire=async value=>{
+    assert.deepEqual(value.operationIds,{create:ids.create,attach:ids.attach,detach:ids.detach,advance:ids.advance,delete:ids.delete});
+    assert.deepEqual(value.probe.receipts.map(v=>v.version),['15','16','17','18','19']);assert.equal(value.imageProbe.itemId,item);assert.equal(value.imageProbe.protectedDeletions,2);
+    assert.equal(value.itemDeleteProbe.itemAbsentConfirmed,true);assert.equal(value.itemDeleteProbe.imageAbsentConfirmed,true);assert.equal(value.itemDeleteProbe.previousVersion,'18');
+    return{...await retire({...value,operationIds}),imageAbsentConfirmed:true};
+  };
+  return{...f,fault,puts:()=>puts};
+}
+test('product lifecycle composes real creation, upload, retained protection and versioned deletion before retirement',async()=>{
+  const run=await productFeature(),f=await productFixture(),result=await run(f.options);
+  assert.equal(result.ok,true);assert.equal(result.probe.itemId,item);assert.equal(result.itemDeleteProbe.itemAbsentConfirmed,true);assert.equal(result.itemDeleteProbe.receipts[0].version,'19');
+  assert.equal(result.imageProbe.protectedDeletions,2);assert.equal(f.puts(),2);assert.equal(f.steps.length,0);assert.equal(result.authRequests,4);
+  assert.equal(f.events.indexOf('journal:item_delete_confirmed')<f.events.indexOf('journal:logout_attempt'),true);assert.equal(f.events.filter(v=>v==='revoke').length,1);assert.equal(f.credentials[0].password,'');
+  assert.doesNotMatch(JSON.stringify(result),/X-Amz|synthetic-session|synthetic-password|server-response-secret/);
+});
+for(const kind of ['lostDelete','stillPublished','beforeDelete','missingPorts'])test('product lifecycle preserves unfinished work and logs out: '+kind,async()=>{
+  const run=await productFeature(),f=await productFixture();
+  if(kind==='lostDelete'||kind==='stillPublished')f.fault[kind]=true;
+  if(kind==='beforeDelete'){const pre=f.options.preflight;f.options.preflight=async(...args)=>{await pre(...args);if(args[0]==='before_delete')throw Error('private deletion gate stopped');};}
+  if(kind==='missingPorts')delete f.options.storage.readRetained;
+  const result=await run(f.options);assert.equal(result.ok,false);assert.equal(result.cleaned,false);assert.equal(f.state().retired,false);assert.equal(f.state().released,true);assert.equal(f.state().closed,true);
+  assert.equal(f.events.filter(v=>v==='revoke').length,1);
+  if(kind==='missingPorts')assert.equal(f.http.length,0);else assert.equal(result.sessionRevoked,true);
+  if(kind==='lostDelete'||kind==='stillPublished')assert.equal(result.uncertain,true);
+});
 for(const mode of ['ready','expired_before_seed','expired_before_login'])test('pre-issuance challenge integrates with real branding lifecycle: '+mode,async()=>{
   const {prepareCatalogChallengeBeforeIssuance}=await import('./catalog-pre-issuance-challenge.mjs');
   const run=await referenceFeature(),f=await referenceFixture(),abort=new AbortController();let time=1000,logins=0;

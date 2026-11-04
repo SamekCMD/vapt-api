@@ -7,6 +7,7 @@ import {runProductionCatalogWriterProbe} from './catalog-writer-probe.mjs';
 import {runProductionCatalogImageBaseline} from './catalog-image-baseline-probe.mjs';
 import {runProductionCatalogImageLeaseProbe,runProductionCatalogImageUploadProbe} from './catalog-image-lease-probe.mjs';
 import {runProductionCatalogImageReferenceProbe} from './catalog-image-reference-probe.mjs';
+import {runProductionCatalogProductImageBaseline,runProductionCatalogProductImageDeletion} from './catalog-product-image-item.mjs';
 const ensure=v=>{if(!v)throw Error('Catalog writer gate guard failed');};
 const uuid=v=>typeof v==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(v);
 const names=['create','patch','private','mixed','delete','rebuild'];
@@ -23,8 +24,11 @@ export async function runProductionCatalogImageGate(options={}){
 export async function runProductionCatalogBrandingReferenceGate(options={}){
   return runProductionCatalogGate(options,'reference');
 }
+export async function runProductionCatalogProductImageGate(options={}){
+  return runProductionCatalogGate(options,'product_reference');
+}
 async function runProductionCatalogGate(options,image){
-  const reference=image==='reference';
+  const product=image==='product_reference',reference=image==='reference'||product;
   const report={ok:false,cleaned:false,seeded:false,sessionRevoked:false,credentialRevoked:false,uncertain:false,authRequests:0,stage:'input'};
   let owned=false,cookie,credentials=[],step='input',seedAttempted=false,loginAttempted=false,loginConfirmed=false,logoutAttempted=false,cleanupAttempted=false,retirementAttempted=false;
   const deadline=AbortSignal.timeout(1200000),signal=options.signal?AbortSignal.any([options.signal,deadline]):deadline;
@@ -81,7 +85,7 @@ async function runProductionCatalogGate(options,image){
     ensure([actor.id,org.id,target.id].every(uuid)&&new Set([actor.id,org.id,target.id]).size===3&&actor.name===manifest.tag
       &&actor.email===manifest.tag+'-0@example.invalid'&&org.name===manifest.tag&&org.created_by===actor.id
       &&target.owner_id===actor.id&&target.organization_id===org.id&&target.name===manifest.tag&&target.slug===manifest.tag);
-    const selectedNames=reference?['rebuild','oversized','upload','attach','detach','advance']:image?['rebuild','oversized','upload']:names;
+    const selectedNames=product?['create','oversized','upload','attach','detach','advance','delete']:reference?['rebuild','oversized','upload','attach','detach','advance']:image?['rebuild','oversized','upload']:names;
     ensure(ids&&Object.keys(ids).sort().join(',')===[...selectedNames].sort().join(',')&&selectedNames.every(n=>uuid(ids[n]))&&new Set(Object.values(ids)).size===selectedNames.length);
     mark('preflight');await wait(()=>options.preflight('before_seed',{manifest}));
     mark('storage_ready');const storage=await wait(()=>options.storage.ready({manifest}));
@@ -106,23 +110,32 @@ async function runProductionCatalogGate(options,image){
     mark('probe');await record('probe_attempt');
     const input={baseUrl:options.baseUrl,restaurantId:target.id,tag:manifest.tag,cookie,fetcher:options.fetcher,pace:options.pace,signal,
       preflight:()=>options.preflight('before_probe',{manifest})};
-    report.probe=image?await runProductionCatalogImageBaseline({...input,operationId:ids.rebuild})
+    report.probe=product?await runProductionCatalogProductImageBaseline({...input,operationId:ids.create}):image?await runProductionCatalogImageBaseline({...input,operationId:ids.rebuild})
       :await runProductionCatalogWriterProbe({...input,operationIds:ids});
     report.uncertain=report.probe.uncertain===true;ensure(report.probe.ok===true&&!report.uncertain);await record('probe_confirmed');
     if(image){
+      const itemId=product?report.probe.itemId:'branding';
       mark(reference?'image_upload':'image_probe');await record(reference?'image_upload_attempt':'image_probe_attempt');
-      const upload=await (reference?runProductionCatalogImageUploadProbe:runProductionCatalogImageLeaseProbe)({...input,itemId:'branding',operationIds:{oversized:ids.oversized,upload:ids.upload},
+      const upload=await (reference?runProductionCatalogImageUploadProbe:runProductionCatalogImageLeaseProbe)({...input,itemId,operationIds:{oversized:ids.oversized,upload:ids.upload},
         preflight:()=>options.preflight('before_image',{manifest,baseline:report.probe})});
       report[reference?'uploadProbe':'imageProbe']=upload;
       report.uncertain=upload.uncertain===true;ensure(upload.ok===true&&!report.uncertain);await record(reference?'image_upload_confirmed':'image_probe_confirmed');
       if(reference){
         mark('image_reference');await record('image_reference_attempt');
-        report.imageProbe=await runProductionCatalogImageReferenceProbe({...input,itemId:'branding',objectKey:upload.objectKey,
+        report.imageProbe=await runProductionCatalogImageReferenceProbe({...input,itemId,objectKey:upload.objectKey,
           publicUrl:'https://pub-a1c726374f434a7d8c2e2324d61a4de7.r2.dev/'+upload.objectKey,baselineVersion:report.probe.receipts[0].version,
           operationIds:{attach:ids.attach,detach:ids.detach,advance:ids.advance},
           preflight:()=>options.preflight('before_reference',{manifest,baseline:report.probe,upload}),
           readRetained:args=>options.storage.readRetained({...args,manifest,tag:manifest.tag}),imageReadback:args=>options.storage.verifyImage(args)});
         report.uncertain=report.imageProbe.uncertain===true;ensure(report.imageProbe.ok===true&&!report.uncertain);await record('image_reference_confirmed');
+        if(product){
+          mark('item_delete');await record('item_delete_attempt');
+          report.itemDeleteProbe=await runProductionCatalogProductImageDeletion({...input,itemId,objectKey:upload.objectKey,operationId:ids.delete,
+            previousVersion:report.imageProbe.receipts.at(-1).version,imageProbe:report.imageProbe,
+            preflight:()=>options.preflight('before_delete',{manifest,baseline:report.probe,imageProbe:report.imageProbe}),
+            readRetained:args=>options.storage.readRetained({...args,manifest,tag:manifest.tag}),imageReadback:args=>options.storage.verifyImage(args)});
+          report.uncertain=report.itemDeleteProbe.uncertain===true;ensure(report.itemDeleteProbe.ok===true&&!report.uncertain);await record('item_delete_confirmed');
+        }
       }
     }
     await logout();
@@ -130,9 +143,9 @@ async function runProductionCatalogGate(options,image){
     // Mutating transactions must drain/roll back before revocation and pool
     // close. Unlike read-only/human waits, never abandon their promise on abort.
     signal.throwIfAborted();retirementAttempted=true;
-    const retirementIds=reference?{rebuild:ids.rebuild,attach:ids.attach,detach:ids.detach,advance:ids.advance}:image?{rebuild:ids.rebuild}:ids;
-    const retirementProbe=reference?{ok:true,uncertain:false,stage:'verified',receipts:[...report.probe.receipts,...report.imageProbe.receipts]}:report.probe;
-    const retired=await options.storage.retire({manifest,operationIds:retirementIds,probe:retirementProbe,...(image?{imageProbe:report.imageProbe}:{}),signal,
+    const retirementIds=product?{create:ids.create,attach:ids.attach,detach:ids.detach,advance:ids.advance,delete:ids.delete}:reference?{rebuild:ids.rebuild,attach:ids.attach,detach:ids.detach,advance:ids.advance}:image?{rebuild:ids.rebuild}:ids;
+    const retirementProbe=reference?{ok:true,uncertain:false,stage:'verified',receipts:[...report.probe.receipts,...report.imageProbe.receipts,...(product?report.itemDeleteProbe.receipts:[])]}:report.probe;
+    const retired=await options.storage.retire({manifest,operationIds:retirementIds,probe:retirementProbe,...(image?{imageProbe:report.imageProbe}:{}),...(product?{itemDeleteProbe:report.itemDeleteProbe}:{}),signal,
       verifyLoggedOut:async()=>({status:(await auth('/auth/me',{expected:401,cleanup:true})).status})});
     ensure(retired?.restaurantId===target.id&&retired.readbackConfirmed===true&&retired.journalRows===0&&retired.revisionRows===0&&(!image||retired.imageAbsentConfirmed===true));
     report.retired={journalRows:0,revisionRows:0,readbackConfirmed:true,...(image?{imageAbsentConfirmed:true}:{})};await record('retirement_confirmed');
@@ -156,6 +169,6 @@ async function runProductionCatalogGate(options,image){
       try{await wait(()=>options.driver.close(),cleanupSignal);}catch{report.failedStep??='driver_close';}
     }
   }
-  report.ok=report.cleaned&&report.sessionRevoked&&report.credentialRevoked&&report.probe?.ok===true&&(!image||report.imageProbe?.ok===true)&&(!reference||report.uploadProbe?.ok===true)&&!report.uncertain&&!report.failedStep;
+  report.ok=report.cleaned&&report.sessionRevoked&&report.credentialRevoked&&report.probe?.ok===true&&(!image||report.imageProbe?.ok===true)&&(!reference||report.uploadProbe?.ok===true)&&(!product||report.itemDeleteProbe?.ok===true)&&!report.uncertain&&!report.failedStep;
   report.stage=report.ok?'verified':report.failedStep??step;return report;
 }
