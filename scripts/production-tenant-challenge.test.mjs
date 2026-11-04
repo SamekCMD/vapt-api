@@ -100,6 +100,35 @@ test('catalog collector asks for one owner login and refuses a second challenge'
   assert.doesNotMatch(JSON.stringify(await(await request('/status')).json()),/synthetic-catalog-challenge/);
 });
 
+test('isolated readiness receives one human callback without claiming a login or server verification',async t=>{
+  const {c,request}=await setup(t,'createProductionCatalogChallengeReadiness');
+  await request('/start',{});
+  const pending=c.captcha({index:0,role:'owner'}),p=await page(t,c),renders=[];
+  pending.catch(()=>{});
+  p.window.turnstile={render:(_selector,options)=>{renders.push(options);return 1;},remove:()=>{}};
+  p.window.vaptTurnstileReady();await p.tick();assert.equal(renders.length,1);
+  assert.match(p.window.document.getElementById('state').textContent,/desafio.*sem login/i);
+  await renders[0].callback('synthetic-readiness-challenge-value');
+  assert.equal(await pending,'synthetic-readiness-challenge-value');
+  c.complete({ok:true,cleaned:true});await p.tick();
+  assert.match(p.window.document.getElementById('state').textContent,/recebido localmente/i);
+  assert.match(p.window.document.getElementById('state').textContent,/não.*validado.*servidor/i);
+  assert.equal((await request('/challenge',{index:0,token:'synthetic-readiness-challenge-value'})).status,409);
+  assert.doesNotMatch(JSON.stringify(await(await request('/status')).json()),/synthetic-readiness/);
+});
+
+test('a Turnstile load error remains visible across status ticks until a real callback arrives',async t=>{
+  const {c,request}=await setup(t,'createProductionCatalogChallenge');await request('/start',{});
+  const pending=c.captcha({index:0,role:'owner'}),p=await page(t,c),renders=[];
+  pending.catch(()=>{});
+  p.window.turnstile={render:(_selector,options)=>{renders.push(options);return 1;},remove:()=>{}};
+  p.window.vaptTurnstileReady();await p.tick();renders[0]['error-callback']('300030');
+  await p.tick();assert.match(p.window.document.getElementById('state').textContent,/não carregou/i);
+  assert.equal(p.button.disabled,true);assert.equal(renders.length,1);
+  await renders[0].callback('synthetic-readiness-challenge-value');await pending;
+  await p.tick();assert.doesNotMatch(p.window.document.getElementById('state').textContent,/não carregou/i);
+});
+
 test('catalog collector preserves start origin nonce and Host guards',async t=>{
   const {c,request}=await setup(t,'createProductionCatalogChallenge');
   assert.equal((await request('/start',{}, {Origin:'https://untrusted.invalid'})).status,403);

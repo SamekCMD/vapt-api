@@ -10,7 +10,10 @@ export async function createProductionTenantChallenge(){
 export async function createProductionCatalogChallenge(){
   return createChallenge({roles:['owner'],title:'Validação do writer de catálogo',intro:'Será um login sintético de proprietário.'});
 }
-async function createChallenge({roles,title,intro}){
+export async function createProductionCatalogChallengeReadiness(){
+  return createChallenge({roles:['owner'],title:'Verificação isolada do desafio',intro:'Somente a entrega local do desafio será observada. Não haverá login, acesso ao banco ou criação de chave R2.',readiness:true});
+}
+async function createChallenge({roles,title,intro,readiness=false}){
   const nonce=randomBytes(32).toString('hex');
   let state='waiting',step='waiting',pending=null,next=0,outcome,closed=false,startResolve,startReject;
   const start=new Promise((resolve,reject)=>{startResolve=resolve;startReject=reject;});start.catch(()=>{});
@@ -21,16 +24,16 @@ async function createChallenge({roles,title,intro}){
 <h1>${title}</h1><p>${intro} Nenhum email ou pagamento será enviado. Mantenha esta aba aberta e conclua os desafios quando solicitados.</p><button id="start" disabled>Iniciar testes</button><p id="state">Aguardando início.</p><div id="challenge"></div>
 <script nonce="${nonce}">
 const nonce=document.querySelector('meta[name=vapt-nonce]').content,button=document.getElementById('start'),label=document.getElementById('state');
-let widget,active=-1,ready=false,busy=false,done=false,starting=false;
+let widget,active=-1,ready=false,busy=false,done=false,starting=false,challengeError='';
 async function request(path,body){const response=await fetch(path,{method:body===undefined?'GET':'POST',headers:{'X-Vapt-Nonce':nonce,...(body===undefined?{}:{'Content-Type':'application/json'})},...(body===undefined?{}:{body:JSON.stringify(body)})});if(!response.ok)throw Error('local');return response;}
 button.onclick=async()=>{starting=true;button.disabled=true;try{await request('/start',{});}catch{label.textContent='Não foi possível iniciar. Avise no chat.';}};
 window.vaptTurnstileReady=()=>{ready=true;};
 async function tick(){try{const s=await(await request('/status')).json();
 button.disabled=starting||s.state!=='waiting';
-if(s.state==='finished'){done=true;button.disabled=true;if(widget!==undefined){turnstile.remove(widget);widget=undefined;}label.textContent=s.outcome.ok&&s.outcome.cleaned?'Validação concluída; dados sintéticos removidos.':'Validação encerrada. Consulte o resultado no chat.';return;}
-label.textContent=s.pending?'Login '+(s.pending.index+1)+' de ${roles.length} ('+s.pending.role+'): conclua o desafio abaixo.':s.state==='waiting'?'Aguardando início.':'Testes em andamento; aguarde o próximo desafio.';
+if(s.state==='finished'){done=true;button.disabled=true;if(widget!==undefined){turnstile.remove(widget);widget=undefined;}label.textContent=s.outcome.ok&&s.outcome.cleaned?${JSON.stringify(readiness?'Desafio recebido localmente e descartado. Não foi validado no servidor; nenhum login foi feito.':'Validação concluída; dados sintéticos removidos.')}:'Validação encerrada. Consulte o resultado no chat.';return;}
+label.textContent=challengeError||(s.pending?${readiness?"'Conclua o desafio abaixo, sem login ou chave R2.'":"'Login '+(s.pending.index+1)+' de "+roles.length+" ('+s.pending.role+'): conclua o desafio abaixo.'"}:s.state==='waiting'?'Aguardando início.':'Testes em andamento; aguarde o próximo desafio.');
 if(s.pending&&ready&&!busy&&s.pending.index!==active){if(widget!==undefined)turnstile.remove(widget);active=s.pending.index;const index=active;
-widget=turnstile.render('#challenge',{sitekey:'0x4AAAAAAEhvIktjmb6yaq09',callback:async token=>{busy=true;try{await request('/challenge',{index,token});}catch{label.textContent='Desafio não recebido. Avise no chat.';}finally{token=undefined;busy=false;}},'expired-callback':()=>{active=-1;},'error-callback':()=>{label.textContent='O desafio não carregou. Avise no chat.';}});}
+widget=turnstile.render('#challenge',{sitekey:'0x4AAAAAAEhvIktjmb6yaq09',callback:async token=>{busy=true;try{await request('/challenge',{index,token});challengeError='';}catch{challengeError='Desafio não recebido. Avise no chat.';label.textContent=challengeError;}finally{token=undefined;busy=false;}},'expired-callback':()=>{active=-1;},'error-callback':()=>{challengeError='O desafio não carregou. Avise no chat.';label.textContent=challengeError;}});}
 }catch{button.disabled=true;label.textContent='Controlador local encerrado. Consulte o chat.';done=true;}finally{if(!done)setTimeout(tick,2000);}}tick();
 </script><script src="https://challenges.cloudflare.com/turnstile/v0/api.js?onload=vaptTurnstileReady&render=explicit" async defer></script></html>`;
   const server=createServer(async(req,res)=>{
