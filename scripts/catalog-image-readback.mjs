@@ -4,10 +4,18 @@
 const ensure=value=>{if(!value)throw Error('Image readback guard failed');};
 const uuid=v=>typeof v==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(v);
 export async function verifyProductionCatalogImageAbsent(options={}){
+  return verifyImageAbsent(options,false);
+}
+// Separate product scope: require the known item ID as well as its object key.
+// The original branding profile remains branding-only.
+export async function verifyProductionCatalogProductImageAbsent(options={}){
+  return verifyImageAbsent(options,true);
+}
+async function verifyImageAbsent(options,product){
   let token,reader,response;
   try{
     const {restaurantId,objectKey,fetcher}=options,parts=typeof objectKey==='string'?objectKey.split('/'):[];
-    ensure(uuid(restaurantId)&&parts.length===3&&parts[0]===restaurantId&&parts[1]==='branding'&&uuid(parts[2])
+    ensure(uuid(restaurantId)&&parts.length===3&&parts[0]===restaurantId&&(product?uuid(options.itemId)&&parts[1]===options.itemId:parts[1]==='branding')&&uuid(parts[2])
       &&typeof fetcher==='function'&&typeof options.accessToken==='string'&&options.accessToken.length>=20&&options.accessToken.length<=8192&&!/[\r\n]/.test(options.accessToken));
     token=options.accessToken;
     const deadline=AbortSignal.timeout(15000),signal=options.signal?AbortSignal.any([options.signal,deadline]):deadline;
@@ -20,7 +28,7 @@ export async function verifyProductionCatalogImageAbsent(options={}){
       });
     }
     response=await wait(async()=>{
-      // The validated UUID/branding/UUID segments need no escaping. R2 REST
+      // The three validated path segments need no escaping. R2 REST
       // requires literal separators: %2F can address a different object key.
       const result=await fetcher('https://api.cloudflare.com/client/v4/accounts/3ce69408aa5112617a282957aba71932/r2/buckets/vapt-assets-production/objects/'+objectKey,
         {method:'GET',credentials:'omit',redirect:'error',signal,headers:{Authorization:'Bearer '+token}});

@@ -11,8 +11,11 @@ export async function createCatalogImageR2CredentialInput(){
 export async function createCatalogBrandingReferenceR2CredentialInput(){
   return createCredentialInput('reference');
 }
+export async function createCatalogProductReferenceR2CredentialInput(){
+  return createCredentialInput('product');
+}
 async function createCredentialInput(image){
-  const tokenName=image==='reference'?'vapt-catalog-production-branding-reference-2026-10-30':image?'vapt-catalog-production-image-test-2026-10-29':'vapt-catalog-production-writer-test-2026-10-27';
+  const tokenName=image==='product'?'vapt-catalog-production-product-reference-2026-11-04':image==='reference'?'vapt-catalog-production-branding-reference-2026-10-30':image?'vapt-catalog-production-image-test-2026-10-29':'vapt-catalog-production-writer-test-2026-10-27';
   const nonce=randomBytes(32).toString('hex');let origin,host,closed=false,received=false,claimed=false,resolve,reject;
   const pending=new Promise((ok,fail)=>{resolve=ok;reject=fail;});pending.catch(()=>{});
   const html=()=>`<!doctype html><html lang="pt-BR"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="vapt-nonce" content="${nonce}"><title>Vapt — credencial R2 de teste</title>
@@ -40,6 +43,9 @@ catch{body=undefined;a.value='';s.value='';label.textContent='Não foi possível
       if(!value||Array.isArray(value)||typeof value!=='object'||Object.keys(value).sort().join(',')!=='accessKeyId,secretAccessKey'
         ||typeof value.accessKeyId!=='string'||! /^[a-f0-9]{32}$/.test(value.accessKeyId)
         ||typeof value.secretAccessKey!=='string'||! /^[a-f0-9]{64}$/.test(value.secretAccessKey))return send(400,{});
+      // Reading a body yields: another request may have completed meanwhile.
+      // The final claim and delivery must be contiguous, without another await.
+      if(closed||received)return send(409,{});
       received=true;resolve({accessKeyId:value.accessKeyId,secretAccessKey:value.secretAccessKey,...(image?{receivedAt:Date.now()}:{})});value.accessKeyId=undefined;value.secretAccessKey=undefined;send(204);
     }catch{if(!res.headersSent)send(400,{});else res.end();}
   });

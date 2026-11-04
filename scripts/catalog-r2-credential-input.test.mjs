@@ -9,6 +9,15 @@ async function setup(t,create){
   return{bridge,request,page,html};
 }
 
+test('product input identifies only the product window and delivers credentials privately once',async t=>{
+  const m=await import('./catalog-r2-credential-input.mjs');assert.equal(typeof m.createCatalogProductReferenceR2CredentialInput,'function','product collector missing');
+  const f=await setup(t,m.createCatalogProductReferenceR2CredentialInput);
+  assert.match(f.html,/<strong>vapt-catalog-production-product-reference-2026-11-04<\/strong>/);assert.doesNotMatch(f.html,/branding-reference-2026-10-30|image-test-2026-10-29|writer-test-2026-10-27/);
+  const pending=f.bridge.waitForCredentials(),before=Date.now(),keys={accessKeyId:'a'.repeat(32),secretAccessKey:'b'.repeat(64)};
+  assert.equal((await f.request('/credentials',keys)).status,204);const value=await pending;
+  assert.ok(value.receivedAt>=before&&value.receivedAt<=Date.now());assert.equal((await f.request('/credentials',keys)).status,409);
+  assert.doesNotMatch(await(await fetch(f.bridge.url)).text(),/aaaaaaaa|bbbbbbbb/);
+});
 test('reference input requests only the new reference credential and timestamps its one private delivery',async t=>{
   const m=await import('./catalog-r2-credential-input.mjs');assert.equal(typeof m.createCatalogBrandingReferenceR2CredentialInput,'function','reference collector missing');
   const f=await setup(t,m.createCatalogBrandingReferenceR2CredentialInput);
@@ -53,4 +62,16 @@ test('malformed, extra-field and oversized credentials do not consume the one in
 });
 test('close cancels the outstanding credential wait and releases the listener',async t=>{
   const {bridge}=await setup(t),rejected=assert.rejects(bridge.waitForCredentials(),/closed/);await bridge.close();await rejected;await assert.rejects(fetch(bridge.url));
+});
+test('concurrent credential bodies deliver exactly one pair, not two successful acknowledgements',{timeout:5000},async t=>{
+  const m=await import('./catalog-r2-credential-input.mjs'),f=await setup(t,m.createCatalogProductReferenceR2CredentialInput),nonce=f.html.match(/name="vapt-nonce" content="([a-f0-9]{64})"/)[1];
+  const pending=f.bridge.waitForCredentials(),body=JSON.stringify({accessKeyId:'a'.repeat(32),secretAccessKey:'b'.repeat(64)});
+  async function headersOnly(){
+    let request;const result=new Promise((resolve,reject)=>{
+      request=http.request(f.bridge.url+'/credentials',{method:'POST',headers:{Origin:f.bridge.url,'X-Vapt-Nonce':nonce,'Content-Type':'application/json','Content-Length':Buffer.byteLength(body),Expect:'100-continue'}},response=>{response.resume();resolve(response.statusCode);});request.on('error',reject);
+    });result.catch(()=>{});t.after(()=>request.destroy());
+    await new Promise((resolve,reject)=>{request.once('continue',resolve);request.once('error',reject);request.flushHeaders();});return{request,result};
+  }
+  const first=await headersOnly(),second=await headersOnly();first.request.end(body);second.request.end(body);
+  assert.deepEqual((await Promise.all([first.result,second.result])).sort(),[204,409]);await pending;
 });

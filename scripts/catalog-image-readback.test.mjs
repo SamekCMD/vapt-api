@@ -10,6 +10,28 @@ function fixture(work){
   }};return{calls,options};
 }
 const missing=()=>Response.json({success:false,errors:[{code:10007,message:'The specified key does not exist.'}],messages:[],result:null},{status:404});
+for(const absent of [false,true])test('product readback binds the exact item path and reports physical '+(absent?'absence':'presence'),async()=>{
+  const m=await import('./catalog-image-readback.mjs');assert.equal(typeof m.verifyProductionCatalogProductImageAbsent,'function','product image readback missing');
+  const itemId='33333333-3333-4333-8333-333333333333',objectKey=id+'/'+itemId+'/22222222-2222-4222-8222-222222222222';let requests=0;
+  const proof=await m.verifyProductionCatalogProductImageAbsent({restaurantId:id,itemId,objectKey,accessToken:'synthetic-oauth-only-never-a-real-secret',fetcher:async(url,init)=>{
+    requests++;assert.equal(url,'https://api.cloudflare.com/client/v4/accounts/3ce69408aa5112617a282957aba71932/r2/buckets/vapt-assets-production/objects/'+objectKey);
+    assert.equal(init.method,'GET');assert.equal(init.credentials,'omit');assert.equal(init.redirect,'error');return absent?missing():new Response('existing bytes');
+  }});assert.deepEqual(proof,{absent,bucket:'vapt-assets-production',objectKey});assert.equal(requests,1);
+});
+test('product readback refuses branding, foreign items and traversal before any request',async()=>{
+  const m=await import('./catalog-image-readback.mjs');assert.equal(typeof m.verifyProductionCatalogProductImageAbsent,'function','product image readback missing');
+  const itemId='33333333-3333-4333-8333-333333333333',objectKey=id+'/'+itemId+'/22222222-2222-4222-8222-222222222222';let requests=0;
+  const options={restaurantId:id,itemId,objectKey,accessToken:'synthetic-oauth-only-never-a-real-secret',fetcher:async()=>{requests++;return missing();}};
+  for(const patch of [{itemId:id},{itemId:'branding',objectKey:key},{objectKey:key},{restaurantId:itemId},{objectKey:objectKey+'/../x'}])await assert.rejects(()=>m.verifyProductionCatalogProductImageAbsent({...options,...patch}));
+  assert.equal(requests,0);
+});
+test('product readback cannot treat provider denial or missing bucket as object absence',async()=>{
+  const m=await import('./catalog-image-readback.mjs');assert.equal(typeof m.verifyProductionCatalogProductImageAbsent,'function','product image readback missing');
+  for(const [status,code]of [[401,10002],[403,10003],[404,10006],[500,10001]]){
+    const itemId='33333333-3333-4333-8333-333333333333';let requests=0;
+    await assert.rejects(()=>m.verifyProductionCatalogProductImageAbsent({restaurantId:id,itemId,objectKey:id+'/'+itemId+'/22222222-2222-4222-8222-222222222222',accessToken:'synthetic-oauth-only-never-a-real-secret',fetcher:async()=>{requests++;return Response.json({success:false,errors:[{code}]},{status});}}));assert.equal(requests,1);
+  }
+});
 test('literal path separators address the existing object instead of accepting an encoded-key 404 as absence',async()=>{
   const verify=await feature();let requests=0;
   const result=await verify({restaurantId:id,objectKey:key,accessToken:'synthetic-oauth-only-never-a-real-secret',fetcher:async url=>{
