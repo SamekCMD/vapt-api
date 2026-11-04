@@ -91,6 +91,28 @@ async function referenceFixture(){
   return f;
 }
 const referenceFeature=async()=>{const m=await import('./catalog-writer-gate.mjs');assert.equal(typeof m.runProductionCatalogBrandingReferenceGate,'function','reference lifecycle missing');return m.runProductionCatalogBrandingReferenceGate;};
+for(const mode of ['ready','expired_before_seed','expired_before_login'])test('pre-issuance challenge integrates with real branding lifecycle: '+mode,async()=>{
+  const {prepareCatalogChallengeBeforeIssuance}=await import('./catalog-pre-issuance-challenge.mjs');
+  const run=await referenceFeature(),f=await referenceFixture(),abort=new AbortController();let time=1000,logins=0;
+  const prepared=await prepareCatalogChallengeBeforeIssuance({signal:abort.signal,now:()=>time,
+    captcha:async()=>{f.events.push('human_before_key');return challenge;},confirmIssuance:async()=>{},recordChallenge:async()=>{},
+    openInput:async()=>{f.events.push('key_issuance');return{close:async()=>{}};},receiveCredentials:async()=>{},confirmRun:async()=>{},
+  });
+  const fetcher=f.options.fetcher,seed=f.options.driver.seed;
+  f.options.captcha=options=>prepared.captcha(options);
+  f.options.fetcher=async(url,init)=>{if(new URL(url).pathname==='/api/auth/sign-in/email'){prepared.authorizeLogin();logins++;}return fetcher(url,init);};
+  f.options.driver.seed=async()=>{const value=await seed();if(mode==='expired_before_login')time=181000;return value;};
+  if(mode==='expired_before_seed')time=121000;
+  let result;try{result=await run(f.options);}finally{prepared.close();}
+  assert.equal(f.events.indexOf('human_before_key')<f.events.indexOf('key_issuance'),true);
+  if(mode==='ready'){
+    assert.equal(result.ok,true);assert.equal(logins,1);assert.equal(f.events.indexOf('key_issuance')<f.events.indexOf('seed'),true);
+  }else{
+    assert.equal(result.ok,false);assert.equal(logins,0);assert.equal(result.seeded,mode==='expired_before_login');
+    assert.equal(result.cleaned,false);assert.equal(f.events.includes('retire'),false);
+  }
+  assert.equal(f.events.filter(v=>v==='revoke').length,1);assert.equal(f.state().closed,true);
+});
 test('branding reference lifecycle composes baseline, upload-only and protection before logout and guarded cleanup',async()=>{
   const run=await referenceFeature(),f=await referenceFixture(),result=await run(f.options);
   assert.equal(result.ok,true);assert.equal(result.cleaned,true);assert.equal(result.uploadProbe.stage,'uploaded');assert.equal(result.imageProbe.protectedDeletions,2);
