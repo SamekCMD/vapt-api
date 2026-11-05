@@ -119,7 +119,7 @@ try {
   if(onlyParity) tests=['src/modules/tenancy/parity.pg-integration.ts'];
   if (!onlyParity && !onlyOnboarding && through !== '009' && through !== '010') tests.push(resolve(schemaRoot,'infra/cloudflare/billing-email-worker/src/outbox-repository.integration.test.ts'));
   if(onlyCatalogCanary) tests=['scripts/catalog-canary-fixtures.pg-integration.mjs'];
-  if(onlyCatalogWriter) tests=['scripts/catalog-writer-fixtures.pg-integration.mjs','scripts/catalog-writer-retirement.pg-integration.mjs'];
+  if(onlyCatalogWriter) tests=['scripts/catalog-writer-fixtures.pg-integration.mjs','scripts/catalog-writer-retirement.pg-integration.mjs','scripts/catalog-onboarding-fixtures.pg-integration.mjs'];
   const result = await command(process.execPath,
     ['--import', 'tsx', '--test', '--test-concurrency=1', ...tests], childEnv);
   process.stdout.write(result.output);
