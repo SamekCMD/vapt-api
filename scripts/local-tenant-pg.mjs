@@ -10,18 +10,19 @@ import pg from 'pg';
 
 const apiRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const schemaRoot = resolve(apiRoot, '../..');
-const workspace = resolve(schemaRoot, (process.argv.includes('--only=catalog-canary')||process.argv.includes('--only=catalog-writer'))
+const workspace = resolve(schemaRoot, (process.argv.includes('--only=catalog-canary')||process.argv.includes('--only=catalog-writer')||process.argv.includes('--only=catalog-recovery'))
   ? '.superpowers/sdd/infra-migration-public-catalog-event-driven-plan' : '.superpowers/sdd/2026-10-19-tenant-parity-restoration');
 const bin = resolve(schemaRoot,
   '.superpowers/sdd/infra-migration-public-catalog-event-driven-plan/pg-runtime/extracted/pgsql/bin');
 const stages = ['009', '010', '011', '012'];
 const args = process.argv.slice(2);
-if (args.length > 2 || args.some(arg=>!/^--through=(009|010|011|012)$/.test(arg) && !/^--only=(organization-billing|onboarding|parity|catalog-canary|catalog-writer)$/.test(arg)) ||
+if (args.length > 2 || args.some(arg=>!/^--through=(009|010|011|012)$/.test(arg) && !/^--only=(organization-billing|onboarding|parity|catalog-canary|catalog-writer|catalog-recovery)$/.test(arg)) ||
   new Set(args.map(arg=>arg.split('=')[0])).size!==args.length) {
-  throw new Error('Usage: npm run test:tenant-pg -- [--through=009|010|011|012] [--only=organization-billing|onboarding|parity|catalog-canary|catalog-writer]');
+  throw new Error('Usage: npm run test:tenant-pg -- [--through=009|010|011|012] [--only=organization-billing|onboarding|parity|catalog-canary|catalog-writer|catalog-recovery]');
 }
 const onlyCatalogCanary=args.includes('--only=catalog-canary');
 const onlyCatalogWriter=args.includes('--only=catalog-writer');
+const onlyCatalogRecovery=args.includes('--only=catalog-recovery');
 const onlyParity=args.includes('--only=parity');
 const onlyBilling=args.includes('--only=organization-billing');
 const onlyOnboarding=args.includes('--only=onboarding');
@@ -33,6 +34,7 @@ const through = args.find(arg=>arg.startsWith('--through='))?.split('=')[1] ?? [
 if(onlyParity&&through!=='012')throw new Error('Parity suite requires schema012');
 if(onlyCatalogCanary&&through!=='012')throw new Error('Catalog canary fixture suite requires schema012');
 if(onlyCatalogWriter&&through!=='012')throw new Error('Catalog writer fixture suite requires schema012');
+if(onlyCatalogRecovery&&through!=='012')throw new Error('Catalog recovery suite requires schema012');
 if((onlyBilling||onlyOnboarding) && through==='009') throw new Error('Focused suites require the tenant foundation');
 const exe = (name) => resolve(bin, `${name}${process.platform === 'win32' ? '.exe' : ''}`);
 if (!existsSync(exe('initdb'))) throw new Error('Existing local PostgreSQL runtime is absent; no installation attempted');
@@ -120,6 +122,7 @@ try {
   if (!onlyParity && !onlyOnboarding && through !== '009' && through !== '010') tests.push(resolve(schemaRoot,'infra/cloudflare/billing-email-worker/src/outbox-repository.integration.test.ts'));
   if(onlyCatalogCanary) tests=['scripts/catalog-canary-fixtures.pg-integration.mjs'];
   if(onlyCatalogWriter) tests=['scripts/catalog-writer-fixtures.pg-integration.mjs','scripts/catalog-writer-retirement.pg-integration.mjs','scripts/catalog-onboarding-fixtures.pg-integration.mjs'];
+  if(onlyCatalogRecovery) tests=['scripts/catalog-recovery.pg-integration.mjs'];
   const result = await command(process.execPath,
     ['--import', 'tsx', '--test', '--test-concurrency=1', ...tests], childEnv);
   process.stdout.write(result.output);
