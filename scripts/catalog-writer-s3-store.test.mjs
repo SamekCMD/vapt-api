@@ -13,6 +13,17 @@ function fixture(handler){
     },destroy(){}}};return{options,requests};
 }
 const response=(body,statusCode=200,headers={})=>({statusCode,headers:{etag,'content-type':'application/json',...headers},body:Readable.from([Buffer.from(body)])});
+for(const status of [200,401,403,404,500,null])test('onboarding revocation records only bounded HTTP evidence for '+status,async()=>{
+  const m=await import('./catalog-writer-s3-store.mjs');assert.equal(typeof m.createProductionCatalogOnboardingS3Store,'function','onboarding S3 profile missing');
+  const f=fixture(async()=>{if(status===null)throw Error('private-transport-diagnostic');return response(status===200?'{}':'<Error><Code>AccessDenied</Code><Message>private-provider-body</Message></Error>',status,{'content-type':status===200?'application/json':'application/xml'});});
+  const options={...f.options,version:'11'};delete options.versions;const store=m.createProductionCatalogOnboardingS3Store(options);
+  try{
+    const result=await store.verifyRevoked();assert.deepEqual(result,{revoked:status===403,attempted:true,status});assert.equal(f.requests.length,1);
+    assert.equal(f.requests[0].method,'GET');assert(f.requests[0].path.endsWith(`/slugs/${tag}.json`));assert.doesNotMatch(JSON.stringify(result),/private|aaaaaaa|bbbbb/);
+    await assert.rejects(()=>store.get(prefix+'snapshots/12.json'));await assert.rejects(()=>store.put(prefix+'manifest.json','{}',{ifMatch:etag}));
+    store.close();assert.deepEqual(await store.verifyRevoked(),{revoked:false,attempted:false,status:null});assert.equal(f.requests.length,1);
+  }finally{store.close();}
+});
 
 test('product baseline transport permits exactly three GETs and no write or unknown revision',async()=>{
   const m=await import('./catalog-writer-s3-store.mjs');assert.equal(typeof m.createProductionCatalogProductBaselineReadS3Store,'function','product baseline reader missing');

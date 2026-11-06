@@ -14,8 +14,11 @@ export async function createCatalogBrandingReferenceR2CredentialInput(){
 export async function createCatalogProductReferenceR2CredentialInput(){
   return createCredentialInput('product');
 }
+export async function createCatalogOnboardingR2CredentialInput(){
+  return createCredentialInput('onboarding');
+}
 async function createCredentialInput(image){
-  const tokenName=image==='product'?'vapt-catalog-production-product-reference-2026-11-04':image==='reference'?'vapt-catalog-production-branding-reference-2026-10-30':image?'vapt-catalog-production-image-test-2026-10-29':'vapt-catalog-production-writer-test-2026-10-27';
+  const tokenName=image==='onboarding'?'vapt-catalog-production-onboarding-2026-11-05':image==='product'?'vapt-catalog-production-product-reference-2026-11-04':image==='reference'?'vapt-catalog-production-branding-reference-2026-10-30':image?'vapt-catalog-production-image-test-2026-10-29':'vapt-catalog-production-writer-test-2026-10-27';
   const nonce=randomBytes(32).toString('hex');let origin,host,closed=false,received=false,claimed=false,resolve,reject;
   const pending=new Promise((ok,fail)=>{resolve=ok;reject=fail;});pending.catch(()=>{});
   const html=()=>`<!doctype html><html lang="pt-BR"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="vapt-nonce" content="${nonce}"><title>Vapt — credencial R2 de teste</title>

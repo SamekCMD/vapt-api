@@ -22,6 +22,12 @@ export function createProductionCatalogImageS3Store(options={}){
   ensure(!Object.hasOwn(options,'versions'));
   return createProductionCatalogS3Store({...options,versions:[options.version]},1);
 }
+// Same fixed three-key capability, but preserve only numeric HTTP evidence for
+// this future window. Old profiles and their strict403 contract stay unchanged.
+export function createProductionCatalogOnboardingS3Store(options={}){
+  ensure(!Object.hasOwn(options,'versions'));
+  return createProductionCatalogS3Store({...options,versions:[options.version]},1,32,false,true);
+}
 // Four exact revisions of the separate branding-reference gate: six keys,
 // at most64 requests for three readbacks, retirement and one revocation check.
 // Older profiles keep their existing key counts and32-request limit.
@@ -44,7 +50,7 @@ export function createProductionCatalogProductBaselineReadS3Store(options={}){
   ensure(!Object.hasOwn(options,'versions'));
   return createProductionCatalogS3Store({...options,versions:[options.version]},1,3,true);
 }
-function createProductionCatalogS3Store(options,count,maxRequests=32,readOnly=false){
+function createProductionCatalogS3Store(options,count,maxRequests=32,readOnly=false,revocationEvidence=false){
   const {restaurantId,tag,expiresAt,requestHandler}=options,versions=structuredClone(options.versions);
   ensure(uuid(restaurantId)&&typeof tag==='string'&&tag.startsWith('catalog-writer-')&&uuid(tag.slice(15))
     &&Array.isArray(versions)&&versions.length===count&&versions.every((v,i)=>version(v)&&(i===0||BigInt(v)>BigInt(versions[i-1])))
@@ -61,15 +67,16 @@ function createProductionCatalogS3Store(options,count,maxRequests=32,readOnly=fa
   const signal=value=>value?AbortSignal.any([value,AbortSignal.timeout(15000)]):AbortSignal.timeout(15000);
   return{
     async verifyRevoked({signal:callerSignal}={}){
-      let body;
+      let body,attempted=false;
       try{
-        admitted(slugKey);requests++;
+        admitted(slugKey);requests++;attempted=true;
         const value=await client.send(new GetObjectCommand({Bucket:'vapt-catalog-production',Key:slugKey}),{abortSignal:signal(callerSignal)});
         body=value.Body;body?.destroy?.();
         if(body&&!body.destroy&&typeof body.cancel==='function')await body.cancel();
-        return{revoked:false};
+        return revocationEvidence?{revoked:false,attempted:true,status:200}:{revoked:false};
       }catch(error){
         body?.destroy?.();
+        if(revocationEvidence){const raw=error?.$metadata?.httpStatusCode,status=Number.isInteger(raw)&&raw>=100&&raw<=599?raw:null;return{revoked:status===403,attempted,status};}
         if(error?.$metadata?.httpStatusCode===403)return{revoked:true};
         if(error?.$metadata?.httpStatusCode===404)return{revoked:false};
         throw Error('Catalog S3 revocation check stopped');

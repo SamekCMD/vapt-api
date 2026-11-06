@@ -19,8 +19,30 @@ export async function createProductionCatalogOnboardingFixtureDriver(options={})
   ensure(['postgres:','postgresql:'].includes(url.protocol)&&url.hostname==='ep-holy-wildflower-b6vtv1dd.c-2.sa-east-1.aws.neon.tech'
     &&url.pathname==='/vapt'&&url.username==='neondb_owner'&&url.password&&['','5432'].includes(url.port)&&!url.hash
     &&url.searchParams.get('sslmode')==='verify-full'&&[...url.searchParams].every(([key,value])=>key==='sslmode'&&value==='verify-full'||key==='channel_binding'&&value==='require'));
-  const pool=(options.createPool??(config=>new Pool(config)))({host:url.hostname,port:5432,database:'vapt',user:'neondb_owner',password:decodeURIComponent(url.password),
+  const rawPool=(options.createPool??(config=>new Pool(config)))({host:url.hostname,port:5432,database:'vapt',user:'neondb_owner',password:decodeURIComponent(url.password),
     ssl:{rejectUnauthorized:true},max:1,connectionTimeoutMillis:10000,statement_timeout:8000,lock_timeout:2000});url=undefined;
+  // Server statement_timeout cannot bound a blackholed response. On a client
+  // deadline, release(true) removes the pg client and destroys its active socket.
+  // Never queue ROLLBACK/retry on that connection or reconnect after uncertainty.
+  let transportBroken=false;const leases=new Set();
+  function transportError(){return Object.assign(Error('Onboarding SQL transport stopped'),{transportLost:true});}
+  const pool={
+    async connect(){
+      ensure(!transportBroken);const raw=await rawPool.connect();let released=false,broken=false;
+      const client={
+        async query(sql,params){
+          ensure(!released&&!broken&&!transportBroken);let timer;
+          const deadline=new Promise((resolve,reject)=>{timer=setTimeout(()=>{broken=true;transportBroken=true;client.release(true);reject(transportError());},15000);});
+          try{return await Promise.race([Promise.resolve().then(()=>raw.query(sql,params)),deadline]);}
+          catch(error){if(error?.transportLost||!(/^[0-9A-Z]{5}$/.test(error?.code??''))){broken=true;transportBroken=true;client.release(true);}throw error;}
+          finally{clearTimeout(timer);}
+        },
+        release(reason){if(!released){released=true;leases.delete(client);raw.release(reason);}}
+      };leases.add(client);return client;
+    },
+    async query(sql,params){const client=await pool.connect();try{return await client.query(sql,params);}finally{client.release();}},
+    async end(){for(const client of leases)client.release(true);await rawPool.end();}
+  };
   const u=m.user.id,ids=m.operationIds;let attempted=false,seeded=false,retirementAttempted=false,retired=false,cleanupAttempted=false,closed=false;
   async function identity(){const row=(await pool.query('select current_database() as database,current_user as role')).rows[0];ensure(row?.database==='vapt'&&row.role==='neondb_owner');}
   try{await identity();}catch{await pool.end();throw Error('Catalog onboarding identity refused');}
@@ -92,10 +114,13 @@ export async function createProductionCatalogOnboardingFixtureDriver(options={})
     const effects=(await query(`select (
       (select count(*) from public.menu_items where restaurant_id=$1)+(select count(*) from public.orders where restaurant_id=$1)+
       (select count(*) from public.table_sessions where restaurant_id=$1)+(select count(*) from public.restaurant_activation_progress where restaurant_id=$1 or completed_by=$2)+
-      (select count(*) from public.billing_email_outbox where organization_id=$3)+(select count(*) from public.billing_provider_events where organization_id=$3)+
+      (select count(*) from public.billing_email_outbox where organization_id=$3 or restaurant_id=$1)+(select count(*) from public.billing_provider_events where organization_id=$3 or restaurant_id=$1)+
       (select count(*) from public.organization_billing_resources where organization_id=$3)+(select count(*) from public.organization_billing_legacy_resources where organization_id=$3 or legacy_owner_id=$2)+
       (select count(*) from public.payment_effect_outbox where restaurant_id=$1)+(select count(*) from public.payment_provider_accounts where restaurant_id=$1)+
-      (select count(*) from public.payment_transactions where restaurant_id=$1)
+      (select count(*) from public.payment_transactions where restaurant_id=$1)+
+      (select count(*) from public.push_subscriptions where restaurant_id=$1)+(select count(*) from public.order_feedback where restaurant_id=$1)+
+      (select count(*) from public.payment_oauth_states where restaurant_id=$1)+(select count(*) from public.payment_provider_events where restaurant_id=$1)+
+      (select count(*) from public.payment_webhook_events where restaurant_id=$1)
     )::int n`,[r,u,o])).rows[0];ensure(effects?.n===0);
     const current=(await query(`select id,name,slug,whatsapp,address,phone,hours,description,primary_color as "primaryColor",secondary_color as "secondaryColor",
       font_family as "fontFamily",logo_url as "logoUrl",total_tables as "totalTables",max_tables as "maxTables",payment_mode as "paymentMode",max_pending_orders as "maxPendingOrders",
@@ -121,7 +146,16 @@ export async function createProductionCatalogOnboardingFixtureDriver(options={})
     (select count(*) from public.onboarding_intents where restaurant_id=$1 or organization_id=$2 or actor_id=$3)+
     (select count(*) from public.account_preferences where restaurant_id=$1 or organization_id=$2 or user_id=$3)+
     (select count(*) from public.catalog_publication_operations where restaurant_id=$1 or actor_id=$3)+
-    (select count(*) from public.catalog_publication_revisions where restaurant_id=$1)
+    (select count(*) from public.catalog_publication_revisions where restaurant_id=$1)+
+    (select count(*) from public.menu_items where restaurant_id=$1)+(select count(*) from public.orders where restaurant_id=$1)+
+    (select count(*) from public.table_sessions where restaurant_id=$1)+(select count(*) from public.restaurant_activation_progress where restaurant_id=$1 or completed_by=$3)+
+    (select count(*) from public.billing_email_outbox where restaurant_id=$1 or organization_id=$2)+(select count(*) from public.billing_provider_events where restaurant_id=$1 or organization_id=$2)+
+    (select count(*) from public.organization_billing_resources where organization_id=$2)+(select count(*) from public.organization_billing_legacy_resources where restaurant_id=$1 or organization_id=$2 or legacy_owner_id=$3)+
+    (select count(*) from public.payment_effect_outbox where restaurant_id=$1)+(select count(*) from public.payment_provider_accounts where restaurant_id=$1)+
+    (select count(*) from public.payment_transactions where restaurant_id=$1)+
+    (select count(*) from public.push_subscriptions where restaurant_id=$1)+(select count(*) from public.order_feedback where restaurant_id=$1)+
+    (select count(*) from public.payment_oauth_states where restaurant_id=$1)+(select count(*) from public.payment_provider_events where restaurant_id=$1)+
+    (select count(*) from public.payment_webhook_events where restaurant_id=$1)
   )::int n`;
   return{
     identifiers(){ensure(!closed);return structuredClone(m);},

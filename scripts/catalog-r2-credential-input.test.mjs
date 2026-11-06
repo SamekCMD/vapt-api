@@ -18,6 +18,15 @@ test('product input identifies only the product window and delivers credentials 
   assert.ok(value.receivedAt>=before&&value.receivedAt<=Date.now());assert.equal((await f.request('/credentials',keys)).status,409);
   assert.doesNotMatch(await(await fetch(f.bridge.url)).text(),/aaaaaaaa|bbbbbbbb/);
 });
+test('onboarding input names only its own token and delivers two S3 fields once with a timestamp',async t=>{
+  const m=await import('./catalog-r2-credential-input.mjs');assert.equal(typeof m.createCatalogOnboardingR2CredentialInput,'function','onboarding collector missing');
+  const f=await setup(t,m.createCatalogOnboardingR2CredentialInput);assert.match(f.html,/<strong>vapt-catalog-production-onboarding-2026-11-05<\/strong>/);
+  assert.doesNotMatch(f.html,/product-reference-2026-11-04|branding-reference-2026-10-30/);
+  const pending=f.bridge.waitForCredentials(),keys={accessKeyId:'a'.repeat(32),secretAccessKey:'b'.repeat(64)},before=Date.now();
+  assert.equal((await f.request('/credentials',keys)).status,204);const value=await pending;
+  assert.ok(value.receivedAt>=before&&value.receivedAt<=Date.now());assert.equal((await f.request('/credentials',keys)).status,409);
+  assert.doesNotMatch(await(await fetch(f.bridge.url)).text(),/aaaaaaaa|bbbbbbbb/);
+});
 test('reference input requests only the new reference credential and timestamps its one private delivery',async t=>{
   const m=await import('./catalog-r2-credential-input.mjs');assert.equal(typeof m.createCatalogBrandingReferenceR2CredentialInput,'function','reference collector missing');
   const f=await setup(t,m.createCatalogBrandingReferenceR2CredentialInput);
