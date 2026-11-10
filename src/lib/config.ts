@@ -227,19 +227,19 @@ function parseStripePortalConfigurationId(value: string): string {
   return value;
 }
 
-function parseFrontendUrl(value: string, nodeEnv: string): URL {
-  const url = parseUrl(value, "FRONTEND_URL");
+function parseAppUrl(value: string, key: "FRONTEND_URL" | "BETTER_AUTH_URL", nodeEnv: string): URL {
+  const url = parseUrl(value, key);
   const localDevelopment =
     nodeEnv === "development" &&
     url.protocol === "http:" &&
     (url.hostname === "localhost" || url.hostname === "127.0.0.1");
 
   if (url.protocol !== "https:" && !localDevelopment) {
-    throw new ConfigError("FRONTEND_URL must use https outside local development");
+    throw new ConfigError(`${key} must use https outside local development`);
   }
   if (url.username || url.password || url.search || url.hash) {
     throw new ConfigError(
-      "FRONTEND_URL must not contain credentials, a query string, or a fragment",
+      `${key} must not contain credentials, a query string, or a fragment`,
     );
   }
 
@@ -259,7 +259,11 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
   const paymentEffectsRetryBaseMs = getValueOrDefault(env, "PAYMENT_EFFECTS_RETRY_BASE_MS", "30000");
   const stripeSecretKey = requireValue(env, "STRIPE_SECRET_KEY");
   const stripeWebhookSecret = requireValue(env, "STRIPE_WEBHOOK_SECRET");
-  const stripeEnvironment = requireValue(env, "STRIPE_ENVIRONMENT");
+  const stripeEnvironment = parseStripeEnvironment(requireValue(env, "STRIPE_ENVIRONMENT"));
+  const stripeKeyMode = /^(?:sk|rk)_(test|live)_.+$/.exec(stripeSecretKey)?.[1];
+  if (stripeKeyMode !== stripeEnvironment) {
+    throw new ConfigError("STRIPE_SECRET_KEY must be a secret or restricted key for STRIPE_ENVIRONMENT");
+  }
   const stripePortalConfigurationId = requireValue(
     env,
     "STRIPE_PORTAL_CONFIGURATION_ID",
@@ -399,7 +403,7 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
         stripeWebhookToleranceSeconds,
         "STRIPE_WEBHOOK_TOLERANCE_SECONDS",
       ),
-      environment: parseStripeEnvironment(stripeEnvironment),
+      environment: stripeEnvironment,
       portalConfigurationId: parseStripePortalConfigurationId(
         stripePortalConfigurationId,
       ),
@@ -416,7 +420,7 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
       maxAttempts: parsePositiveInteger(paymentEffectsMaxAttempts, "PAYMENT_EFFECTS_MAX_ATTEMPTS"),
       retryBaseMs: parsePositiveInteger(paymentEffectsRetryBaseMs, "PAYMENT_EFFECTS_RETRY_BASE_MS"),
     },
-    frontendUrl: parseFrontendUrl(frontendUrl, nodeEnv),
+    frontendUrl: parseAppUrl(frontendUrl, "FRONTEND_URL", nodeEnv),
     apiPublicUrl,
     mercadoPago,
     security: {
@@ -425,7 +429,7 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
     },
     betterAuth: {
       secret: betterAuthSecret,
-      url: parseUrl(betterAuthUrl, "BETTER_AUTH_URL"),
+      url: parseAppUrl(betterAuthUrl, "BETTER_AUTH_URL", nodeEnv),
       trustedOrigins: parseTrustedOrigins(betterAuthTrustedOrigins),
       databaseUrl,
       turnstileSecretKey,

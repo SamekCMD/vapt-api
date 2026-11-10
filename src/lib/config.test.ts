@@ -140,6 +140,25 @@ test("createConfig rejects an unsupported Stripe environment", () => {
   );
 });
 
+test("createConfig rejects a Stripe key from another mode or a non-server key", () => {
+  for (const [mode, key] of [
+    ["test", "sk_live_fixture"],
+    ["test", "rk_live_fixture"],
+    ["live", "sk_test_fixture"],
+    ["test", "pk_test_fixture"],
+  ]) {
+    assert.throws(
+      () => createConfig({ ...validStripeEnv, STRIPE_ENVIRONMENT: mode, STRIPE_SECRET_KEY: key }),
+      { name: "ConfigError", message: /STRIPE_SECRET_KEY/ },
+    );
+  }
+});
+
+test("createConfig supports a restricted key in the configured Stripe mode", () => {
+  const config = createConfig({ ...validStripeEnv, STRIPE_SECRET_KEY: "rk_test_fixture" });
+  assert.equal(config.stripe.secretKey, "rk_test_fixture");
+});
+
 test("createConfig requires a Stripe Portal configuration identifier", () => {
   assert.throws(
     () => createConfig({ ...validStripeEnv, STRIPE_PORTAL_CONFIGURATION_ID: "portal_vapt" }),
@@ -155,11 +174,37 @@ test("createConfig rejects a Portal prefix without an identifier", () => {
 });
 
 test("createConfig supports live mode without enabling Mercado Pago", () => {
-  const config = createConfig({ ...validEnv, STRIPE_ENVIRONMENT: "live" });
+  const config = createConfig({
+    ...validEnv,
+    STRIPE_ENVIRONMENT: "live",
+    STRIPE_SECRET_KEY: "sk_live_fixture",
+  });
 
   assert.equal(config.stripe.environment, "live");
   assert.equal(config.mercadoPago, undefined);
   assert.equal(config.apiPublicUrl, undefined);
+});
+
+test("createConfig rejects HTTP for Better Auth outside local development", () => {
+  for (const [nodeEnv, url] of [
+    ["production", "http://api.vapt.test"],
+    ["production", "http://localhost:3000"],
+    ["development", "http://api.vapt.test"],
+  ]) {
+    assert.throws(
+      () => createConfig({ ...validStripeEnv, NODE_ENV: nodeEnv, BETTER_AUTH_URL: url }),
+      { name: "ConfigError", message: /BETTER_AUTH_URL must use https/ },
+    );
+  }
+});
+
+test("createConfig allows HTTP for loopback Better Auth development", () => {
+  const config = createConfig({
+    ...validStripeEnv,
+    NODE_ENV: "development",
+    BETTER_AUTH_URL: "http://localhost:3000",
+  });
+  assert.equal(config.betterAuth.url.origin, "http://localhost:3000");
 });
 
 for (const frontendUrl of [
