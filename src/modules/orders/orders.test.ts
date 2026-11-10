@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import type { Queryable } from "../../lib/database.js";
 import { AppError } from "../../lib/errors.js";
 import {
   createOrderBodySchema,
@@ -37,7 +38,7 @@ const validBody = {
 
 const createdOrder: CreatePublicOrderRecord = {
   orderId: "20000000-0000-0000-0000-000000000001",
-  displayId: 42,
+  displayId: "42",
   restaurantId: "30000000-0000-0000-0000-000000000001",
   tableSessionId: null,
   totalPrice: "51.80",
@@ -167,66 +168,59 @@ test("order service sends only product references and server security metadata",
   assert.ok(result.publicToken.length >= 32);
 });
 
-test("order repository uses the additive v3 RPC for explicit delivery payment mode", async () => {
-  const rpcCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
-  const client = {
-    rpc(name: string, args: Record<string, unknown>) {
-      rpcCalls.push({ name, args });
+test("order repository calls the versioned PostgreSQL routine and preserves decimal and bigint strings", async () => {
+  const calls: Array<{ sql: string; values: unknown[] }> = [];
+  const database = {
+    async query(sql: string, values: unknown[]) {
+      calls.push({ sql, values });
       return {
-        async single() {
-          return {
-            data: {
-              order_id: createdOrder.orderId,
-              display_id: createdOrder.displayId,
-              restaurant_id: createdOrder.restaurantId,
-              table_session_id: null,
-              total_price: createdOrder.totalPrice,
-              status: "waiting_payment",
-              payment_status: null,
-              idempotent_replay: false,
-            },
-            error: null,
-          };
-        },
+        rows: [{
+          order_id: createdOrder.orderId,
+          display_id: "9007199254740993",
+          restaurant_id: createdOrder.restaurantId,
+          table_session_id: null,
+          total_price: "51.80",
+          status: "waiting_payment",
+          payment_status: null,
+          idempotent_replay: false,
+        }],
       };
     },
-  };
+  } as unknown as Queryable;
 
-  const repository = createOrderRepository(client as never);
-  await repository.createPublicOrder({
+  const result = await createOrderRepository(database).createPublicOrder({
     ...validBody,
     idempotencyKey: "order-attempt-0001",
     requestFingerprint: "request-fingerprint",
     publicTokenHash: "public-token-hash",
   });
 
-  assert.equal(rpcCalls[0]?.name, "create_public_order_v3");
-  assert.deepEqual(
-    (rpcCalls[0]?.args.p_delivery as Record<string, unknown>).paymentMode,
-    "online",
-  );
+  assert.match(calls[0]?.sql ?? "", /public\.create_public_order_v3/i);
+  assert.equal((calls[0]?.sql.match(/\$\d+/g) ?? []).length, 8);
+  assert.deepEqual(calls[0]?.values, [
+    validBody.restaurantSlug,
+    "delivery",
+    null,
+    JSON.stringify(validBody.items),
+    JSON.stringify(validBody.delivery),
+    "public-token-hash",
+    "order-attempt-0001",
+    "request-fingerprint",
+  ]);
+  assert.equal(result.displayId, "9007199254740993");
+  assert.equal(result.totalPrice, "51.80");
 });
 
-test("unexpected order storage failures retain safe PostgREST diagnostics", async () => {
-  const client = {
-    rpc() {
-      return {
-        async single() {
-          return {
-            data: null,
-            error: {
-              code: "42804",
-              message: "column status has an incompatible type",
-              details: "Returned type does not match the function result",
-              hint: "Add an explicit cast",
-            },
-          };
-        },
-      };
+test("unexpected PostgreSQL order failures are sanitized", async () => {
+  const database = {
+    async query() {
+      const error = new Error("postgresql://user:secret@db create_public_order_v3 query");
+      Object.assign(error, { code: "42804" });
+      throw error;
     },
-  };
+  } as unknown as Queryable;
 
-  const repository = createOrderRepository(client as never);
+  const repository = createOrderRepository(database);
 
   await assert.rejects(
     repository.createPublicOrder({
@@ -238,16 +232,70 @@ test("unexpected order storage failures retain safe PostgREST diagnostics", asyn
     (error: unknown) => {
       assert.ok(error instanceof AppError);
       assert.equal(error.code, "order_storage_error");
-      assert.deepEqual(error.diagnostics, {
-        provider: "postgrest",
-        code: "42804",
-        message: "column status has an incompatible type",
-        details: "Returned type does not match the function result",
-        hint: "Add an explicit cast",
-      });
+      assert.equal(error.message, "Failed to persist order");
+      assert.equal(error.diagnostics, undefined);
+      assert.doesNotMatch(error.message, /secret|query|create_public_order/i);
       return true;
     },
   );
+});
+
+test("public order lookup validates the token before loading item rows", async () => {
+  const calls: Array<{ sql: string; values: unknown[] }> = [];
+  const database = {
+    async query(sql: string, values: unknown[]) {
+      calls.push({ sql, values });
+      return { rows: [] };
+    },
+  } as unknown as Queryable;
+
+  const result = await createOrderRepository(database).findPublicOrder(
+    createdOrder.orderId,
+    "wrong-token-hash",
+  );
+
+  assert.equal(result, null);
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0]?.values, [createdOrder.orderId, "wrong-token-hash"]);
+  assert.match(calls[0]?.sql ?? "", /public_access_token_hash\s*=\s*\$2/i);
+});
+
+test("public order lookup maps PostgreSQL order and item rows without numeric loss", async () => {
+  const database = {
+    async query(sql: string) {
+      if (/from public\.orders/i.test(sql)) {
+        return { rows: [{
+          id: createdOrder.orderId,
+          display_id: "9007199254740993",
+          restaurant_id: createdOrder.restaurantId,
+          table_session_id: null,
+          table_number: null,
+          total_price: "51.80",
+          status: "waiting_payment",
+          payment_status: null,
+          order_channel: "delivery",
+          created_at: new Date("2026-07-25T12:00:00.000Z"),
+        }] };
+      }
+      return { rows: [{
+        product_id: validBody.items[0].menuItemId,
+        product_name: "Prato",
+        quantity: 2,
+        unit_price: "25.90",
+        notes: "Sem cebola",
+      }] };
+    },
+  } as unknown as Queryable;
+
+  const result = await createOrderRepository(database).findPublicOrder(
+    createdOrder.orderId,
+    "matching-token-hash",
+  );
+
+  assert.equal(result?.displayId, "9007199254740993");
+  assert.equal(result?.totalPrice, "51.80");
+  assert.equal(result?.createdAt, "2026-07-25T12:00:00.000Z");
+  assert.equal(result?.items[0]?.unitPrice, "25.90");
 });
 
 test("repeated idempotency key produces the same opaque public token", async () => {

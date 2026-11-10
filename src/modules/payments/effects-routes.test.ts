@@ -8,7 +8,8 @@ import type { PaymentEffectReconciliation } from "./reconciliation.js";
 import { registerPaymentEffectRoutes } from "./effects-routes.js";
 
 const config = {
-  n8n: { secrets: { admin: "admin-secret" } },
+  security: { publicOrderTokenSecret: "order-token-secret",
+    paymentEffectsAdminSecret: "payment-effects-admin-secret-at-least-32-characters" },
 } as AppConfig;
 
 function fakeReconciliation(): PaymentEffectReconciliation {
@@ -58,7 +59,7 @@ test("admin payment effect route runs one bounded reconciliation batch", async (
   const response = await app.inject({
     method: "POST",
     url: "/admin/payments/effects/reprocess",
-    headers: { "x-vapt-admin-key": "admin-secret" },
+    headers: { "x-vapt-admin-key": "payment-effects-admin-secret-at-least-32-characters" },
     payload: { limit: 10 },
   });
 
@@ -70,5 +71,13 @@ test("admin payment effect route runs one bounded reconciliation batch", async (
     deadLettered: 0,
     pending: 3,
   });
+  await app.close();
+});
+test("payment effect admin route is disabled without its own secret, including empty headers", async () => {
+  const app = Fastify();
+  await registerPaymentEffectRoutes(app, { security: { publicOrderTokenSecret: "order-token-secret" } } as AppConfig, fakeReconciliation());
+  for (const headers of [{}, { "x-vapt-admin-key": "" }]) {
+    assert.equal((await app.inject({ method: "POST", url: "/admin/payments/effects/reprocess", headers })).statusCode, 401);
+  }
   await app.close();
 });

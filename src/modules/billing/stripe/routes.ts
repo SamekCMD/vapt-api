@@ -1,35 +1,25 @@
 import type { FastifyInstance } from "fastify";
 
 import type { AppConfig } from "../../../lib/config.js";
-import {
-  createSupabaseOwnershipLookup,
-  testOwnershipLookup,
-  type OwnershipLookup,
-} from "../../../lib/permissions.js";
-import { createSupabaseAdminClient } from "../../../lib/supabase.js";
 import { validateWithSchema } from "../../../lib/validation.js";
-import { requireAuth } from "../../../plugins/auth.js";
-import { createN8nClient } from "../../n8n/client.js";
+import {actorFromAuth,requireAuth} from "../../../plugins/auth.js";
+import type { StripeGateway } from "./types.js";
 import {
-  stripeCancelSubscriptionBodySchema,
-  stripeChangeSubscriptionBodySchema,
   stripeCheckoutBodySchema,
+  stripePortalBodySchema,
   stripeSubscriptionStatusQuerySchema,
 } from "./schemas.js";
 import { createStripeBillingService } from "./service.js";
+import type { StripeBillingStore } from "./repository.js";
 
 export async function registerStripeBillingRoutes(
   app: FastifyInstance,
   config: AppConfig,
-  ownershipLookup?: OwnershipLookup,
+  repository:StripeBillingStore,
+  gateway:StripeGateway,
+  resolveOrganization:(input:{userId:string;organizationId?:string;restaurantId?:string},capability:import('../../tenancy/contracts.js').Capability)=>Promise<import('../../tenancy/contracts.js').OrganizationScope>,
 ) {
-  const resolvedOwnershipLookup =
-    ownershipLookup ??
-    (config.nodeEnv === "test"
-      ? testOwnershipLookup
-      : createSupabaseOwnershipLookup(createSupabaseAdminClient(config) as never));
-  const client = createN8nClient(config);
-  const service = createStripeBillingService(client, resolvedOwnershipLookup);
+  const service=createStripeBillingService(gateway,repository,config);
 
   app.post(
     "/billing/stripe/checkout",
@@ -37,56 +27,32 @@ export async function registerStripeBillingRoutes(
       config: {
         rateLimitGroup: "billing",
       },
-      preHandler: async (request, reply) => requireAuth(request, reply, config),
+      preHandler: async (request, reply) =>
+        requireAuth(request, reply, app.authSessionResolver),
     },
     async (request) => {
       const body = validateWithSchema(stripeCheckoutBodySchema, request.body);
 
+      const scope=await resolveOrganization({userId:request.auth!.userId,...body},'billing.manage');
       return service.createCheckout({
-        userId: request.auth!.userId,
-        restaurantId: body.restaurantId,
-        email: body.email,
+        ...actorFromAuth(request.auth!),...scope,
         planType: body.planType,
-        priceId: body.priceId,
+        idempotencyKey: typeof request.headers["idempotency-key"] === "string"
+          ? request.headers["idempotency-key"] : "",
       });
     },
   );
 
   app.post(
-    "/billing/stripe/subscription/change",
+    "/billing/stripe/portal",
     {
-      config: {
-        rateLimitGroup: "billing",
-      },
-      preHandler: async (request, reply) => requireAuth(request, reply, config),
+      config: { rateLimitGroup: "billing" },
+      preHandler: async (request, reply) => requireAuth(request, reply, app.authSessionResolver),
     },
     async (request) => {
-      const body = validateWithSchema(stripeChangeSubscriptionBodySchema, request.body);
-
-      return service.changeSubscription({
-        userId: request.auth!.userId,
-        restaurantId: body.restaurantId,
-        targetPlanType: body.targetPlanType,
-        targetPriceId: body.targetPriceId,
-      });
-    },
-  );
-
-  app.post(
-    "/billing/stripe/subscription/cancel",
-    {
-      config: {
-        rateLimitGroup: "billing",
-      },
-      preHandler: async (request, reply) => requireAuth(request, reply, config),
-    },
-    async (request) => {
-      const body = validateWithSchema(stripeCancelSubscriptionBodySchema, request.body);
-
-      return service.cancelSubscription({
-        userId: request.auth!.userId,
-        restaurantId: body.restaurantId,
-      });
+      const body = validateWithSchema(stripePortalBodySchema, request.body);
+      const scope=await resolveOrganization({userId:request.auth!.userId,...body},'billing.manage');
+      return service.createPortal({...actorFromAuth(request.auth!),...scope});
     },
   );
 
@@ -96,15 +62,13 @@ export async function registerStripeBillingRoutes(
       config: {
         rateLimitGroup: "billing",
       },
-      preHandler: async (request, reply) => requireAuth(request, reply, config),
+      preHandler: async (request, reply) =>
+        requireAuth(request, reply, app.authSessionResolver),
     },
     async (request) => {
       const query = validateWithSchema(stripeSubscriptionStatusQuerySchema, request.query);
 
-      return service.getSubscriptionStatus({
-        userId: request.auth!.userId,
-        restaurantId: query.restaurantId,
-      });
+      return service.getSubscriptionStatus(await resolveOrganization({userId:request.auth!.userId,...query},'billing.read'));
     },
   );
 }

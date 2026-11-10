@@ -1,0 +1,35 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "vapt-api-worker-production-entry-test",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-09-28",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "vars": {
+    "ENVIRONMENT": "preview",
+    "HYPERDRIVE": { "connectionString": "postgresql://synthetic:synthetic@db.vapt.test/synthetic" },
+    "CORS_ORIGINS": "https://app.vapt.test",
+    "FRONTEND_URL": "https://app.vapt.test",
+    "API_PUBLIC_URL": "https://api.vapt.test",
+    "STRIPE_SECRET_KEY": "sk_test_synthetic",
+    "STRIPE_WEBHOOK_SECRET": "whsec_synthetic",
+    "STRIPE_ENVIRONMENT": "test",
+    "STRIPE_PORTAL_CONFIGURATION_ID": "bpc_synthetic",
+    "STRIPE_PRICE_STARTER": "price_synthetic_starter",
+    "STRIPE_PRICE_PRO": "price_synthetic_pro",
+    "STRIPE_PRICE_BUSINESS": "price_synthetic_business",
+    "PUBLIC_ORDER_TOKEN_SECRET": "synthetic-public-order-token-secret",
+    "BETTER_AUTH_SECRET": "synthetic-better-auth-secret-32-chars",
+    "BETTER_AUTH_URL": "https://api.vapt.test",
+    "BETTER_AUTH_TRUSTED_ORIGINS": "https://app.vapt.test",
+    "TURNSTILE_SECRET_KEY": "synthetic-turnstile-secret",
+    "RESEND_API_KEY": "re_synthetic",
+    "RESEND_TEMPLATE_VERIFY_ACCOUNT": "synthetic-verify",
+    "RESEND_TEMPLATE_RESET_PASSWORD": "synthetic-reset",
+    "EMAIL_FROM": "Vapt Test <noreply@vapt.test>"
+  },
+  "ratelimits": [
+    { "name": "AUTH_RATE_LIMIT", "namespace_id": "10001", "simple": { "limit": 1, "period": 60 } }
+  ]
+}

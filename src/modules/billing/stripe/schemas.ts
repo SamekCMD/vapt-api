@@ -1,22 +1,12 @@
 import { z } from "zod";
 
-export const stripeCheckoutBodySchema = z.object({
-  restaurantId: z.string().trim().min(1),
-  email: z.string().trim().min(1),
-  planType: z.string().trim().min(1),
-  priceId: z.string().trim().min(1),
-});
+export const stripePlanTypeSchema = z.enum(["starter", "pro", "business"]);
+export type StripePlanType = z.infer<typeof stripePlanTypeSchema>;
 
-export const stripeChangeSubscriptionBodySchema = z.object({
-  restaurantId: z.string().trim().min(1),
-  targetPlanType: z.string().trim().min(1),
-  targetPriceId: z.string().trim().min(1),
-});
 
-export const stripeCancelSubscriptionBodySchema = z.object({
-  restaurantId: z.string().trim().min(1),
-});
-
-export const stripeSubscriptionStatusQuerySchema = z.object({
-  restaurantId: z.string().trim().min(1),
-});
+const selector={organizationId:z.string().uuid().transform(value=>value.toLowerCase()).optional(),
+  restaurantId:z.string().uuid().transform(value=>value.toLowerCase()).optional()};
+const selected=(value:{organizationId?:string;restaurantId?:string})=>Boolean(value.organizationId||value.restaurantId);
+export const stripeCheckoutBodySchema=z.object({...selector,planType:stripePlanTypeSchema}).strict().refine(selected);
+export const stripePortalBodySchema=z.object(selector).strict().refine(selected);
+export const stripeSubscriptionStatusQuerySchema=z.object(selector).strict().refine(selected);

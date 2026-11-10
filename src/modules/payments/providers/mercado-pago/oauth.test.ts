@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createHash, createHmac } from "node:crypto";
+import { createHash } from "node:crypto";
 import test from "node:test";
 
 import Fastify from "fastify";
@@ -11,6 +11,7 @@ import { createSecretCipher } from "../../../../lib/crypto.js";
 import type { OwnershipLookup } from "../../../../lib/permissions.js";
 import { registerAuthDecorator } from "../../../../plugins/auth.js";
 import { registerErrorHandler } from "../../../../plugins/error-handler.js";
+import type { SessionResolver } from "../../../auth/session-resolver.js";
 import {
   createMercadoPagoOAuthClient,
   type MercadoPagoTokenResponse,
@@ -26,6 +27,7 @@ import {
   type MercadoPagoOAuthRouteService,
 } from "./routes.js";
 
+const actor={userId:"20000000-0000-4000-8000-000000000001",sessionId:"30000000-0000-4000-8000-000000000001",sessionExpiresAt:new Date("2030-01-01").getTime()};
 const RESTAURANT_ID = "10000000-0000-4000-8000-000000000001";
 const encryptionKey = Buffer.alloc(32, 9);
 const cipher = createSecretCipher(encryptionKey);
@@ -155,7 +157,16 @@ function createService(options: {
       },
     },
     cipher,
-    ownershipLookup: options.ownershipLookup ?? (async () => true),
+    authorizeRestaurant:async(scope,capability)=>{
+      assert.equal(capability,'billing.read');
+      if(options.ownershipLookup && !await options.ownershipLookup(scope)) throw new AppError(403,'forbidden','Forbidden');
+      return {userId:scope.userId,restaurantId:scope.restaurantId,organizationId:"40000000-0000-4000-8000-000000000001",role:'manager'};
+    },
+    withAuthorizedWrite:async(scope,work)=>{
+      assert.equal(scope.sessionId,actor.sessionId);
+      if(options.ownershipLookup && !await options.ownershipLookup(scope)) throw new AppError(403,'forbidden','Forbidden');
+      return work(repository);
+    },
     config: {
       clientId: "app-123",
       redirectUri: new URL("https://api.vapt.test/payments/mercado-pago/oauth/callback"),
@@ -178,11 +189,30 @@ function createService(options: {
   };
 }
 
+test('revocation between begin and callback prevents token exchange and credential persistence',async()=>{
+  let active=true;
+  const fixture=createService({ownershipLookup:async()=>active});
+  const started=await fixture.service.beginConnection({restaurantId:RESTAURANT_ID,...actor,environment:'sandbox'});
+  const state=new URL(started.authorizationUrl).searchParams.get('state')!;
+  active=false;
+  await assert.rejects(fixture.service.handleCallback({state,code:'synthetic-code'}),{statusCode:403});
+  assert.equal(fixture.exchangeCalls,0);assert.equal(fixture.memory.account,null);
+});
+
+test('revocation during provider exchange prevents credential persistence after the remote response',async()=>{
+  let active=true;
+  const fixture=createService({ownershipLookup:async()=>active,exchange:async()=>{active=false;return tokenResponse();}});
+  const started=await fixture.service.beginConnection({restaurantId:RESTAURANT_ID,...actor,environment:'sandbox'});
+  const state=new URL(started.authorizationUrl).searchParams.get('state')!;
+  await assert.rejects(fixture.service.handleCallback({state,code:'synthetic-code'}),{statusCode:403});
+  assert.equal(fixture.exchangeCalls,1);assert.equal(fixture.memory.account,null);
+});
+
 test("beginConnection creates a one-time state and S256 PKCE challenge", async () => {
   const fixture = createService();
   const result = await fixture.service.beginConnection({
     restaurantId: RESTAURANT_ID,
-    userId: "owner-1",
+    ...actor,
     environment: "sandbox",
   });
 
@@ -203,7 +233,7 @@ test("beginConnection creates a one-time state and S256 PKCE challenge", async (
   assert.equal(stored.environment, "sandbox");
   assert.equal(stored.codeVerifierEncrypted.includes(state), false);
 
-  const verifier = cipher.decrypt(stored.codeVerifierEncrypted, stateHash);
+  const verifier = JSON.parse(cipher.decrypt(stored.codeVerifierEncrypted, stateHash)).codeVerifier as string;
   assert.ok(verifier.length >= 43 && verifier.length <= 128);
   const expectedChallenge = createHash("sha256").update(verifier).digest("base64url");
   assert.equal(url.searchParams.get("code_challenge"), expectedChallenge);
@@ -215,7 +245,7 @@ test("beginConnection rejects access to another restaurant tenant", async () => 
   await assert.rejects(
     fixture.service.beginConnection({
       restaurantId: RESTAURANT_ID,
-      userId: "not-owner",
+      ...actor,
       environment: "production",
     }),
     (error: unknown) => error instanceof AppError && error.statusCode === 403,
@@ -238,7 +268,7 @@ test("callback rejects an absent, expired, or reused state without exchanging to
 
   const connection = await fixture.service.beginConnection({
     restaurantId: RESTAURANT_ID,
-    userId: "owner-1",
+    ...actor,
     environment: "production",
   });
   const state = new URL(connection.authorizationUrl).searchParams.get("state")!;
@@ -254,7 +284,7 @@ test("denied callback consumes state and never exchanges a token", async () => {
   const fixture = createService();
   const connection = await fixture.service.beginConnection({
     restaurantId: RESTAURANT_ID,
-    userId: "owner-1",
+    ...actor,
     environment: "production",
   });
   const state = new URL(connection.authorizationUrl).searchParams.get("state")!;
@@ -286,7 +316,7 @@ test("successful callback exchanges PKCE code and stores only encrypted rotating
   });
   const connection = await fixture.service.beginConnection({
     restaurantId: RESTAURANT_ID,
-    userId: "owner-1",
+    ...actor,
     environment: "sandbox",
     returnOrigin: "https://preview.vapt.test",
   });
@@ -329,7 +359,7 @@ test("refreshConnection replaces both access and refresh tokens atomically", asy
   });
   const connection = await fixture.service.beginConnection({
     restaurantId: RESTAURANT_ID,
-    userId: "owner-1",
+    ...actor,
     environment: "production",
   });
   const state = new URL(connection.authorizationUrl).searchParams.get("state")!;
@@ -352,7 +382,7 @@ test("checkout credential resolver decrypts an active token without exposing it 
   const fixture = createService();
   const connection = await fixture.service.beginConnection({
     restaurantId: RESTAURANT_ID,
-    userId: "owner-1",
+    ...actor,
     environment: "sandbox",
   });
   const state = new URL(connection.authorizationUrl).searchParams.get("state")!;
@@ -384,7 +414,7 @@ test("checkout credential resolver refreshes a token near expiration", async () 
   });
   const connection = await fixture.service.beginConnection({
     restaurantId: RESTAURANT_ID,
-    userId: "owner-1",
+    ...actor,
     environment: "sandbox",
   });
   const state = new URL(connection.authorizationUrl).searchParams.get("state")!;
@@ -432,7 +462,7 @@ test("status and disconnect never expose credentials", async () => {
   const fixture = createService();
   const connection = await fixture.service.beginConnection({
     restaurantId: RESTAURANT_ID,
-    userId: "owner-1",
+    ...actor,
     environment: "production",
   });
   const state = new URL(connection.authorizationUrl).searchParams.get("state")!;
@@ -440,7 +470,7 @@ test("status and disconnect never expose credentials", async () => {
 
   const status = await fixture.service.getStatus({
     restaurantId: RESTAURANT_ID,
-    userId: "owner-1",
+    ...actor,
     environment: "production",
   });
   assert.deepEqual(status, {
@@ -454,7 +484,7 @@ test("status and disconnect never expose credentials", async () => {
 
   const disconnected = await fixture.service.disconnect({
     restaurantId: RESTAURANT_ID,
-    userId: "owner-1",
+    ...actor,
     environment: "production",
   });
   assert.deepEqual(disconnected, { connected: false, status: "disconnected" });
@@ -466,7 +496,7 @@ test("safe account diagnostics expose OAuth scope without credentials", async ()
   const fixture = createService();
   const connection = await fixture.service.beginConnection({
     restaurantId: RESTAURANT_ID,
-    userId: "owner-1",
+    ...actor,
     environment: "production",
   });
   const state = new URL(connection.authorizationUrl).searchParams.get("state")!;
@@ -616,21 +646,30 @@ const routeConfig: AppConfig = {
   host: "127.0.0.1",
   corsOrigins: [
     "https://app.vapt.test",
-    "https://vaptmesaflow-*-contatoupboost-2301s-projects.vercel.app",
+    "https://infra-foundation-vapt-web.autoistloko.workers.dev",
   ],
   logLevel: "silent",
-  n8n: {
-    baseUrl: new URL("https://n8n.example.com"),
-    timeoutMs: 5000,
-    secrets: { app: "app", admin: "admin" },
+  stripe: {
+    secretKey: "sk_test_vapt",
+    webhookSecret: "whsec_test",
+    webhookToleranceSeconds: 300,
+    environment: "test",
+    portalConfigurationId: "bpc_vapt",
+    prices: { starter: "price_starter", pro: "price_pro", business: "price_business" },
   },
-  webhooks: {
-    stripe: { signingSecret: "whsec_test", toleranceSeconds: 300 },
-  },
-  supabase: {
-    url: new URL("https://supabase.example.com"),
-    serviceRoleKey: "service-role-key",
-    jwtSecret: "jwt-secret",
+  security: { publicOrderTokenSecret: "public-order-token-secret" },
+  betterAuth: {
+    secret: "better-auth-secret-at-least-32-characters",
+    url: new URL("https://api.vapt.test"),
+    trustedOrigins: ["https://app.vapt.test"],
+    databaseUrl: "postgresql://vapt:password@db.vapt.test/vapt",
+    turnstileSecretKey: "turnstile-secret-key",
+    email: {
+      resendApiKey: "re_test_key",
+      from: "Vapt <noreply@vapt.test>",
+      verifyAccountTemplate: "verify-account-template",
+      resetPasswordTemplate: "reset-password-template",
+    },
   },
   frontendUrl: new URL("https://app.vapt.test"),
   apiPublicUrl: new URL("https://api.vapt.test"),
@@ -645,18 +684,10 @@ const routeConfig: AppConfig = {
   },
 };
 
-function routeToken(): string {
-  const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
-  const body = Buffer.from(JSON.stringify({
-    sub: "user-1",
-    role: "authenticated",
-    exp: Math.floor(Date.now() / 1000) + 3600,
-  })).toString("base64url");
-  const signature = createHmac("sha256", routeConfig.supabase.jwtSecret)
-    .update(`${header}.${body}`)
-    .digest("base64url");
-  return `${header}.${body}.${signature}`;
-}
+const testSessionResolver: SessionResolver = async (headers) =>
+  String(headers.cookie ?? "").includes("better-auth.session_token=valid")
+    ? { email: null, role: "authenticated",...actor }
+    : null;
 
 function fakeRouteService(): MercadoPagoOAuthRouteService {
   return {
@@ -686,7 +717,7 @@ test("connect route requires authentication and forwards only the tenant context
     return { authorizationUrl: "https://auth.mercadopago.com/authorization?state=safe-state-1234567890" };
   };
   const app = Fastify({ logger: false });
-  registerAuthDecorator(app);
+  registerAuthDecorator(app, testSessionResolver);
   registerErrorHandler(app);
   await registerMercadoPagoOAuthRoutes(app, routeConfig, service);
 
@@ -700,13 +731,13 @@ test("connect route requires authentication and forwards only the tenant context
   const response = await app.inject({
     method: "POST",
     url: `/restaurants/${RESTAURANT_ID}/payments/mercado-pago/connect`,
-    headers: { authorization: `Bearer ${routeToken()}` },
+    headers: { cookie: "better-auth.session_token=valid" },
     payload: { environment: "sandbox" },
   });
   assert.equal(response.statusCode, 200);
   assert.deepEqual(received, {
     restaurantId: RESTAURANT_ID,
-    userId: "user-1",
+    ...actor,
     environment: "sandbox",
     returnOrigin: "https://app.vapt.test",
   });
@@ -718,7 +749,7 @@ test("connect route requires authentication and forwards only the tenant context
 
 test("connect route accepts only a trusted frontend return origin", async () => {
   const previewOrigin =
-    "https://vaptmesaflow-m9w5rado2-contatoupboost-2301s-projects.vercel.app";
+    "https://infra-foundation-vapt-web.autoistloko.workers.dev";
   let received: unknown = null;
   const service = fakeRouteService();
   service.beginConnection = async (input) => {
@@ -728,10 +759,10 @@ test("connect route accepts only a trusted frontend return origin", async () => 
     };
   };
   const app = Fastify({ logger: false });
-  registerAuthDecorator(app);
+  registerAuthDecorator(app, testSessionResolver);
   registerErrorHandler(app);
   await registerMercadoPagoOAuthRoutes(app, routeConfig, service);
-  const headers = { authorization: `Bearer ${routeToken()}` };
+  const headers = { cookie: "better-auth.session_token=valid" };
 
   const trusted = await app.inject({
     method: "POST",
@@ -742,7 +773,7 @@ test("connect route accepts only a trusted frontend return origin", async () => 
   assert.equal(trusted.statusCode, 200);
   assert.deepEqual(received, {
     restaurantId: RESTAURANT_ID,
-    userId: "user-1",
+    ...actor,
     environment: "sandbox",
     returnOrigin: previewOrigin,
   });
@@ -759,7 +790,7 @@ test("connect route accepts only a trusted frontend return origin", async () => 
 
 test("OAuth callback validates state and redirects without returning credentials", async () => {
   const app = Fastify({ logger: false });
-  registerAuthDecorator(app);
+  registerAuthDecorator(app, testSessionResolver);
   registerErrorHandler(app);
   await registerMercadoPagoOAuthRoutes(app, routeConfig, fakeRouteService());
 
@@ -776,7 +807,7 @@ test("OAuth callback validates state and redirects without returning credentials
   assert.equal(connected.statusCode, 302);
   assert.equal(
     connected.headers.location,
-    "https://app.vapt.test/dashboard/settings?payment_provider=mercado_pago&connection=connected",
+    `https://app.vapt.test/dashboard/settings?payment_provider=mercado_pago&connection=connected&restaurantId=${RESTAURANT_ID}`,
   );
   assert.equal(connected.body.includes("token"), false);
   await app.close();
@@ -784,7 +815,7 @@ test("OAuth callback validates state and redirects without returning credentials
 
 test("OAuth callback returns to the trusted preview that initiated the connection", async () => {
   const previewOrigin =
-    "https://vaptmesaflow-m9w5rado2-contatoupboost-2301s-projects.vercel.app";
+    "https://infra-foundation-vapt-web.autoistloko.workers.dev";
   const service = fakeRouteService();
   service.handleCallback = async () => ({
     restaurantId: RESTAURANT_ID,
@@ -792,7 +823,7 @@ test("OAuth callback returns to the trusted preview that initiated the connectio
     returnOrigin: previewOrigin,
   });
   const app = Fastify({ logger: false });
-  registerAuthDecorator(app);
+  registerAuthDecorator(app, testSessionResolver);
   registerErrorHandler(app);
   await registerMercadoPagoOAuthRoutes(app, routeConfig, service);
 
@@ -804,17 +835,17 @@ test("OAuth callback returns to the trusted preview that initiated the connectio
   assert.equal(response.statusCode, 302);
   assert.equal(
     response.headers.location,
-    `${previewOrigin}/dashboard/settings?payment_provider=mercado_pago&connection=connected`,
+    `${previewOrigin}/dashboard/settings?payment_provider=mercado_pago&connection=connected&restaurantId=${RESTAURANT_ID}`,
   );
   await app.close();
 });
 
 test("status and disconnect routes are authenticated and never serialize tokens", async () => {
   const app = Fastify({ logger: false });
-  registerAuthDecorator(app);
+  registerAuthDecorator(app, testSessionResolver);
   registerErrorHandler(app);
   await registerMercadoPagoOAuthRoutes(app, routeConfig, fakeRouteService());
-  const headers = { authorization: `Bearer ${routeToken()}` };
+  const headers = { cookie: "better-auth.session_token=valid" };
 
   const status = await app.inject({
     method: "GET",

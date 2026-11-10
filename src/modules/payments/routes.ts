@@ -1,17 +1,17 @@
+import {z} from "zod";
 import type { FastifyInstance, FastifyReply } from "fastify";
 
 import type { AppConfig } from "../../lib/config.js";
 import { AppError } from "../../lib/errors.js";
-import {
-  createSupabaseOwnershipLookup,
-  testOwnershipLookup,
-} from "../../lib/permissions.js";
-import { createSupabaseAdminClient } from "../../lib/supabase.js";
 import { validateWithSchema } from "../../lib/validation.js";
-import { createOrderRepository } from "../orders/repository.js";
+import type { OrderRepository } from "../orders/repository.js";
 import { createOrderService } from "../orders/service.js";
-import { requireAuth } from "../../plugins/auth.js";
-import { isAllowedOrigin } from "../../plugins/cors.js";
+import {actorFromAuth,requireAuth} from "../../plugins/auth.js";
+import {
+  createMercadoPagoBrowserReturnUrl,
+  createMercadoPagoReturnUrls,
+  queryStringValue,
+} from "./return-urls.js";
 import {
   hostedCheckoutBodySchema,
   hostedCheckoutHeadersSchema,
@@ -24,7 +24,6 @@ import {
 } from "./schemas.js";
 import {
   createHostedCheckoutService,
-  createManualPaymentService,
   type HostedCheckoutService,
   type ManualPaymentService,
   type MercadoPagoReturnReconciliationService,
@@ -38,66 +37,7 @@ export type MercadoPagoPaymentDiagnosticsService = {
   }): Promise<Readonly<Record<string, unknown>>>;
 };
 
-const SAFE_MERCADO_PAGO_RETURN_PARAMS = [
-  "payment_id",
-  "status",
-  "external_reference",
-  "merchant_order_id",
-  "preference_id",
-] as const;
-
-function queryStringValue(value: unknown): string | null {
-  return typeof value === "string" && value.length <= 256 ? value : null;
-}
-
-function resolveHostedCheckoutReturnOrigin(
-  requestedOrigin: string | null | undefined,
-  config: AppConfig,
-): string {
-  const fallbackOrigin = config.frontendUrl!.origin;
-
-  if (!requestedOrigin) return fallbackOrigin;
-
-  try {
-    const url = new URL(requestedOrigin);
-    const isOriginOnly =
-      url.origin === requestedOrigin &&
-      url.pathname === "/" &&
-      url.search === "" &&
-      url.hash === "" &&
-      url.username === "" &&
-      url.password === "";
-
-    return isOriginOnly && isAllowedOrigin(url.origin, config.corsOrigins)
-      ? url.origin
-      : fallbackOrigin;
-  } catch {
-    return fallbackOrigin;
-  }
-}
-
-export function createMercadoPagoReturnUrls(
-  config: AppConfig,
-  requestedOrigin?: string,
-) {
-  if (!config.apiPublicUrl) {
-    throw new AppError(503, "mercado_pago_not_configured", "Mercado Pago return URL is not configured");
-  }
-
-  const returnOrigin = resolveHostedCheckoutReturnOrigin(requestedOrigin, config);
-  const createUrl = (result: "success" | "pending" | "failure") => {
-    const url = new URL("/payments/mercado-pago/return", config.apiPublicUrl);
-    url.searchParams.set("result", result);
-    url.searchParams.set("return_origin", returnOrigin);
-    return url;
-  };
-
-  return {
-    success: createUrl("success"),
-    pending: createUrl("pending"),
-    failure: createUrl("failure"),
-  };
-}
+export { createMercadoPagoReturnUrls } from "./return-urls.js";
 
 export async function registerMercadoPagoReturnRoutes(
   app: FastifyInstance,
@@ -113,7 +53,7 @@ export async function registerMercadoPagoReturnRoutes(
     async (request, reply: FastifyReply) => {
       const query = request.query as Record<string, unknown>;
       const requestedResult = queryStringValue(query.result);
-      let result = requestedResult === "success" || requestedResult === "pending"
+      let result: "success" | "pending" | "failure" = requestedResult === "success" || requestedResult === "pending"
         ? requestedResult
         : "failure";
       const paymentId = queryStringValue(query.payment_id);
@@ -142,17 +82,7 @@ export async function registerMercadoPagoReturnRoutes(
         }
       }
 
-      const returnOrigin = resolveHostedCheckoutReturnOrigin(
-        queryStringValue(query.return_origin),
-        config,
-      );
-      const destination = new URL("/payment/return", returnOrigin);
-      destination.searchParams.set("result", result);
-
-      for (const parameter of SAFE_MERCADO_PAGO_RETURN_PARAMS) {
-        const value = queryStringValue(query[parameter]);
-        if (value !== null) destination.searchParams.set(parameter, value);
-      }
+      const destination = createMercadoPagoBrowserReturnUrl(config, query, result);
 
       request.log.info({
         result,
@@ -171,27 +101,26 @@ export async function createManualPaymentRoutes(
   app: FastifyInstance,
   config: AppConfig,
   service?: ManualPaymentService,
+  resolveLegacyRestaurant?:(userId:string)=>Promise<{restaurantId:string}>,
 ) {
-  const resolvedService = service ?? createManualPaymentService({
-    repository: app.payments.repository,
-    paymentService: app.payments.service,
-    ownershipLookup: config.nodeEnv === "test"
-      ? testOwnershipLookup
-      : createSupabaseOwnershipLookup(createSupabaseAdminClient(config) as never),
-  });
+  const resolvedService=service??(()=>{throw new AppError(503,"manual_payment_unavailable","Manual payment unavailable");})();
 
   app.post(
     "/orders/:orderId/payments/manual-confirmation",
     {
       config: { rateLimitGroup: "billing" },
-      preHandler: async (request, reply) => requireAuth(request, reply, config),
+      preHandler: async (request, reply) =>
+        requireAuth(request, reply, app.authSessionResolver),
     },
     async (request) => {
       const params = validateWithSchema(manualPaymentParamsSchema, request.params);
       const headers = validateWithSchema(manualPaymentHeadersSchema, request.headers);
       const body = validateWithSchema(manualPaymentBodySchema, request.body);
       const auth = request.auth!;
+      if(!resolveLegacyRestaurant) throw new AppError(503,'restaurant_selection_unavailable','Restaurant selection unavailable');
+      const {restaurantId}=await resolveLegacyRestaurant(auth.userId);
       const transaction = await resolvedService.confirm({
+        ...actorFromAuth(auth),restaurantId,
         orderId: params.orderId,
         paymentMethod: body.paymentMethod,
         idempotencyKey: headers["idempotency-key"],
@@ -209,12 +138,25 @@ export async function createManualPaymentRoutes(
       };
     },
   );
+  app.post('/restaurants/:restaurantId/orders/:orderId/payments/manual-confirmation',{
+    config:{rateLimitGroup:'billing'},preHandler:async(request,reply)=>requireAuth(request,reply,app.authSessionResolver),
+  },async request=>{
+    const params=validateWithSchema(manualPaymentParamsSchema.extend({restaurantId:z.string().uuid()}),request.params);
+    const headers=validateWithSchema(manualPaymentHeadersSchema,request.headers);
+    const body=validateWithSchema(manualPaymentBodySchema,request.body);
+    const transaction=await resolvedService.confirm({...actorFromAuth(request.auth!),restaurantId:params.restaurantId,
+      orderId:params.orderId,paymentMethod:body.paymentMethod,idempotencyKey:headers['idempotency-key']});
+    return {transactionId:transaction.id,orderId:transaction.orderId,status:transaction.status,amount:transaction.amount,
+      paymentMethod:transaction.paymentMethod,confirmedAt:transaction.updatedAt};
+  });
+
 }
 
 export async function registerHostedCheckoutRoutes(
   app: FastifyInstance,
   config: AppConfig,
   service?: HostedCheckoutService,
+  orderRepository?: OrderRepository,
 ) {
   if (!config.mercadoPago || !config.frontendUrl || !config.apiPublicUrl) {
     throw new AppError(
@@ -225,12 +167,13 @@ export async function registerHostedCheckoutRoutes(
   }
   const mercadoPago = config.mercadoPago;
 
-  const supabase = service ? null : createSupabaseAdminClient(config);
   const orderService = service
     ? null
     : createOrderService(
-      createOrderRepository(supabase!),
-      config.supabase.jwtSecret,
+      orderRepository ?? (() => {
+        throw new AppError(500, "internal_error", "Order repository is not configured");
+      })(),
+      config.security.publicOrderTokenSecret,
     );
 
   app.post(

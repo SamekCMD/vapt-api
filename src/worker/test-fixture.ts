@@ -1,0 +1,391 @@
+import { createWorkerApp } from "./app.js";
+import type { WorkerBindings } from "./environment.js";
+import { createWorkerServices } from "./services.js";
+import type { AppConfig } from "../lib/config.js";
+import type { Database } from "../lib/database.js";
+import { AppError } from "../lib/errors.js";
+import type { AuthRuntime } from "../modules/auth/runtime.js";
+import type { StripeGateway } from "../modules/billing/stripe/types.js";
+import type { OrderService } from "../modules/orders/service.js";
+import type { MenuRepository } from "../modules/menu/repository.js";
+import { createMenuService } from "../modules/menu/service.js";
+import { createRestaurantService } from '../modules/restaurants/service.js';
+import type { RestaurantDto } from '../modules/business/contracts.js';
+import type { CatalogService, FeedbackService, MercadoPagoServices, StripeBillingService, StripeWebhookService, TableSessionService } from "../composition/api-services.js";
+import { createPaymentModule } from "../modules/payments/composition.js";
+import type { PaymentTransactionRecord } from "../modules/payments/repository.js";
+import { createWorkerMenuImageGateway } from "../modules/storage/r2-worker.js";
+import { createMenuImageService } from "../modules/storage/service.js";
+import { parseWorkerJson, requireWorkerAuth, trustedRateLimitKey, workerRateLimit } from "./http.js";
+import { runScheduledReconciliation } from "./scheduled.js";
+import type { ExecutionContext } from "hono";
+
+type FixtureBindings = WorkerBindings & { TEST_GREETING: string };
+
+const fakeDatabase = {
+  async query(sql:string,values:unknown[]=[]) {
+    if(sql.startsWith('with access as materialized'))return {rows:[{
+      organizations:[{id:'30000000-0000-4000-8000-000000000001',name:'Grupo Teste',
+        role:values[0]==='20000000-0000-4000-8000-000000000003'?'admin':'staff',planType:'business',planStatus:'active',trialEndsAt:null}],
+      restaurants:[{id:'10000000-0000-4000-8000-000000000001',organizationId:'30000000-0000-4000-8000-000000000001',name:'A',slug:'a-test',onboardingStatus:'complete'}],
+      preference:null,
+    }]};
+    if(sql.startsWith('select r.organization_id,m.role')) return {rows:
+      values[0]==='10000000-0000-4000-8000-000000000001' && ['20000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000003'].includes(String(values[1]))
+      ? [{organization_id:'30000000-0000-4000-8000-000000000001',role:values[1]==='20000000-0000-4000-8000-000000000003'?'admin':'staff'}]:[]};
+    if(sql.startsWith('select organization_id,role from public.organization_members')) return {rows:
+      values[0]==='30000000-0000-4000-8000-000000000001' && values[1]==='20000000-0000-4000-8000-000000000003'
+      ?[{organization_id:values[0],role:'admin'}]:[]};
+    if(sql.startsWith('select r.id from public.restaurants r')) return {rows:
+      values[0]==='20000000-0000-4000-8000-000000000001'?[{id:'10000000-0000-4000-8000-000000000001'}]:[]};
+    return {rows:[]};
+  },
+  async connect() { return { async query() { return { rows: [] }; }, release() {} }; },
+} as unknown as Database;
+const fakeAuthRuntime: AuthRuntime = {
+  async handler(request) {
+    const headers = new Headers({ "content-type": "application/json" });
+    headers.append("set-cookie", "session=one; Secure; HttpOnly; SameSite=Lax; Path=/");
+    headers.append("set-cookie", "session=two; Secure; HttpOnly; SameSite=Lax; Path=/");
+    return new Response(JSON.stringify({
+      method: request.method,
+      search: new URL(request.url).search,
+      body: request.method === "POST" ? await request.text() : null,
+    }), { headers });
+  },
+  async getSession(headers) {
+    if(headers.get("cookie")==="session=admin")return {
+      user:{id:"20000000-0000-4000-8000-000000000003",email:"admin@vapt.test",name:"Admin"},
+      session:{id:"20000000-0000-4000-8000-000000000004",userId:"20000000-0000-4000-8000-000000000003",expiresAt:new Date("2030-01-01")},
+    };
+    if (!headers.get("cookie")?.includes("session=owner")) return null;
+    return {
+      user: { id: "20000000-0000-4000-8000-000000000001", email: "owner@vapt.test", name: "Owner" },
+      session: { id: "20000000-0000-4000-8000-000000000002", userId: "20000000-0000-4000-8000-000000000001", expiresAt: new Date("2030-01-01") },
+    };
+  },
+  async close() {},
+};
+const fixtureOrderId = "10000000-0000-4000-8000-000000000011";
+const fixtureSessionId = "10000000-0000-4000-8000-000000000012";
+const fixtureOrderToken = "synthetic-public-order-token-1234567890";
+const orderFingerprints = new Map<string, string>();
+const fakeOrders: OrderService = {
+  async createPublicOrder(body, key) {
+    const fingerprint = JSON.stringify(body);
+    const previous = orderFingerprints.get(key);
+    if (previous && previous !== fingerprint) {
+      throw new AppError(409, "idempotency_conflict", "Idempotency key was reused with another order");
+    }
+    orderFingerprints.set(key, fingerprint);
+    return {
+      orderId: fixtureOrderId, displayId: "11", restaurantId: "synthetic-restaurant-id",
+      tableSessionId: fixtureSessionId, totalPrice: "12.00", status: "pending",
+      paymentStatus: null, publicToken: fixtureOrderToken, idempotentReplay: !!previous,
+    };
+  },
+  async getPublicOrder(orderId, token) {
+    if (orderId !== fixtureOrderId || token !== fixtureOrderToken) {
+      throw new AppError(404, "not_found", "Order not found");
+    }
+    return {
+      orderId, displayId: "11", restaurantId: "synthetic-restaurant-id",
+      tableSessionId: fixtureSessionId, totalPrice: "12.00", status: "waiting_payment",
+      paymentStatus: null, idempotentReplay: false, channel: "local", tableNumber: "1",
+      createdAt: "2026-09-29T00:00:00.000Z", items: [],
+    };
+  },
+};
+const fakeCatalog = {
+  async getPublishedCatalog() {
+    return { restaurant: {
+      id: "synthetic-restaurant-id", name: "Synthetic Restaurant", slug: "synthetic-restaurant",
+      whatsapp: null, address: null, phone: null, hours: null, description: null,
+      primaryColor: "#000000", secondaryColor: "#ffffff", fontFamily: "sans-serif",
+      logoUrl: null, totalTables: 1, maxTables: 1, paymentMode: "open_tab" as const,
+      maxPendingOrders: 1, localEnabled: true, deliveryEnabled: false,
+      updatedAt: "2026-09-29T00:00:00.000Z",
+    }, items: [] };
+  },
+} satisfies CatalogService;
+const fakeFeedback = {
+  async submitOrderFeedback(orderId: string, token: string, body: { rating: number; reasons: string[]; comment: string | null }) {
+    await fakeOrders.getPublicOrder(orderId, token);
+    return { orderId, restaurantId: "synthetic-restaurant-id", ...body, createdAt: "2026-09-29T00:00:00.000Z" };
+  },
+} as FeedbackService;
+const fakeTableSessions = {
+  async requestPublicCheck(sessionId: string, order: { tableSessionId: string | null }) {
+    if (sessionId !== order.tableSessionId) throw new AppError(404, "table_session_not_found", "Table session not found");
+    return { sessionId, status: "check_requested" as const };
+  },
+} as TableSessionService;
+const fakeMenu = createMenuService({
+  async resolveLegacyRestaurant(userId:string) { return { userId,restaurantId:"10000000-0000-4000-8000-000000000001" }; },
+  async listMenuItems(scope:{userId:string;restaurantId:string}) {
+    if(scope.restaurantId!=="10000000-0000-4000-8000-000000000001") throw new AppError(403,"forbidden","Forbidden"); return [];
+  },
+  async createMenuItem() { return null; },
+  async updateMenuItem() { return null; },
+  async deleteMenuItem(scope:{userId:string;restaurantId:string},itemId:string) {
+    return scope.userId==="20000000-0000-4000-8000-000000000001" && scope.restaurantId==="10000000-0000-4000-8000-000000000001"
+      && itemId==="10000000-0000-4000-8000-000000000021";
+  },
+  async listOwnedMenuItems() { return []; },
+  async createOwnedMenuItem() { return null; },
+  async updateOwnedMenuItem() { return null; },
+  async deleteOwnedMenuItem(userId: string, itemId: string) {
+    return userId === "20000000-0000-4000-8000-000000000001" && itemId === "10000000-0000-4000-8000-000000000021";
+  },
+} satisfies MenuRepository, { publicBaseUrl: null });
+const fixtureRestaurant:RestaurantDto={
+  id:'10000000-0000-4000-8000-000000000001',name:'Restaurante fixture',slug:'restaurante-fixture',
+  cnpj:null,whatsapp:null,address:null,phone:null,hours:null,description:null,primaryColor:'#5C8A72',
+  secondaryColor:'#111114',fontFamily:'modern',logoUrl:null,
+  totalTables:1,maxTables:20,paymentMode:'open_tab',maxPendingOrders:3,localEnabled:true,deliveryEnabled:false,
+  onboardingCompleted:true,updatedAt:'2026-10-19T00:00:00Z',
+};
+function assertFixtureScope(scope:{ userId:string;restaurantId:string }) {
+  if(scope.userId!=='20000000-0000-4000-8000-000000000001' || scope.restaurantId!==fixtureRestaurant.id) {
+    throw new AppError(403,'forbidden','Forbidden');
+  }
+}
+const fakeRestaurants=createRestaurantService({
+  async checkSlugAvailability(scope,_slug){assertFixtureScope(scope);return true;},
+  async resolveLegacyRestaurant(userId) { assertFixtureScope({ userId,restaurantId:fixtureRestaurant.id }); return { userId,restaurantId:fixtureRestaurant.id }; },
+  async getRestaurant(scope) { assertFixtureScope(scope); return fixtureRestaurant; },
+  async updateRestaurant(scope,patch) { assertFixtureScope(scope); return { ...fixtureRestaurant,...patch }; },
+  async createOwnedRestaurant(userId) { assertFixtureScope({ userId,restaurantId:fixtureRestaurant.id }); return fixtureRestaurant; },
+  async findOwnedRestaurant(userId) { assertFixtureScope({ userId,restaurantId:fixtureRestaurant.id }); return fixtureRestaurant; },
+  async updateOwnedRestaurant(userId,patch,actor) {
+    if(!actor || actor.userId!==userId) throw new AppError(401,'unauthorized','Unauthorized');
+    assertFixtureScope({ userId,restaurantId:fixtureRestaurant.id }); return { ...fixtureRestaurant,...patch };
+  },
+});
+let fixtureKitchenActivated=false;
+const fakeStripeBilling = {
+  async createCheckout(input: { userId: string; organizationId: string; email: string; idempotencyKey: string }) {
+    if (input.userId !== "20000000-0000-4000-8000-000000000003" || input.organizationId !== "30000000-0000-4000-8000-000000000001") {
+      throw new AppError(403, "forbidden", "Forbidden");
+    }
+    if (!input.idempotencyKey) throw new AppError(400, "invalid_request", "A valid Idempotency-Key is required");
+    return { checkoutSessionId: "cs_synthetic", url: "https://checkout.stripe.com/synthetic" };
+  },
+  async createPortal(input: { userId: string; organizationId: string }) {
+    if (input.userId !== "20000000-0000-4000-8000-000000000003" || input.organizationId !== "30000000-0000-4000-8000-000000000001") {
+      throw new AppError(403, "forbidden", "Forbidden");
+    }
+    return { url: "https://billing.stripe.com/synthetic" };
+  },
+  async getSubscriptionStatus(input: { userId: string; organizationId: string }) {
+    if (input.userId !== "20000000-0000-4000-8000-000000000003" || input.organizationId !== "30000000-0000-4000-8000-000000000001") {
+      throw new AppError(403, "forbidden", "Forbidden");
+    }
+    return { planType: "pro", planStatus: "active" };
+  },
+} as unknown as StripeBillingService;
+let stripeWebhookCalls = 0;
+let stripeSideEffects = 0;
+const processedStripeEvents = new Set<string>();
+const fakeStripeWebhooks = {
+  async handleEvent(event: unknown) {
+    stripeWebhookCalls++;
+    const id = (event as { id: string }).id;
+    const duplicate = processedStripeEvents.has(id);
+    if (!duplicate) {
+      processedStripeEvents.add(id);
+      stripeSideEffects++;
+    }
+    return { received: true, duplicate, ignored: true, providerEventId: id };
+  },
+} satisfies StripeWebhookService;
+const fakePaymentModule = createPaymentModule({ nodeEnv: "test" } as AppConfig, fakeDatabase, [], {
+  workerId: "synthetic-payments", onError() {},
+});
+const fakeTransaction: PaymentTransactionRecord = {
+  id: "10000000-0000-4000-8000-000000000031",
+  restaurantId: "synthetic-restaurant-id", orderId: fixtureOrderId,
+  providerAccountId: "synthetic-account-id", provider: "mercado_pago", externalPaymentId: null,
+  idempotencyKey: "synthetic-checkout", requestFingerprint: "synthetic-fingerprint",
+  amount: { amount: "12.00", currency: "BRL" }, status: "pending", providerStatus: null,
+  paymentMethod: null, processingMode: "online", providerPayload: { checkoutDiagnostics: null },
+  manuallyConfirmedBy: null, checkoutUrl: "https://www.mercadopago.com.br/checkout/synthetic",
+  expiresAt: "2030-01-01T00:00:00.000Z", version: 1,
+  createdAt: "2026-09-29T00:00:00.000Z", updatedAt: "2026-09-29T00:00:00.000Z",
+};
+fakePaymentModule.service = {
+  async startPayment() { return fakeTransaction; },
+  async getTransaction() { return fakeTransaction; },
+};
+let adminRunCalls = 0;
+let adminRequestedLimit: number | undefined;
+let intervalStarts = 0;
+let scheduledShouldFail = false;
+fakePaymentModule.reconciliation.runOnce = async (limit) => {
+  adminRunCalls++;
+  adminRequestedLimit = limit;
+  if (scheduledShouldFail) throw new Error("synthetic scheduled failure");
+  return { claimed: 0, completed: 0, failed: 0, deadLettered: 0, pending: 0 };
+};
+fakePaymentModule.reconciliation.start = () => { intervalStarts++; };
+let bucketDeletedKey: string | null = null;
+const syntheticR2 = {
+  accountId: "synthetic-account", accessKeyId: "synthetic-access-key", secretAccessKey: "synthetic-secret-key",
+  bucketName: "synthetic-bucket", publicBaseUrl: new URL("https://images.vapt.test/"),
+  uploadUrlTtlSeconds: 300,
+};
+const fakeMenuImages = createMenuImageService({
+  withAuthorizedItem: async ({ userId, restaurantId,itemId },work) => {
+    if (userId !== "20000000-0000-4000-8000-000000000001" || restaurantId !== "10000000-0000-4000-8000-000000000001") {
+      throw new AppError(403, "forbidden", "Forbidden");
+    }
+    if(itemId!=="10000000-0000-4000-8000-000000000041") throw new AppError(404,"menu_item_not_found","Menu item not found");
+    return work();
+  },
+  gateway: createWorkerMenuImageGateway(syntheticR2, {
+    async delete(key) { bucketDeletedKey = key; },
+  }),
+  publicBaseUrl: syntheticR2.publicBaseUrl,
+  uploadUrlTtlSeconds: syntheticR2.uploadUrlTtlSeconds,
+});
+let realR2Calls = 0;
+let mercadoPagoWebhookCalls = 0;
+let mercadoPagoSideEffects = 0;
+let mercadoPagoRawBody = "";
+const processedMercadoPagoEvents = new Set<string>();
+const fakeMercadoPago = {
+  oauth: {
+    async beginConnection() { return { authorizationUrl: "https://auth.mercadopago.com/authorization?synthetic=1" }; },
+    async handleCallback() { return { restaurantId:"10000000-0000-4000-8000-000000000001",status: "connected", returnOrigin: "https://app.vapt.test" }; },
+    async getStatus() { return { status: "active" }; },
+    async disconnect() { return { status: "disconnected" }; },
+  },
+  returnReconciliation: { async reconcile() { return { ...fakeTransaction, status: "paid" }; } },
+  diagnostics: { async inspect() { return { found: false }; } },
+  webhook: {
+    async handle(input: { rawBody: string }) {
+      mercadoPagoWebhookCalls++;
+      mercadoPagoRawBody = input.rawBody;
+      const id = String((JSON.parse(input.rawBody) as { id: string }).id);
+      const duplicate = processedMercadoPagoEvents.has(id);
+      if (!duplicate) {
+        processedMercadoPagoEvents.add(id);
+        mercadoPagoSideEffects++;
+      }
+      return duplicate ? { received: true, duplicate: true } : { received: true, duplicate: false, ignored: true };
+    },
+  },
+} as unknown as MercadoPagoServices;
+let serviceFactoryCalls = 0;
+const createFixtureServices = (env: WorkerBindings, context: ExecutionContext) => {
+  serviceFactoryCalls++;
+  const mercadoPagoEnabled = Boolean(env.MERCADO_PAGO_CLIENT_ID);
+  const fixtureEnv = env as WorkerBindings & { TEST_MISC?: string; TEST_SCHEDULED_FAIL?: string };
+  const miscEnabled = fixtureEnv.TEST_MISC === "enabled";
+  scheduledShouldFail = fixtureEnv.TEST_SCHEDULED_FAIL === "enabled";
+  return createWorkerServices(env, context, {
+    config: {
+      nodeEnv: "test",
+      corsOrigins: ["https://app.vapt.test"],
+      frontendUrl: new URL("https://app.vapt.test"),
+      apiPublicUrl: new URL("https://api.vapt.test"),
+      security: { publicOrderTokenSecret: "synthetic-public-order-secret", paymentEffectsAdminSecret: "synthetic-admin-secret" },
+      stripe: {
+        secretKey: "sk_test_synthetic", webhookSecret: "whsec_synthetic",
+        webhookToleranceSeconds: 300, environment: "test", portalConfigurationId: "bpc_synthetic",
+        prices: { starter: "price_starter", pro: "price_pro", business: "price_business" },
+      },
+      paymentEffects: { pollIntervalMs: 5_000, batchSize: 25, leaseMs: 60_000, maxAttempts: 5, retryBaseMs: 30_000 },
+      mercadoPago: mercadoPagoEnabled ? {
+        clientId: "synthetic", clientSecret: "synthetic", redirectUri: new URL("https://api.vapt.test/payments/mercado-pago/oauth/callback"),
+        webhookSecret: "synthetic-webhook-secret", tokenEncryptionKey: Buffer.alloc(32), credentialKeyId: "synthetic",
+        environment: "sandbox", testAccessToken: "synthetic-test-token",
+      } : undefined,
+      r2: miscEnabled ? syntheticR2 : undefined,
+    } as AppConfig,
+    database: fakeDatabase,
+    authRuntime: fakeAuthRuntime,
+    stripeGateway: {} as StripeGateway,
+    catalog: fakeCatalog,
+    orders: fakeOrders,
+    feedback: fakeFeedback,
+    tableSessions: fakeTableSessions,
+    menu: fakeMenu,
+    restaurants: fakeRestaurants,
+    onboarding:{
+      async createInitialDraft(){throw new AppError(409,'onboarding_conflict','Use an existing organization');},
+      async createOrganizationDraft(actor,organizationId,_key,input){
+        if(actor.userId!=='20000000-0000-4000-8000-000000000003'||organizationId!=='30000000-0000-4000-8000-000000000001')
+          throw new AppError(403,'forbidden','Forbidden');
+        if(actor.sessionId!=='20000000-0000-4000-8000-000000000004'||actor.sessionExpiresAt<=Date.now())
+          throw new AppError(401,'unauthorized','Unauthorized');
+        return {id:'10000000-0000-4000-8000-000000000003',organizationId,name:input.name,slug:input.slug,whatsapp:input.whatsapp??'',
+          localEnabled:true,deliveryEnabled:false,totalTables:1,onboardingStep:0};
+      },
+      async getDraft(){throw new Error('not used by this fixture');},async saveDraft(){throw new Error('not used by this fixture');},
+      async finalizeDraft(actor,restaurantId){
+        if(actor.userId!=='20000000-0000-4000-8000-000000000003'||restaurantId!==fixtureRestaurant.id)throw new AppError(403,'forbidden','Forbidden');
+        if(actor.sessionId!=='20000000-0000-4000-8000-000000000004'||actor.sessionExpiresAt<=Date.now())throw new AppError(401,'unauthorized','Unauthorized');
+        return {...fixtureRestaurant,onboardingCompleted:true};
+      },
+      async getActivation(scope){assertFixtureScope(scope);return {cashier:false,menu:false,kitchen:fixtureKitchenActivated,settings:false,overview:false};},
+      async completeActivation(scope,module){assertFixtureScope(scope);if(module==='kitchen')fixtureKitchenActivated=true;},
+    },
+    stripeWebhooks: fakeStripeWebhooks,
+    stripeBilling: fakeStripeBilling,
+    manualPayments:{async confirm(input){
+      assertFixtureScope(input);
+      if(input.sessionId!=='20000000-0000-4000-8000-000000000002' || input.sessionExpiresAt<=Date.now()) throw new AppError(401,'unauthorized','Unauthorized');
+      if(input.orderId!==fixtureOrderId) throw new AppError(404,'order_not_found','Order not found');
+      return {...fakeTransaction,restaurantId:input.restaurantId,provider:'manual',status:'paid',paymentMethod:input.paymentMethod,
+        manuallyConfirmedBy:input.userId,processingMode:'manual'};
+    }},
+    ...(mercadoPagoEnabled ? { mercadoPago: fakeMercadoPago, payments: fakePaymentModule } : {}),
+    ...(miscEnabled ? { menuImages: fakeMenuImages, payments: fakePaymentModule } : {}),
+    ...(miscEnabled ? { pushSubscriptions: {
+      async upsertSubscription(scope: {restaurantId:string}, input: {endpoint:string}) {return {restaurantId:scope.restaurantId,endpoint:input.endpoint,status:"subscribed" as const};},
+      async upsertOwnedSubscription(userId: string, input: { endpoint: string }) {
+        return { restaurantId: userId, endpoint: input.endpoint, status: "subscribed" as const };
+      },
+    } } : {}),
+    ownershipLookup: async ({ userId, restaurantId }) =>
+      userId === "20000000-0000-4000-8000-000000000001" && restaurantId === "10000000-0000-4000-8000-000000000001",
+  });
+};
+const app = createWorkerApp(createFixtureServices, {
+  authRateLimit: false, publicRateLimit: false, privateRateLimit: false,
+  stripeRateLimit: false, paymentRateLimit: false, miscRateLimit: false,
+});
+app.get("/_test/composition-counts", (context) => context.json({ serviceFactoryCalls }));
+app.get("/_test/stripe-counts", (context) => context.json({ stripeWebhookCalls, stripeSideEffects }));
+app.get("/_test/mercado-pago-counts", (context) => context.json({
+  mercadoPagoWebhookCalls, mercadoPagoSideEffects, mercadoPagoRawBody,
+}));
+app.get("/_test/misc-counts", (context) => context.json({
+  adminRunCalls, adminRequestedLimit, intervalStarts, bucketDeletedKey, realR2Calls,
+}));
+app.get("/_test/route-inventory", (context) => context.json(Array.from(new Set(app.routes
+  .filter(({ method, path }) => method !== "ALL" && !path.startsWith("/_test"))
+  .map(({ method, path }) => JSON.stringify({ method, path }))))
+  .map((value) => JSON.parse(value) as { method: string; path: string })));
+app.get("/_test/missing-ingress", (context) => {
+  trustedRateLimitKey(new Headers({ "x-forwarded-for": "1.2.3.4" }), "auth");
+  return context.json({ unexpected: true });
+});
+app.get("/_test/protected", workerRateLimit("auth"), async (context) => {
+  const auth = await requireWorkerAuth(context);
+  return context.json({ userId: auth.userId });
+});
+app.post("/_test/parse", async (context) => context.json(await parseWorkerJson(context.req.raw)));
+app.get("/_test/echo/:value", (context) => context.json({
+  value: context.req.param("value"),
+  query: context.req.query("q"),
+  greeting: (context.env as FixtureBindings).TEST_GREETING,
+}));
+
+export default {
+  fetch: app.fetch,
+  async scheduled(_event: unknown, env: WorkerBindings, context: ExecutionContext): Promise<void> {
+    await runScheduledReconciliation(await createFixtureServices(env, context));
+  },
+};

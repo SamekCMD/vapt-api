@@ -1,0 +1,61 @@
+import type { FastifyInstance } from "fastify";
+import {AppError} from "../../lib/errors.js";
+
+import { validateWithSchema } from "../../lib/validation.js";
+import { actorFromAuth, requireAuth } from "../../plugins/auth.js";
+import type { RestaurantRepository } from "./repository.js";
+import {
+  onboardingBodySchema,
+  slugAvailabilityQuerySchema,
+  restaurantParamsSchema,
+  updateOwnedRestaurantBodySchema,
+} from "./schemas.js";
+import { createRestaurantService } from "./service.js";
+
+export async function registerRestaurantRoutes(
+  app: FastifyInstance,
+  repository: RestaurantRepository,
+) {
+  const service = createRestaurantService(repository);
+  const authenticated = async (request: Parameters<typeof requireAuth>[0], reply: Parameters<typeof requireAuth>[1]) =>
+    requireAuth(request, reply, app.authSessionResolver);
+
+  app.post(
+    "/onboarding",
+    { config: { rateLimitGroup: "auth" }, preHandler: authenticated },
+    async (request, reply) => {
+      const body = validateWithSchema(onboardingBodySchema, request.body);
+      throw new AppError(410,'legacy_onboarding_retired','Use account onboarding drafts and explicit finalization');
+    },
+  );
+
+  app.get(
+    "/restaurants/me",
+    { config: { rateLimitGroup: "auth" }, preHandler: authenticated },
+    async (request) => service.getOwnedRestaurant(request.auth!.userId),
+  );
+
+  app.patch(
+    "/restaurants/me",
+    { config: { rateLimitGroup: "auth" }, preHandler: authenticated },
+    async (request) => {
+      const body = validateWithSchema(updateOwnedRestaurantBodySchema, request.body);
+      return service.updateOwnedRestaurant(request.auth!.userId, body,actorFromAuth(request.auth!));
+    },
+  );
+
+  app.get('/restaurants/:restaurantId/slug-availability',{config:{rateLimitGroup:'auth'},preHandler:authenticated},async(request,reply)=>{
+    const {restaurantId}=validateWithSchema(restaurantParamsSchema,request.params);
+    const {slug}=validateWithSchema(slugAvailabilityQuerySchema,request.query);reply.header('Cache-Control','no-store');
+    return service.checkSlugAvailability({userId:request.auth!.userId,restaurantId},slug);
+  });
+  app.get('/restaurants/:restaurantId',{ config:{ rateLimitGroup:'auth' },preHandler:authenticated },async request=>{
+    const { restaurantId }=validateWithSchema(restaurantParamsSchema,request.params);
+    return service.getRestaurant({ userId:request.auth!.userId,restaurantId });
+  });
+  app.patch('/restaurants/:restaurantId',{ config:{ rateLimitGroup:'auth' },preHandler:authenticated },async request=>{
+    const { restaurantId }=validateWithSchema(restaurantParamsSchema,request.params);
+    const body=validateWithSchema(updateOwnedRestaurantBodySchema,request.body);
+    return service.updateRestaurant({ ...actorFromAuth(request.auth!),restaurantId },body);
+  });
+}

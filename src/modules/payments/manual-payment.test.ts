@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { createHmac } from "node:crypto";
 import test from "node:test";
 
 import Fastify from "fastify";
@@ -9,12 +8,20 @@ import { AppError } from "../../lib/errors.js";
 import type { OwnershipLookup } from "../../lib/permissions.js";
 import { registerAuthDecorator } from "../../plugins/auth.js";
 import { registerErrorHandler } from "../../plugins/error-handler.js";
+import type { SessionResolver } from "../auth/session-resolver.js";
 import { PaymentTransactionConflictError, type PaymentTransactionRecord } from "./repository.js";
 import { createManualPaymentRoutes } from "./routes.js";
 import { manualPaymentBodySchema } from "./schemas.js";
-import { createManualPaymentService, type ManualPaymentService } from "./service.js";
+import { createManualPaymentService as createScopedManualPaymentService, type ManualPaymentService,type ManualPaymentOperationPorts } from "./service.js";
 import { createManualPaymentProvider } from "./providers/manual.js";
 
+const actor={userId:"40000000-0000-4000-8000-000000000001",sessionId:"50000000-0000-4000-8000-000000000001",sessionExpiresAt:Date.now()+60_000};
+function createManualPaymentService(input:ManualPaymentOperationPorts&{ownershipLookup:OwnershipLookup}){
+  return createScopedManualPaymentService({withAuthorizedPayment:async(scope,work)=>{
+    if(!await input.ownershipLookup(scope)) throw new AppError(403,'forbidden','Forbidden');
+    return work(input);
+  }});
+}
 const ORDER_ID = "10000000-0000-4000-8000-000000000001";
 const RESTAURANT_ID = "20000000-0000-4000-8000-000000000001";
 
@@ -24,42 +31,35 @@ const validConfig: AppConfig = {
   host: "127.0.0.1",
   corsOrigins: ["http://localhost:5173"],
   logLevel: "silent",
-  n8n: {
-    baseUrl: new URL("https://n8n.example.com"),
-    timeoutMs: 5000,
-    secrets: {
-      app: "app-secret",
-      admin: "admin-secret",
-    },
+  frontendUrl: new URL("https://app.vapt.test"),
+  stripe: {
+    secretKey: "sk_test_vapt",
+    webhookSecret: "whsec_test",
+    webhookToleranceSeconds: 300,
+    environment: "test",
+    portalConfigurationId: "bpc_vapt",
+    prices: { starter: "price_starter", pro: "price_pro", business: "price_business" },
   },
-  webhooks: {
-    stripe: {
-      signingSecret: "whsec_test",
-      toleranceSeconds: 300,
+  security: { publicOrderTokenSecret: "public-order-token-secret" },
+  betterAuth: {
+    secret: "better-auth-secret-at-least-32-characters",
+    url: new URL("https://api.vapt.test"),
+    trustedOrigins: ["https://app.vapt.test"],
+    databaseUrl: "postgresql://vapt:password@db.vapt.test/vapt",
+    turnstileSecretKey: "turnstile-secret-key",
+    email: {
+      resendApiKey: "re_test_key",
+      from: "Vapt <noreply@vapt.test>",
+      verifyAccountTemplate: "verify-account-template",
+      resetPasswordTemplate: "reset-password-template",
     },
-  },
-  supabase: {
-    url: new URL("https://supabase.example.com"),
-    serviceRoleKey: "service-role-key",
-    jwtSecret: "jwt-secret",
   },
 };
 
-function createToken(payload: Record<string, unknown>): string {
-  const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
-  const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
-  const signature = createHmac("sha256", validConfig.supabase.jwtSecret)
-    .update(`${header}.${body}`)
-    .digest("base64url");
-  return `${header}.${body}.${signature}`;
-}
-
-const ownerToken = createToken({
-  sub: "user-1",
-  email: "owner@example.com",
-  role: "authenticated",
-  exp: Math.floor(Date.now() / 1000) + 3600,
-});
+const testSessionResolver: SessionResolver = async (headers) =>
+  String(headers.cookie ?? "").includes("better-auth.session_token=valid")
+    ? { email: "owner@example.com", role: "authenticated",...actor }
+    : null;
 
 function paidTransaction(overrides: Partial<PaymentTransactionRecord> = {}): PaymentTransactionRecord {
   return {
@@ -79,7 +79,7 @@ function paidTransaction(overrides: Partial<PaymentTransactionRecord> = {}): Pay
     providerPayload: {},
     checkoutUrl: null,
     expiresAt: null,
-    manuallyConfirmedBy: "user-1",
+    manuallyConfirmedBy: actor.userId,
     version: 2,
     createdAt: "2026-08-01T12:00:00.000Z",
     updatedAt: "2026-08-01T12:00:01.000Z",
@@ -91,7 +91,7 @@ function order(overrides: Record<string, unknown> = {}) {
   return {
     id: ORDER_ID,
     restaurantId: RESTAURANT_ID,
-    displayId: 42,
+    displayId: "42",
     totalPrice: "42.50",
     status: "ready",
     paymentStatus: null,
@@ -134,7 +134,7 @@ test("manual provider confirms an operator-recorded payment without external cap
 test("manual confirmation uses the order amount and records the authenticated operator", async () => {
   let startInput: Record<string, unknown> | null = null;
   const ownershipLookup: OwnershipLookup = async ({ userId, restaurantId }) =>
-    userId === "user-1" && restaurantId === RESTAURANT_ID;
+    userId === actor.userId && restaurantId === RESTAURANT_ID;
   const service = createManualPaymentService({
     repository: {
       findOrderForManualPayment: async () => order(),
@@ -156,8 +156,7 @@ test("manual confirmation uses the order amount and records the authenticated op
     orderId: ORDER_ID,
     paymentMethod: "cash",
     idempotencyKey: "manual-payment-1",
-    userId: "user-1",
-    authRole: "authenticated",
+    authRole: "authenticated",restaurantId:RESTAURANT_ID,...actor,
   });
 
   const capturedStartInput = startInput as unknown as {
@@ -171,7 +170,7 @@ test("manual confirmation uses the order amount and records the authenticated op
     currency: "BRL",
   });
   assert.equal(capturedStartInput.restaurantId, RESTAURANT_ID);
-  assert.equal(capturedStartInput.confirmedByUserId, "user-1");
+  assert.equal(capturedStartInput.confirmedByUserId, actor.userId);
   assert.equal("amount" in result, true);
 });
 
@@ -196,8 +195,7 @@ test("manual confirmation rejects a token without the authenticated operator rol
       orderId: ORDER_ID,
       paymentMethod: "cash",
       idempotencyKey: "manual-payment-1",
-      userId: "user-1",
-      authRole: "anon",
+      authRole: "anon",restaurantId:RESTAURANT_ID,...actor,
     }),
     (error: unknown) => error instanceof AppError && error.statusCode === 403,
   );
@@ -223,8 +221,7 @@ test("manual confirmation rejects an order owned by another tenant", async () =>
       orderId: ORDER_ID,
       paymentMethod: "cash",
       idempotencyKey: "manual-payment-1",
-      userId: "user-2",
-      authRole: "authenticated",
+      authRole: "authenticated",restaurantId:RESTAURANT_ID,...actor,
     }),
     (error: unknown) => error instanceof AppError && error.statusCode === 403,
   );
@@ -251,8 +248,7 @@ test("manual confirmation rejects an order that is already paid", async () => {
       orderId: ORDER_ID,
       paymentMethod: "cash",
       idempotencyKey: "manual-payment-1",
-      userId: "user-1",
-      authRole: "authenticated",
+      authRole: "authenticated",restaurantId:RESTAURANT_ID,...actor,
     }),
     (error: unknown) =>
       error instanceof AppError &&
@@ -278,8 +274,7 @@ test("manual confirmation maps a concurrent transaction to conflict", async () =
       orderId: ORDER_ID,
       paymentMethod: "cash",
       idempotencyKey: "manual-payment-concurrent",
-      userId: "user-1",
-      authRole: "authenticated",
+      authRole: "authenticated",restaurantId:RESTAURANT_ID,...actor,
     }),
     (error: unknown) =>
       error instanceof AppError && error.statusCode === 409 && error.code === "payment_conflict",
@@ -303,9 +298,9 @@ test("manual payment route requires authentication and a bounded idempotency key
     },
   };
   const app = Fastify({ logger: false });
-  registerAuthDecorator(app);
+  registerAuthDecorator(app, testSessionResolver);
   registerErrorHandler(app);
-  await createManualPaymentRoutes(app, validConfig, fakeService);
+  await createManualPaymentRoutes(app, validConfig, fakeService,async()=>({restaurantId:RESTAURANT_ID}));
 
   const unauthenticated = await app.inject({
     method: "POST",
@@ -319,7 +314,7 @@ test("manual payment route requires authentication and a bounded idempotency key
     method: "POST",
     url: `/orders/${ORDER_ID}/payments/manual-confirmation`,
     headers: {
-      authorization: `Bearer ${ownerToken}`,
+      cookie: "better-auth.session_token=valid",
       "idempotency-key": "manual-payment-1",
     },
     payload: { paymentMethod: "cash", amount: "0.01" },
@@ -339,15 +334,15 @@ test("manual payment route passes only authenticated identity and allowed fields
     },
   };
   const app = Fastify({ logger: false });
-  registerAuthDecorator(app);
+  registerAuthDecorator(app, testSessionResolver);
   registerErrorHandler(app);
-  await createManualPaymentRoutes(app, validConfig, fakeService);
+  await createManualPaymentRoutes(app, validConfig, fakeService,async()=>({restaurantId:RESTAURANT_ID}));
 
   const response = await app.inject({
     method: "POST",
     url: `/orders/${ORDER_ID}/payments/manual-confirmation`,
     headers: {
-      authorization: `Bearer ${ownerToken}`,
+      cookie: "better-auth.session_token=valid",
       "idempotency-key": "manual-payment-1",
     },
     payload: { paymentMethod: "external_pix" },
@@ -358,8 +353,7 @@ test("manual payment route passes only authenticated identity and allowed fields
     orderId: ORDER_ID,
     paymentMethod: "external_pix",
     idempotencyKey: "manual-payment-1",
-    userId: "user-1",
-    authRole: "authenticated",
+    authRole: "authenticated",restaurantId:RESTAURANT_ID,...actor,
   });
   const payload = response.json() as Record<string, unknown>;
   assert.equal(payload.status, "paid");

@@ -1,0 +1,54 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "vapt-api-parallel",
+  "main": "src/worker/parallel-preview-entry.ts",
+  "compatibility_date": "2026-09-28",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "migrations": [
+    { "tag": "stage12-realtime-sqlite-v1", "new_sqlite_classes": ["RestaurantRealtime"] }
+  ],
+  "previews": {
+    "vars": {
+      "ENVIRONMENT": "preview",
+      "REALTIME_ENABLED": "true",
+      "STRIPE_ENVIRONMENT": "test",
+      "CORS_ORIGINS": "https://infra-foundation-vapt-web.autoistloko.workers.dev",
+      "FRONTEND_URL": "https://infra-foundation-vapt-web.autoistloko.workers.dev",
+      "API_PUBLIC_URL": "https://stage11-inert-vapt-api-parallel.autoistloko.workers.dev",
+      "BETTER_AUTH_URL": "https://stage11-inert-vapt-api-parallel.autoistloko.workers.dev",
+      "BETTER_AUTH_TRUSTED_ORIGINS": "https://infra-foundation-vapt-web.autoistloko.workers.dev,https://stage11-inert-vapt-api-parallel.autoistloko.workers.dev",
+      "STRIPE_PORTAL_CONFIGURATION_ID": "bpc_1UKLz8QYNWCekS7FIAhwaL1w",
+      "STRIPE_PRICE_STARTER": "price_1UKLz6QYNWCekS7FogRBzEO9",
+      "STRIPE_PRICE_PRO": "price_1UKLz7QYNWCekS7FA9lBwZEd",
+      "STRIPE_PRICE_BUSINESS": "price_1UKLz8QYNWCekS7Fgz31Vrqd",
+      "RESEND_TEMPLATE_VERIFY_ACCOUNT": "account-confirmation",
+      "RESEND_TEMPLATE_RESET_PASSWORD": "password-reset",
+      "EMAIL_FROM": "Vapt <no-reply@vapt.app.br>",
+      "R2_ACCOUNT_ID": "3ce69408aa5112617a282957aba71932",
+      "R2_BUCKET_NAME": "vapt-assets-preview",
+      "R2_UPLOAD_URL_TTL_SECONDS": "60",
+      "R2_PUBLIC_BASE_URL": "https://pub-c7718cfb495f4c83866dfe3ed8c52890.r2.dev"
+    },
+    "durable_objects": {
+      "bindings": [
+        { "name": "RESTAURANT_REALTIME", "class_name": "RestaurantRealtime" }
+      ]
+    },
+    "hyperdrive": [
+      { "binding": "HYPERDRIVE", "id": "0c05fec2924b4f3b9225f3d689ba7ea9" }
+    ],
+    "r2_buckets": [
+      { "binding": "R2_BUCKET", "bucket_name": "vapt-assets-preview" }
+    ],
+    "ratelimits": [
+      { "name": "AUTH_RATE_LIMIT", "namespace_id": "11011", "simple": { "limit": 20, "period": 60 } },
+      { "name": "BILLING_RATE_LIMIT", "namespace_id": "11012", "simple": { "limit": 60, "period": 60 } },
+      { "name": "ORDERS_RATE_LIMIT", "namespace_id": "11013", "simple": { "limit": 30, "period": 60 } },
+      { "name": "STORAGE_RATE_LIMIT", "namespace_id": "11014", "simple": { "limit": 30, "period": 60 } },
+      { "name": "WEBHOOKS_RATE_LIMIT", "namespace_id": "11015", "simple": { "limit": 300, "period": 60 } },
+      { "name": "PUBLIC_RATE_LIMIT", "namespace_id": "11016", "simple": { "limit": 120, "period": 60 } }
+    ]
+  }
+}

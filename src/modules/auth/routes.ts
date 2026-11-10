@@ -1,39 +1,27 @@
 import type { FastifyInstance } from "fastify";
 
 import type { AppConfig } from "../../lib/config.js";
-import {
-  createRestaurantAccessChecker,
-  createSupabaseOwnershipLookup,
-  testOwnershipLookup,
-  type OwnershipLookup,
-} from "../../lib/permissions.js";
-import { createSupabaseAdminClient } from "../../lib/supabase.js";
+import type {RestaurantAuthorizer} from '../../lib/permissions.js';
 import { validateWithSchema } from "../../lib/validation.js";
-import { requireAuth } from "../../plugins/auth.js";
+import { authIdentityDto, requireAuth } from "../../plugins/auth.js";
 import { restaurantAccessParamsSchema } from "./schemas.js";
 
 export async function registerAuthRoutes(
   app: FastifyInstance,
   config: AppConfig,
-  ownershipLookup?: OwnershipLookup,
+  authorizeRestaurant:RestaurantAuthorizer,
 ) {
-  const resolvedOwnershipLookup =
-    ownershipLookup ??
-    (config.nodeEnv === "test"
-      ? testOwnershipLookup
-      : createSupabaseOwnershipLookup(createSupabaseAdminClient(config) as never));
-  const assertRestaurantAccess = createRestaurantAccessChecker(resolvedOwnershipLookup);
-
   app.get(
     "/auth/me",
     {
       config: {
         rateLimitGroup: "auth",
       },
-      preHandler: async (request, reply) => requireAuth(request, reply, config),
+      preHandler: async (request, reply) =>
+        requireAuth(request, reply, app.authSessionResolver),
     },
     async (request) => {
-      return request.auth;
+      return authIdentityDto(request.auth!);
     },
   );
 
@@ -43,14 +31,15 @@ export async function registerAuthRoutes(
       config: {
         rateLimitGroup: "auth",
       },
-      preHandler: async (request, reply) => requireAuth(request, reply, config),
+      preHandler: async (request, reply) =>
+        requireAuth(request, reply, app.authSessionResolver),
     },
     async (request) => {
       const params = validateWithSchema(restaurantAccessParamsSchema, request.params);
       const restaurantId = params.restaurantId;
       const userId = request.auth!.userId;
 
-      await assertRestaurantAccess({ userId, restaurantId });
+      await authorizeRestaurant({ userId, restaurantId },'restaurant.read');
 
       return {
         allowed: true,

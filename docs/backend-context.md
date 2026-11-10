@@ -8,26 +8,14 @@ The architectural rule is:
 
 `frontend -> vapt-api -> internal services`
 
-The frontend must not call n8n directly anymore.
+The frontend calls only the public Vapt API; billing and business persistence run directly on Neon.
 
-## Current Role of n8n
+## Current Runtime Ownership
 
-n8n is still the internal execution engine for:
-
-- Stripe billing flows
-- Stripe webhook forwarding
-- ingest/automation flows already modeled in the existing project
-
-`vapt-api` is responsible for:
-
-- authentication
-- restaurant access checks
-- request validation
-- rate limiting
-- secret isolation
-- webhook signature validation
-- idempotency persistence
-- forwarding normalized/internal requests to n8n
+The API owns authentication, restaurant access checks, request validation, rate limiting,
+secret isolation, provider SDK calls, webhook verification, canonical state reconciliation
+and Neon persistence. Hosted Stripe Checkout and Customer Portal replace workflow-backed
+billing. No API/frontend runtime depends on n8n.
 
 ## Current Backend Status
 
@@ -35,9 +23,9 @@ Implemented phases:
 
 - Phase 0: bootstrap, Fastify app, Docker, health routes
 - Phase 1: config, logger, error handling, folder structure, strict startup config
-- Phase 2: internal n8n client
-- Phase 3: local Supabase JWT validation and initial restaurant authorization adapter
-- Phase 4 Stripe: public billing routes backed by n8n
+- Historical Phase 2: internal workflow client, now removed
+- Phase 3: Better Auth cookie sessions and initial restaurant authorization adapter
+- Stripe billing: official SDK, hosted Checkout, Customer Portal, local signed webhooks and durable email intents
 - Phase 4 Asaas: public billing routes and webhook forwarding retired
 - Phase 5: provider webhooks in `vapt-api` with signature validation and persisted idempotency
 - Phase 6: request validation with Zod and grouped rate limits
@@ -54,14 +42,14 @@ Health:
 
 Auth:
 
+- `GET|POST /api/auth/*` (Better Auth)
 - `GET /auth/me`
 - `GET /auth/restaurants/:restaurantId/access`
 
 Stripe billing:
 
 - `POST /billing/stripe/checkout`
-- `POST /billing/stripe/subscription/change`
-- `POST /billing/stripe/subscription/cancel`
+- `POST /billing/stripe/portal`
 - `GET /billing/stripe/subscription`
 
 Ingest:
@@ -87,8 +75,8 @@ Webhooks:
 ## Security Rules
 
 - startup fails if required env is missing or invalid
-- CORS is allowlist-based through `CORS_ORIGINS`
-- auth tokens are validated locally with Supabase JWT secret
+- CORS is credentialed and allowlist-based through `CORS_ORIGINS`
+- protected routes resolve Better Auth cookie sessions and ignore legacy Supabase bearer JWTs
 - authorization currently uses the existing `restaurants.owner_id` model behind an adapter
 - billing and webhook secrets stay only in backend env
 - request validation uses `zod`
@@ -103,44 +91,24 @@ Webhooks:
 
 The app trusts proxy headers and uses `x-forwarded-for` when available.
 
-## n8n Compatibility Notes
+## Stripe Webhook Idempotency
 
-`N8N_BASE_URL` must point to the webhook base, for example:
+Stripe events use provider `stripe` in Neon `billing_provider_events`.
+Lifecycle: received, processing, processed, pending_retry, ignored. Atomic claims
+increment an attempt token, preserve retryability and fence stale workers; processed
+and ignored are terminal. An unexpired in-flight claim returns retryable 503; only terminal duplicates are acknowledged.
 
-`https://your-n8n-host/webhook`
+The SDK verifies the exact raw body before persistence. The event transaction locks
+the restaurant, retrieves the current canonical Subscription, validates mode, tenant,
+Customer and exactly one known recurring Price item, and persists the item period/state.
+Only this path changes entitlement; browser returns are not billing evidence.
 
-The internal n8n client contains explicit contracts for:
+Reconciliation, the event-audited, business-resource-deduplicated `billing_email_outbox` intent and terminal
+event status commit together. Checkout/subscription updates emit no activation email;
+initial invoice owns activation, cycle invoice owns renewal, payment failure owns its
+intent and subscription deletion owns cancellation. Delivery via Queue/Resend is deferred.
 
-- Stripe billing operations
-- ingest operations
-- Stripe webhook forward
-
-The backend forwards webhook payloads to n8n in raw form to preserve compatibility with the current workflows.
-
-## Webhook Idempotency
-
-The backend reuses existing Supabase tables:
-
-- `billing_provider_events`
-- `payment_provider_events`
-
-Gateway-level webhook idempotency is stored with distinct providers:
-
-- `stripe_gateway`
-- `asaas_gateway` (historico, somente leitura)
-
-This avoids colliding with the idempotency already used inside legacy n8n workflows.
-
-Processing rule:
-
-1. validate provider signature/token
-2. persist receipt/idempotency record
-3. if duplicate, stop
-4. forward to n8n
-5. mark processed only after successful forward
-6. if forwarding fails, persist failure state for future retry
-
-Mercado Pago order payments use the provider v2 flow instead of n8n:
+Mercado Pago order payments use the provider v2 flow:
 
 1. validate the Mercado Pago HMAC signature
 2. reserve the external event id
@@ -185,17 +153,24 @@ The backend should continue using the authorization adapter, not hardcode `owner
 Important env vars currently required:
 
 - `CORS_ORIGINS`
-- `N8N_BASE_URL`
-- `N8N_TIMEOUT_MS`
-- `VAPT_APP_ENDPOINT_SECRET`
-- `VAPT_ADMIN_ENDPOINT_SECRET`
-- `STRIPE_WEBHOOK_SIGNING_SECRET`
-- `SUPABASE_URL`
-- `SUPABASE_SERVICE_ROLE_KEY`
-- `SUPABASE_JWT_SECRET`
+- `STRIPE_SECRET_KEY`
+- `STRIPE_WEBHOOK_SECRET`
+- `STRIPE_ENVIRONMENT`
+- `STRIPE_PORTAL_CONFIGURATION_ID`
+- `STRIPE_PRICE_STARTER`, `STRIPE_PRICE_PRO`, `STRIPE_PRICE_BUSINESS`
+- `PUBLIC_ORDER_TOKEN_SECRET`
+- `BETTER_AUTH_SECRET`
+- `BETTER_AUTH_URL`
+- `BETTER_AUTH_TRUSTED_ORIGINS`
+- `DATABASE_URL`
+- `TURNSTILE_SECRET_KEY`
+- `RESEND_API_KEY`
+- `RESEND_TEMPLATE_VERIFY_ACCOUNT`
+- `RESEND_TEMPLATE_RESET_PASSWORD`
+- `EMAIL_FROM`
 - `FRONTEND_URL`
-- `API_PUBLIC_URL`
-- `PAYMENT_TOKEN_ENCRYPTION_KEY`
+- `API_PUBLIC_URL`, only required when Mercado Pago is enabled
+- `PAYMENT_TOKEN_ENCRYPTION_KEY`, only required when Mercado Pago is enabled
 - `MERCADO_PAGO_CLIENT_ID`
 - `MERCADO_PAGO_CLIENT_SECRET`
 - `MERCADO_PAGO_REDIRECT_URI`
@@ -209,20 +184,15 @@ Useful optional/defaulted env vars:
 - `HOST=0.0.0.0`
 - `LOG_LEVEL=info`
 - `STRIPE_WEBHOOK_TOLERANCE_SECONDS=300`
+- `PAYMENT_EFFECTS_ADMIN_SECRET`, independent optional maintenance credential (at least 32 characters); absent closes the admin route
 - `MERCADO_PAGO_TEST_ACCESS_TOKEN` somente no ambiente `sandbox`; deve receber
   o Access Token de **Credenciais de teste** da aplicacao. Em producao, a API
   rejeita essa variavel e resolve a credencial pelo OAuth de cada restaurante.
 
-## Recommended Next Work
+## Deployment Gate and Next Work
 
-The highest-value next step is frontend migration:
-
-- replace direct frontend->n8n calls with frontend->`vapt-api`
-- update the React app contracts to the backend routes above
-- validate real environment flows on EasyPanel
-
-After that:
-
-- replace the temporary authorization lookup with real Supabase-backed access checks
-- improve operational observability and request correlation
-- later evolve to membership/role-based authorization
+Preview uses Stripe Test Mode only. Production receives additive schema with no test data.
+Live credentials, Prices, Portal configuration and webhook destination wait for the
+Cloudflare Worker deployment; this phase does not alter current DNS or hosting.
+Next: connect durable billing email intents to Cloudflare Queues/Resend, then Worker
+portability/deployment and operational observability. Membership/roles remain future work.

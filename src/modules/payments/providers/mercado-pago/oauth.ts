@@ -1,13 +1,12 @@
+import {z} from "zod";
+import {tenantActorSchema} from "../../../tenancy/contracts.js";
+import type {RestaurantWriteScope} from "../../../tenancy/contracts.js";
+import type {RestaurantAuthorizer} from "../../../../lib/permissions.js";
 import { createHash, randomBytes } from "node:crypto";
 
-import type { SupabaseClient } from "@supabase/supabase-js";
-
 import type { SecretCipher } from "../../../../lib/crypto.js";
+import type { Queryable } from "../../../../lib/database.js";
 import { AppError } from "../../../../lib/errors.js";
-import {
-  createRestaurantAccessChecker,
-  type OwnershipLookup,
-} from "../../../../lib/permissions.js";
 import type { PaymentEnvironment } from "../../types.js";
 import type {
   MercadoPagoOAuthClient,
@@ -110,9 +109,9 @@ type RawOAuthState = {
   code_verifier_encrypted: string;
   credential_key_id: string;
   redirect_uri: string;
-  expires_at: string;
-  consumed_at: string | null;
-  created_at: string;
+  expires_at: string | Date;
+  consumed_at: string | Date | null;
+  created_at: string | Date;
 };
 
 type RawProviderCredential = {
@@ -125,9 +124,9 @@ type RawProviderCredential = {
   access_token_encrypted: string | null;
   refresh_token_encrypted: string | null;
   credential_key_id: string | null;
-  token_expires_at: string | null;
-  connected_at: string | null;
-  disconnected_at: string | null;
+  token_expires_at: string | Date | null;
+  connected_at: string | Date | null;
+  disconnected_at: string | Date | null;
   last_error: string | null;
   version: number;
 };
@@ -166,6 +165,14 @@ function oauthStorageFailure(message: string): never {
   throw new AppError(500, "payment_storage_error", message);
 }
 
+function isoString(value: string | Date): string {
+  return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
+}
+
+function isoNullable(value: string | Date | null): string | null {
+  return value === null ? null : isoString(value);
+}
+
 function mapOAuthState(row: RawOAuthState): OAuthStateRecord {
   return {
     id: row.id,
@@ -175,9 +182,9 @@ function mapOAuthState(row: RawOAuthState): OAuthStateRecord {
     codeVerifierEncrypted: row.code_verifier_encrypted,
     credentialKeyId: row.credential_key_id,
     redirectUri: row.redirect_uri,
-    expiresAt: row.expires_at,
-    consumedAt: row.consumed_at,
-    createdAt: row.created_at,
+    expiresAt: isoString(row.expires_at),
+    consumedAt: isoNullable(row.consumed_at),
+    createdAt: isoString(row.created_at),
   };
 }
 
@@ -192,151 +199,215 @@ function mapProviderCredential(row: RawProviderCredential): ProviderCredentialRe
     accessTokenEncrypted: row.access_token_encrypted,
     refreshTokenEncrypted: row.refresh_token_encrypted,
     credentialKeyId: row.credential_key_id,
-    tokenExpiresAt: row.token_expires_at,
-    connectedAt: row.connected_at,
-    disconnectedAt: row.disconnected_at,
+    tokenExpiresAt: isoNullable(row.token_expires_at),
+    connectedAt: isoNullable(row.connected_at),
+    disconnectedAt: isoNullable(row.disconnected_at),
     lastError: row.last_error,
     version: row.version,
   };
 }
 
 export function createMercadoPagoOAuthRepository(
-  client: SupabaseClient,
+  database: Queryable,
 ): MercadoPagoOAuthRepository {
   return {
     async saveOAuthState(input) {
-      const result = await client
-        .from("payment_oauth_states")
-        .insert({
-          restaurant_id: input.restaurantId,
-          provider: "mercado_pago",
-          environment: input.environment,
-          state_hash: input.stateHash,
-          code_verifier_encrypted: input.codeVerifierEncrypted,
-          credential_key_id: input.credentialKeyId,
-          redirect_uri: input.redirectUri,
-          expires_at: input.expiresAt,
-        })
-        .select(OAUTH_STATE_COLUMNS)
-        .single<RawOAuthState>();
-
-      if (result.error) oauthStorageFailure("Failed to save OAuth state");
-      return mapOAuthState(result.data);
+      try {
+        const result = await database.query<RawOAuthState>(
+          `insert into public.payment_oauth_states (
+            restaurant_id,
+            provider,
+            environment,
+            state_hash,
+            code_verifier_encrypted,
+            credential_key_id,
+            redirect_uri,
+            expires_at
+          ) values (
+            $1::uuid, 'mercado_pago', $2::text, $3::text,
+            $4::text, $5::text, $6::text, $7::timestamptz
+          )
+          returning ${OAUTH_STATE_COLUMNS}`,
+          [
+            input.restaurantId,
+            input.environment,
+            input.stateHash,
+            input.codeVerifierEncrypted,
+            input.credentialKeyId,
+            input.redirectUri,
+            input.expiresAt,
+          ],
+        );
+        const row = result.rows[0];
+        if (!row) oauthStorageFailure("Failed to save OAuth state");
+        return mapOAuthState(row);
+      } catch (error) {
+        if (error instanceof AppError) throw error;
+        oauthStorageFailure("Failed to save OAuth state");
+      }
     },
 
     async consumeOAuthState(input) {
-      const result = await client
-        .from("payment_oauth_states")
-        .update({ consumed_at: input.consumedAt })
-        .eq("state_hash", input.stateHash)
-        .is("consumed_at", null)
-        .gt("expires_at", input.consumedAt)
-        .select(OAUTH_STATE_COLUMNS)
-        .maybeSingle<RawOAuthState>();
-
-      if (result.error) oauthStorageFailure("Failed to consume OAuth state");
-      return result.data ? mapOAuthState(result.data) : null;
+      try {
+        const result = await database.query<RawOAuthState>(
+          `update public.payment_oauth_states
+          set consumed_at = $2::timestamptz
+          where state_hash = $1::text
+            and consumed_at is null
+            and expires_at > $2::timestamptz
+          returning ${OAUTH_STATE_COLUMNS}`,
+          [input.stateHash, input.consumedAt],
+        );
+        return result.rows[0] ? mapOAuthState(result.rows[0]) : null;
+      } catch {
+        oauthStorageFailure("Failed to consume OAuth state");
+      }
     },
 
     async upsertProviderAccount(input) {
-      const result = await client
-        .from("payment_provider_accounts")
-        .upsert({
-          restaurant_id: input.restaurantId,
-          provider: "mercado_pago",
-          environment: input.environment,
-          status: input.status,
-          external_account_id: input.externalAccountId,
-          capabilities: input.capabilities,
-          access_token_encrypted: input.accessTokenEncrypted,
-          refresh_token_encrypted: input.refreshTokenEncrypted,
-          credential_key_id: input.credentialKeyId,
-          token_expires_at: input.tokenExpiresAt,
-          connected_at: input.connectedAt,
-          disconnected_at: null,
-          last_error: null,
-        }, {
-          onConflict: "restaurant_id,provider,environment",
-        })
-        .select(PROVIDER_CREDENTIAL_COLUMNS)
-        .single<RawProviderCredential>();
-
-      if (result.error) oauthStorageFailure("Failed to save Mercado Pago connection");
-      return mapProviderCredential(result.data);
+      try {
+        const result = await database.query<RawProviderCredential>(
+          `insert into public.payment_provider_accounts (
+            restaurant_id,
+            provider,
+            environment,
+            status,
+            external_account_id,
+            capabilities,
+            access_token_encrypted,
+            refresh_token_encrypted,
+            credential_key_id,
+            token_expires_at,
+            connected_at,
+            disconnected_at,
+            last_error
+          ) values (
+            $1::uuid, 'mercado_pago', $2::text, $3::text, $4::text,
+            $5::jsonb, $6::text, $7::text, $8::text, $9::timestamptz,
+            $10::timestamptz, null, null
+          )
+          on conflict (restaurant_id, provider, environment) do update
+          set status = excluded.status,
+              external_account_id = excluded.external_account_id,
+              capabilities = excluded.capabilities,
+              access_token_encrypted = excluded.access_token_encrypted,
+              refresh_token_encrypted = excluded.refresh_token_encrypted,
+              credential_key_id = excluded.credential_key_id,
+              token_expires_at = excluded.token_expires_at,
+              connected_at = excluded.connected_at,
+              disconnected_at = null,
+              last_error = null,
+              version = payment_provider_accounts.version + 1,
+              updated_at = now()
+          returning ${PROVIDER_CREDENTIAL_COLUMNS}`,
+          [
+            input.restaurantId,
+            input.environment,
+            input.status,
+            input.externalAccountId,
+            input.capabilities,
+            input.accessTokenEncrypted,
+            input.refreshTokenEncrypted,
+            input.credentialKeyId,
+            input.tokenExpiresAt,
+            input.connectedAt,
+          ],
+        );
+        const row = result.rows[0];
+        if (!row) oauthStorageFailure("Failed to save Mercado Pago connection");
+        return mapProviderCredential(row);
+      } catch (error) {
+        if (error instanceof AppError) throw error;
+        oauthStorageFailure("Failed to save Mercado Pago connection");
+      }
     },
 
     async findProviderAccount(restaurantId, environment) {
-      const result = await client
-        .from("payment_provider_accounts")
-        .select(PROVIDER_CREDENTIAL_COLUMNS)
-        .eq("restaurant_id", restaurantId)
-        .eq("provider", "mercado_pago")
-        .eq("environment", environment)
-        .maybeSingle<RawProviderCredential>();
-
-      if (result.error) oauthStorageFailure("Failed to load Mercado Pago connection");
-      return result.data ? mapProviderCredential(result.data) : null;
+      try {
+        const result = await database.query<RawProviderCredential>(
+          `select ${PROVIDER_CREDENTIAL_COLUMNS}
+          from public.payment_provider_accounts
+          where restaurant_id = $1::uuid
+            and provider = 'mercado_pago'
+            and environment = $2::text
+          limit 1`,
+          [restaurantId, environment],
+        );
+        return result.rows[0] ? mapProviderCredential(result.rows[0]) : null;
+      } catch {
+        oauthStorageFailure("Failed to load Mercado Pago connection");
+      }
     },
 
     async findProviderAccountById(accountId) {
-      const result = await client
-        .from("payment_provider_accounts")
-        .select(PROVIDER_CREDENTIAL_COLUMNS)
-        .eq("id", accountId)
-        .eq("provider", "mercado_pago")
-        .maybeSingle<RawProviderCredential>();
-
-      if (result.error) oauthStorageFailure("Failed to load Mercado Pago connection");
-      return result.data ? mapProviderCredential(result.data) : null;
+      try {
+        const result = await database.query<RawProviderCredential>(
+          `select ${PROVIDER_CREDENTIAL_COLUMNS}
+          from public.payment_provider_accounts
+          where id = $1::uuid and provider = 'mercado_pago'
+          limit 1`,
+          [accountId],
+        );
+        return result.rows[0] ? mapProviderCredential(result.rows[0]) : null;
+      } catch {
+        oauthStorageFailure("Failed to load Mercado Pago connection");
+      }
     },
 
     async updateProviderTokens(input) {
-      const result = await client
-        .from("payment_provider_accounts")
-        .update({
-          access_token_encrypted: input.accessTokenEncrypted,
-          refresh_token_encrypted: input.refreshTokenEncrypted,
-          credential_key_id: input.credentialKeyId,
-          token_expires_at: input.tokenExpiresAt,
-          status: "active",
-          last_error: null,
-          version: input.expectedVersion + 1,
-        })
-        .eq("id", input.accountId)
-        .eq("version", input.expectedVersion)
-        .select(PROVIDER_CREDENTIAL_COLUMNS)
-        .maybeSingle<RawProviderCredential>();
-
-      if (result.error) oauthStorageFailure("Failed to rotate Mercado Pago credentials");
-      return result.data ? mapProviderCredential(result.data) : null;
+      try {
+        const result = await database.query<RawProviderCredential>(
+          `update public.payment_provider_accounts
+          set access_token_encrypted = $1::text,
+              refresh_token_encrypted = $2::text,
+              credential_key_id = $3::text,
+              token_expires_at = $4::timestamptz,
+              status = 'active',
+              last_error = null,
+              version = version + 1,
+              updated_at = now()
+          where id = $5::uuid
+            and provider = 'mercado_pago'
+            and version = $6::integer
+          returning ${PROVIDER_CREDENTIAL_COLUMNS}`,
+          [
+            input.accessTokenEncrypted,
+            input.refreshTokenEncrypted,
+            input.credentialKeyId,
+            input.tokenExpiresAt,
+            input.accountId,
+            input.expectedVersion,
+          ],
+        );
+        return result.rows[0] ? mapProviderCredential(result.rows[0]) : null;
+      } catch {
+        oauthStorageFailure("Failed to rotate Mercado Pago credentials");
+      }
     },
 
     async disconnectProviderAccount(input) {
-      const existing = await this.findProviderAccount(
-        input.restaurantId,
-        input.environment,
-      );
-      if (!existing) return null;
-
-      const result = await client
-        .from("payment_provider_accounts")
-        .update({
-          status: "disconnected",
-          access_token_encrypted: null,
-          refresh_token_encrypted: null,
-          credential_key_id: null,
-          token_expires_at: null,
-          disconnected_at: input.disconnectedAt,
-          last_error: null,
-          version: existing.version + 1,
-        })
-        .eq("id", existing.id)
-        .eq("version", existing.version)
-        .select(PROVIDER_CREDENTIAL_COLUMNS)
-        .maybeSingle<RawProviderCredential>();
-
-      if (result.error) oauthStorageFailure("Failed to disconnect Mercado Pago");
-      return result.data ? mapProviderCredential(result.data) : null;
+      try {
+        const result = await database.query<RawProviderCredential>(
+          `update public.payment_provider_accounts
+          set status = 'disconnected',
+              access_token_encrypted = null,
+              refresh_token_encrypted = null,
+              credential_key_id = null,
+              token_expires_at = null,
+              disconnected_at = $3::timestamptz,
+              last_error = null,
+              version = version + 1,
+              updated_at = now()
+          where restaurant_id = $1::uuid
+            and provider = 'mercado_pago'
+            and environment = $2::text
+          returning ${PROVIDER_CREDENTIAL_COLUMNS}`,
+          [input.restaurantId, input.environment, input.disconnectedAt],
+        );
+        return result.rows[0] ? mapProviderCredential(result.rows[0]) : null;
+      } catch {
+        oauthStorageFailure("Failed to disconnect Mercado Pago");
+      }
     },
   };
 }
@@ -375,7 +446,8 @@ export function createMercadoPagoOAuthService(input: {
   repository: MercadoPagoOAuthRepository;
   client: MercadoPagoOAuthClient;
   cipher: SecretCipher;
-  ownershipLookup: OwnershipLookup;
+  authorizeRestaurant:RestaurantAuthorizer;
+  withAuthorizedWrite:<T>(scope:RestaurantWriteScope,work:(repository:MercadoPagoOAuthRepository)=>Promise<T>)=>Promise<T>;
   config: {
     clientId: string;
     redirectUri: URL;
@@ -386,15 +458,17 @@ export function createMercadoPagoOAuthService(input: {
   now?: () => Date;
 }) {
   const now = input.now ?? (() => new Date());
-  const assertRestaurantAccess = createRestaurantAccessChecker(input.ownershipLookup);
+  const envelopeSchema=z.object({version:z.literal(1),actor:tenantActorSchema,restaurantId:z.string().uuid(),
+    environment:z.enum(['sandbox','production']),codeVerifier:z.string().min(43).max(128)}).strict();
 
   async function persistTokens(
     state: OAuthStateRecord,
     token: MercadoPagoTokenResponse,
+    repository:MercadoPagoOAuthRepository,
   ): Promise<ProviderCredentialRecord> {
     const connectedAt = now();
     const aad = credentialsAad(state.restaurantId, state.environment);
-    return input.repository.upsertProviderAccount({
+    return repository.upsertProviderAccount({
       restaurantId: state.restaurantId,
       environment: state.environment,
       status: "active",
@@ -413,16 +487,12 @@ export function createMercadoPagoOAuthService(input: {
   }
 
   return {
-    async beginConnection(connectionInput: {
-      restaurantId: string;
-      userId: string;
+    async beginConnection(connectionInput: RestaurantWriteScope & {
       environment: PaymentEnvironment;
       returnOrigin?: string;
     }) {
-      await assertRestaurantAccess({
-        userId: connectionInput.userId,
-        restaurantId: connectionInput.restaurantId,
-      });
+      const actor=tenantActorSchema.safeParse({userId:connectionInput.userId,sessionId:connectionInput.sessionId,sessionExpiresAt:connectionInput.sessionExpiresAt});
+      if(!actor.success) throw new AppError(401,'unauthorized','Unauthorized');
 
       const state = createOAuthState(connectionInput.returnOrigin);
       const stateHash = hash(state);
@@ -431,15 +501,16 @@ export function createMercadoPagoOAuthService(input: {
         .update(codeVerifier)
         .digest("base64url");
       const createdAt = now();
-      await input.repository.saveOAuthState({
+      await input.withAuthorizedWrite(connectionInput,repository=>repository.saveOAuthState({
         restaurantId: connectionInput.restaurantId,
         environment: connectionInput.environment,
         stateHash,
-        codeVerifierEncrypted: input.cipher.encrypt(codeVerifier, stateHash),
+        codeVerifierEncrypted:input.cipher.encrypt(JSON.stringify({version:1,actor:actor.data,restaurantId:connectionInput.restaurantId,
+          environment:connectionInput.environment,codeVerifier}),stateHash),
         credentialKeyId: input.config.credentialKeyId,
         redirectUri: input.config.redirectUri.toString(),
         expiresAt: new Date(createdAt.getTime() + input.config.stateTtlMs).toISOString(),
-      });
+      }));
 
       const authorizationUrl = new URL(AUTHORIZATION_ENDPOINT);
       authorizationUrl.searchParams.set("client_id", input.config.clientId);
@@ -485,17 +556,21 @@ export function createMercadoPagoOAuthService(input: {
         throw new AppError(400, "oauth_code_missing", "OAuth authorization code is missing");
       }
 
-      const codeVerifier = input.cipher.decrypt(
-        state.codeVerifierEncrypted,
-        state.stateHash,
-      );
+      let envelope:z.infer<typeof envelopeSchema>;
+      try {envelope=envelopeSchema.parse(JSON.parse(input.cipher.decrypt(state.codeVerifierEncrypted,state.stateHash)));}
+      catch {throw new AppError(400,'oauth_state_invalid','OAuth state is invalid or expired');}
+      if(envelope.restaurantId!==state.restaurantId || envelope.environment!==state.environment)
+        throw new AppError(400,'oauth_state_invalid','OAuth state is invalid or expired');
+      const scope={...envelope.actor,restaurantId:state.restaurantId};
+      await input.withAuthorizedWrite(scope,async()=>{});
+      const codeVerifier=envelope.codeVerifier;
       const token = await input.client.exchangeAuthorizationCode({
         code: callbackInput.code,
         redirectUri: state.redirectUri,
         codeVerifier,
         testToken: state.environment === "sandbox",
       });
-      await persistTokens(state, token);
+      await input.withAuthorizedWrite(scope,repository=>persistTokens(state,token,repository));
 
       return {
         restaurantId: state.restaurantId,
@@ -601,10 +676,7 @@ export function createMercadoPagoOAuthService(input: {
       userId: string;
       environment: PaymentEnvironment;
     }) {
-      await assertRestaurantAccess({
-        userId: statusInput.userId,
-        restaurantId: statusInput.restaurantId,
-      });
+      await input.authorizeRestaurant(statusInput,'billing.read');
       const account = await input.repository.findProviderAccount(
         statusInput.restaurantId,
         statusInput.environment,
@@ -618,20 +690,14 @@ export function createMercadoPagoOAuthService(input: {
       };
     },
 
-    async disconnect(disconnectInput: {
-      restaurantId: string;
-      userId: string;
+    async disconnect(disconnectInput: RestaurantWriteScope & {
       environment: PaymentEnvironment;
     }) {
-      await assertRestaurantAccess({
-        userId: disconnectInput.userId,
-        restaurantId: disconnectInput.restaurantId,
-      });
-      await input.repository.disconnectProviderAccount({
+      await input.withAuthorizedWrite(disconnectInput,repository=>repository.disconnectProviderAccount({
         restaurantId: disconnectInput.restaurantId,
         environment: disconnectInput.environment,
         disconnectedAt: now().toISOString(),
-      });
+      }));
       return { connected: false, status: "disconnected" as const };
     },
   };

@@ -2,34 +2,32 @@ import { createHash, randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 
 import type { AppConfig } from "../../lib/config.js";
+import type {RestaurantWriteScope} from '../tenancy/contracts.js';
+import type { Queryable } from "../../lib/database.js";
 import { AppError } from "../../lib/errors.js";
 import type { OrderService } from "../orders/service.js";
-import { createRestaurantAccessChecker, type OwnershipLookup } from "../../lib/permissions.js";
-import { createSupabaseAdminClient } from "../../lib/supabase.js";
 import type { PaymentProvider } from "./provider.js";
 import type { MercadoPagoPaymentClient } from "./providers/mercado-pago/payment-client.js";
 import type {
   MercadoPagoCheckoutClient,
   MercadoPagoPersistedPreferenceDiagnostics,
 } from "./providers/mercado-pago/client.js";
-import { createPaymentEffectProcessor, type PaymentEffectProcessor } from "./effects.js";
+import type { PaymentEffectProcessor } from "./effects.js";
 import {
-  createPaymentEffectReconciliation,
   type PaymentEffectReconciliation,
 } from "./reconciliation.js";
 import {
   PaymentTransactionConflictError,
-  createPaymentRepository,
   type ManualPaymentOrderRecord,
   type PaymentProviderAccountRecord,
   type PaymentRepository,
   type PaymentTransactionRecord,
 } from "./repository.js";
 import {
-  createPaymentProviderRegistry,
   PaymentProviderNotFoundError,
   type PaymentProviderRegistry,
 } from "./registry.js";
+import { createPaymentModule } from "./composition.js";
 import { assertPaymentTransition, isPaymentTransitionAllowed } from "./state-machine.js";
 import type {
   CreatePaymentResult,
@@ -67,12 +65,12 @@ export interface PaymentService {
   getTransaction(transactionId: string): Promise<PaymentTransactionRecord | null>;
 }
 
-export type ConfirmManualPaymentInput = {
+export type ConfirmManualPaymentInput = RestaurantWriteScope & {
   orderId: string;
   paymentMethod: Exclude<PaymentMethod, "pix">;
   idempotencyKey: string;
   userId: string;
-  authRole: string;
+  authRole?: string;
 };
 
 export interface ManualPaymentService {
@@ -171,11 +169,12 @@ type MercadoPagoReturnReconciliationDependencies = {
   now?: () => string;
 };
 
-type ManualPaymentServiceDependencies = {
-  repository: Pick<PaymentRepository, "findOrderForManualPayment">;
-  paymentService: PaymentService;
-  ownershipLookup: OwnershipLookup;
+export type ManualPaymentOperationPorts={
+  repository:Pick<PaymentRepository,'findOrderForManualPayment'>;
+  paymentService:PaymentService;
 };
+export type AuthorizedManualPayment=<T>(scope:RestaurantWriteScope,work:(ports:ManualPaymentOperationPorts)=>Promise<T>)=>Promise<T>;
+type ManualPaymentServiceDependencies={withAuthorizedPayment:AuthorizedManualPayment};
 
 const PAID_ORDER_STATUSES = new Set([
   "paid",
@@ -708,27 +707,20 @@ function manualFingerprint(orderId: string, paymentMethod: PaymentMethod): strin
 }
 
 export function createManualPaymentService({
-  repository,
-  paymentService,
-  ownershipLookup,
+  withAuthorizedPayment,
 }: ManualPaymentServiceDependencies): ManualPaymentService {
-  const assertRestaurantAccess = createRestaurantAccessChecker(ownershipLookup);
 
   return {
     async confirm(input) {
-      if (input.authRole !== "authenticated") {
+      if (input.authRole && input.authRole !== "authenticated") {
         throw new AppError(403, "forbidden", "Forbidden");
       }
 
-      const order = await repository.findOrderForManualPayment(input.orderId);
-      if (!order) {
+      return withAuthorizedPayment(input,async({repository,paymentService})=>{
+      const order = await repository.findOrderForManualPayment(input.orderId,input.restaurantId);
+      if (!order || order.restaurantId!==input.restaurantId) {
         throw new AppError(404, "order_not_found", "Order not found");
       }
-
-      await assertRestaurantAccess({
-        userId: input.userId,
-        restaurantId: order.restaurantId,
-      });
 
       if (isOrderPaid(order)) {
         throw new AppError(409, "order_already_paid", "Order is already paid");
@@ -769,6 +761,7 @@ export function createManualPaymentService({
         }
         throw error;
       }
+      });
     },
   };
 }
@@ -776,37 +769,19 @@ export function createManualPaymentService({
 export function registerPaymentModule(
   app: FastifyInstance,
   config: AppConfig,
+  database: Queryable,
   providers: readonly PaymentProvider[] = [],
+  options: { startPaymentReconciliation?: boolean; workerId?: string; module?: PaymentModule } = {},
 ): PaymentModule {
-  const registry = createPaymentProviderRegistry(providers);
-  const repository = createPaymentRepository(createSupabaseAdminClient(config));
-  const service = createPaymentService(registry, repository);
-  const effectsConfig = config.paymentEffects ?? {
-    pollIntervalMs: 5_000,
-    batchSize: 25,
-    leaseMs: 60_000,
-    maxAttempts: 5,
-    retryBaseMs: 30_000,
-  };
-  const effects = createPaymentEffectProcessor({
-    repository,
-    workerId: "payment-effects-" + process.pid + "-" + randomUUID(),
-    maxAttempts: effectsConfig.maxAttempts,
-    leaseMs: effectsConfig.leaseMs,
-    baseRetryDelayMs: effectsConfig.retryBaseMs,
-  });
-  const reconciliation = createPaymentEffectReconciliation({
-    processor: effects,
-    batchSize: effectsConfig.batchSize,
-    pollIntervalMs: effectsConfig.pollIntervalMs,
+  const module = options.module ?? createPaymentModule(config, database, providers, {
+    workerId: options.workerId ?? ("payment-effects-" + process.pid + "-" + randomUUID()),
     onError: (error) => app.log.error({ err: error }, "Payment effect reconciliation failed"),
   });
-  const module = { registry, repository, service, effects, reconciliation };
 
   app.decorate("payments", module);
   app.addHook("onReady", () => {
-    if (config.nodeEnv !== "test") reconciliation.start();
+    if (options.startPaymentReconciliation ?? config.nodeEnv !== "test") module.reconciliation.start();
   });
-  app.addHook("onClose", () => reconciliation.stop());
+  app.addHook("onClose", () => module.reconciliation.stop());
   return module;
 }
