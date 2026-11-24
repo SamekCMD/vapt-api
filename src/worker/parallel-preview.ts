@@ -42,7 +42,10 @@ export async function handleParallelPreview(
     env.PARALLEL_PREVIEW_TOKEN.length < 32 || env.PARALLEL_PREVIEW_TOKEN.length > 256) {
     return failure(503);
   }
-  if (!await validBearer(env.PARALLEL_PREVIEW_TOKEN, request.headers.get("authorization"))) {
+  // Stripe authenticates this route with its signed raw body in the API handler.
+  const stripeWebhook = env.STRIPE_ENVIRONMENT === "test" && request.method === "POST" &&
+    new URL(request.url).pathname === "/webhooks/stripe";
+  if (!stripeWebhook && !await validBearer(env.PARALLEL_PREVIEW_TOKEN, request.headers.get("authorization"))) {
     return failure(401);
   }
 

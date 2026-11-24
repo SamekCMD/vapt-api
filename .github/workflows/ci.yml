@@ -85,3 +85,9 @@ jobs:
 
       - name: Bundle catalog production candidate without deploying
         run: npm run build:worker-catalog-production
+
+      - name: Validate current Stripe Live production profile
+        run: node --test scripts/verify-stripe-live-production-config.test.mjs
+
+      - name: Bundle current Stripe Live production without deploying
+        run: npm run build:worker-production-live
