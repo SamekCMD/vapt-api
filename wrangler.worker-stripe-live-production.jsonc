@@ -133,5 +133,11 @@
         "period": 60
       }
     }
+  ],
+  "analytics_engine_datasets": [
+    {
+      "binding": "DIAGNOSTICS",
+      "dataset": "vapt_operational_diagnostics_production"
+    }
   ]
 }

@@ -17,6 +17,7 @@ export function expectedStripeLiveProductionConfig(){
   STRIPE_PRICE_BUSINESS:'price_1Uf88DH4hY0s7wXrY2m0aa7U',
   PUBLIC_CATALOG_READER_ENABLED:'true',PUBLIC_CATALOG_WRITER_ENABLED:'true',
  });
+ config.analytics_engine_datasets=[{binding:'DIAGNOSTICS',dataset:'vapt_operational_diagnostics_production'}];
  return config;
 }
 export function checkStripeLiveProductionConfig(config){
