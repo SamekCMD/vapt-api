@@ -2,6 +2,19 @@
 
 Backend service for Vapt.
 
+## Current Cloudflare production
+
+As of 2026-11-24, `vapt-api-production` uses the Vapt Stripe Live account and
+Neon production. Preview `stage11-inert` uses Stripe Test and Neon preview.
+The current production profile is `wrangler.worker-stripe-live-production.jsonc`;
+it preserves the enabled catalog reader/writer, realtime, production resources
+and CPU/rate limits. Earlier production configurations represent historical
+preparation or rollback checkpoints and are not the current deployment profile.
+
+Validate the profile with `npm run verify:production-live` and build it without
+publishing with `npm run build:worker-production-live`. These commands do not
+deploy or certify a real payment. Keep Stripe credentials in Cloudflare secrets.
+
 ## Requirements
 
 - Node.js 24 or newer
@@ -49,9 +62,9 @@ Required variables:
 Stripe billing uses exact `stripe@22.6.2` and API version `2026-08-26.dahlia`.
 Registered Stripe webhook endpoints must use that same API version. The client uses
 the SDK fetch transport and verifies raw webhook bodies asynchronously with Web Crypto,
-preparing portability to Cloudflare Workers without changing the current Fastify runtime.
-Keep preview on Test Mode with Test Mode Prices and Portal configuration. Live keys,
-Prices and the live webhook endpoint remain deferred until the Cloudflare Worker deploy.
+supporting the Cloudflare Workers deployment alongside the Fastify runtime.
+Keep preview on Test Mode with Test Mode Prices and Portal configuration.
+Production uses its own Live prices, Portal, API key and webhook signing secret.
 Never place Stripe credentials or provider IDs in browser configuration or API DTOs.
 
 Legacy `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are accepted only by the one-time

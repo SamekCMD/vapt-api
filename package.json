@@ -22,6 +22,8 @@
     "verify:catalog-preview": "node scripts/catalog-operator.mjs check preview",
     "verify:catalog-production": "node scripts/catalog-operator.mjs check production",
     "build:worker-catalog-production": "node scripts/catalog-operator.mjs build production",
+    "verify:production-live": "node scripts/verify-stripe-live-production-config.mjs wrangler.worker-stripe-live-production.jsonc",
+    "build:worker-production-live": "npm run verify:production-live && wrangler deploy --dry-run --config wrangler.worker-stripe-live-production.jsonc",
     "start": "node dist/server.js",
     "test": "tsx --test \"src/**/*.test.ts\"",
     "test:tenant-pg": "node scripts/local-tenant-pg.mjs",
