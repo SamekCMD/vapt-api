@@ -3,6 +3,7 @@ import type { WorkerR2Bucket } from "../modules/storage/r2-worker.js";
 import type { DurableObjectNamespace, R2Bucket } from "@cloudflare/workers-types";
 import type { RestaurantRealtime } from "./realtime/restaurant-room.js";
 import type { PublicCatalogCoordinator } from "./catalog/coordinator.js";
+import type { DiagnosticDataset } from "./diagnostics.js";
 
 const workerVariables = [
   "CORS_ORIGINS", "FRONTEND_URL", "API_PUBLIC_URL", "LOG_LEVEL",
@@ -32,6 +33,7 @@ export type WorkerBindings = Partial<Record<(typeof workerVariables)[number], st
   HYPERDRIVE?: { connectionString: string };
   R2_BUCKET?: WorkerR2Bucket & Partial<Pick<R2Bucket, "get" | "head" | "put" | "list">>;
   PUBLIC_CATALOG_BUCKET?: Pick<R2Bucket, "get" | "put" | "list">;
+  DIAGNOSTICS?: DiagnosticDataset;
   AUTH_RATE_LIMIT?: WorkerRateLimitBinding;
   BILLING_RATE_LIMIT?: WorkerRateLimitBinding;
   ORDERS_RATE_LIMIT?: WorkerRateLimitBinding;

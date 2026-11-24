@@ -10,6 +10,7 @@ test('current production profile uses Live prices and keeps catalog and realtime
  assert.equal(config.vars.STRIPE_PRICE_PRO,'price_1Uf88DH4hY0s7wXrkun2uQvf');
  assert.equal(config.vars.STRIPE_PRICE_BUSINESS,'price_1Uf88DH4hY0s7wXrY2m0aa7U');
  assert.equal(config.vars.STRIPE_PORTAL_CONFIGURATION_ID,'bpc_1Uf8AEH4hY0s7wXrsYf89Gma');
+ assert.deepEqual(config.analytics_engine_datasets,[{binding:'DIAGNOSTICS',dataset:'vapt_operational_diagnostics_production'}]);
  assert.deepEqual(checkStripeLiveProductionConfig(config),{ok:true,deployed:false,livePaymentVerified:false});
 });
 for(const [name,poison]of Object.entries({
@@ -18,4 +19,6 @@ for(const [name,poison]of Object.entries({
  previewDatabase:c=>{c.hyperdrive[0].id='0c05fec2924b4f3b9225f3d689ba7ea9'},previewBucket:c=>{c.r2_buckets[1].bucket_name='vapt-catalog-preview'},
  cpu:c=>{c.limits.cpu_ms=30000},publicAlternative:c=>{c.workers_dev=true},secret:c=>{c.vars.STRIPE_SECRET_KEY='rk_live_synthetic_marker'},
  rateLimit:c=>{c.ratelimits[0].simple.limit=9999},
+ diagnosticDataset:c=>{c.analytics_engine_datasets[0].dataset='foreign_dataset'},
+ missingDiagnostics:c=>{delete c.analytics_engine_datasets},
 }))test('reject '+name+' drift without disclosing config values',()=>{const c=load();poison(c);const r=checkStripeLiveProductionConfig(c);assert.equal(r.ok,false);assert.doesNotMatch(JSON.stringify(r),/synthetic_marker|price_1UKLz|0c05fec/);});
